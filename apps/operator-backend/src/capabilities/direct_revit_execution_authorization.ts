@@ -145,6 +145,15 @@ function isDevelopmentGeneralAgentReady(env: NodeJS.ProcessEnv): boolean {
     && profile.runtime_mode === "development";
 }
 
+function isLocalGeneralAgentReady(env: NodeJS.ProcessEnv): boolean {
+  const profile = getSidecarAgentProfileState(env);
+  return profile.general_agent_ready === true
+    && profile.capability_profile === "general_agent"
+    && profile.tool_exposure_profile === "general"
+    && profile.reason_code === "GENERAL_AGENT_LOCAL_READY"
+    && (profile.runtime_mode === "local" || profile.runtime_mode === "self_hosted");
+}
+
 /**
  * The authenticated hosted product is a general Revit worker, not a static
  * certification allowlist. Bind each well-formed request to an exact receipt
@@ -338,6 +347,13 @@ export function authorizeDirectRevitExecution(
     const developmentGeneralAgent = isDevelopmentGeneralAgentReady(env)
       && (runtimeMode === "development" || runtimeMode === "local")
       && !requestFamilyAdmission;
+    // The normal local product uses the same exact-request authorization as
+    // hosted General Agent. Autodesk-launched Revit identifies as local even
+    // when its authenticated backend is self-hosted. Do not admit foreign
+    // native runtime identities or bypass explicit request-family validation.
+    const localGeneralAgent = isLocalGeneralAgentReady(env)
+      && (runtimeMode === "local" || runtimeMode === "self_hosted")
+      && !requestFamilyAdmission;
     if (isDevelopmentLaboratory(env) && !developmentGeneralAgent) {
       throw new DirectRevitExecutionAuthorizationError(
         "CERTIFICATION_RUNTIME_PROFILE_MISMATCH",
@@ -346,12 +362,12 @@ export function authorizeDirectRevitExecution(
         false
       );
     }
-    if (hostedGeneralAgent || developmentGeneralAgent) {
+    if (hostedGeneralAgent || developmentGeneralAgent || localGeneralAgent) {
       const record = generalAgentAdmissionRecord({
         method,
         path: toolPath,
         requestHash,
-        authority: developmentGeneralAgent
+        authority: developmentGeneralAgent || localGeneralAgent
           ? "authenticated_local_general_agent"
           : "authenticated_hosted_general_agent",
         capabilityProfile: developmentGeneralAgent

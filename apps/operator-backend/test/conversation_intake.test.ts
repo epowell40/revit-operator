@@ -4,8 +4,11 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import http from "node:http";
+import Ajv2020 from "ajv/dist/2020.js";
 import { compactUiObservation, mayRouteConversation, retainedIntakeDecision, routeConversation, validateIntakeDecision, intakeDecisionIssues, type IntakeInput } from "../src/conversation_intake.js";
-import { conversationIntakeModelInput, INTAKE_CORRECTION_INSTRUCTIONS, ModelConversationIntake } from "../src/brains/conversation_intake_model.js";
+import { conversationIntakeModelInput, resolveConversationIntakeSourceQuotes, conversationIntakeQuoteSchema, conversationIntakeSourceQuotes, INTAKE_CORRECTION_INSTRUCTIONS, ModelConversationIntake } from "../src/brains/conversation_intake_model.js";
+import { INTAKE_SCHEMA } from "../src/conversation_intake.js";
+import { CodexAppServer } from "../src/codex/app_server.js";
 import { appendMessage, getPinnedGoal } from "../src/session_store.js";
 import { __closeForTests, getConversationHistory } from "../src/memory/sqlite_store.js";
 import { formatUiContextConversationHistory } from "../src/conversation_history.js";
@@ -15,6 +18,62 @@ const ui={ok:true,data:{document:{title:"Snowdon HVAC",path:"PRIVATE-PATH",activ
 const answer={route:"answer",answer:null,basis:"ui_identity",question_kind:"ui_identity",identity_fields:["document_title","active_view_name"],read_evidence:"not_applicable",requested_effect:"none",entire_request_answered:true,confidence:0.98,reason:"Live UI labels answer the complete question."};
 const expectedAnswer='Open model: "Snowdon HVAC". Active view: "Mechanical L4".';
 const body=(user_text=question,extra={})=>({version:"operator.backend.v1" as const,session_id:"session",message_id:"message",user_text,ui_observation:ui,...extra});
+
+test("source quote catalog preserves exact Unicode/line endings and all non-whitespace text under bounded choices",()=>{
+  for(const source of ["Preserve the original views.\r\nAsk before moving equipment.","保留模型。 不要保存。 😀 Keep e\u0301 unchanged.",
+    "😀".repeat(900),Array.from({length:180},(_,i)=>`Rule ${i}.`).join(" "),"Keep "+"long-word".repeat(1700)]){
+    assert(source.length<=16000);const quotes=conversationIntakeSourceQuotes(source);
+    assert(quotes.length>0&&quotes.length<=128);assert.equal(quotes.length,new Set(quotes).size);
+    const covered=new Uint8Array(source.length);
+    for(const quote of quotes){assert(quote.length>0&&quote.length<=1200&&source.includes(quote));
+      for(let at=source.indexOf(quote);at>=0;at=source.indexOf(quote,at+1))covered.fill(1,at,at+quote.length);}
+    for(let i=0;i<source.length;i++)if(!/\s/u.test(source[i]!))assert.equal(covered[i],1,"source text was not truncated");
+  }
+  assert.throws(()=>conversationIntakeSourceQuotes(" \r\n "));assert.throws(()=>conversationIntakeSourceQuotes("x".repeat(16001)));
+});
+test("provider quote grammar excludes invented protected/prerequisite text while external schema and validator stay unchanged",()=>{
+  const source="Update the review note. Preserve the existing views and parameters. Before moving equipment, ask me to approve its location.";
+  const before=JSON.stringify(INTAKE_SCHEMA),prepared=conversationIntakeQuoteSchema({user_text:source}),scope=(prepared.schema.properties.operation_scope.anyOf[0] as any).properties;
+  const choices=conversationIntakeSourceQuotes(source);assert.deepEqual(scope.protected_clauses.items.enum,prepared.sourceQuotes.map(row=>row.id));assert.deepEqual(scope.prerequisites.items.properties.source_quote.enum,prepared.sourceQuotes.map(row=>row.id));
+  const candidate={route:"task",answer:null,basis:"needs_tools",requested_effect:"change",entire_request_answered:false,confidence:0.99,reason:"Authorized edits with an explicit approval prerequisite.",question_kind:"action",identity_fields:[],read_evidence:"not_applicable",
+    operation_scope:{schema:"revit-operator.interpreted-operation-scope/v1",requested_effect:"apply",model_effect:"apply",protected_clauses:[choices[1]],prerequisites:[{variable_id:"location_approval",kind:"approval",question:"Do you approve the location?",source_quote:choices[2]}]}};
+  const validate=new Ajv2020({strict:false}).compile(prepared.schema);
+  const wire=structuredClone(candidate);wire.operation_scope.protected_clauses=[prepared.sourceQuotes[1]!.id];wire.operation_scope.prerequisites[0]!.source_quote=prepared.sourceQuotes[2]!.id;
+  assert.equal(validate(wire),true);assert.deepEqual(resolveConversationIntakeSourceQuotes(wire,{user_text:source}),candidate);assert.deepEqual(intakeDecisionIssues(candidate,{user_text:source,recent_conversation:[],ui_observation:{state:"unknown"}}),[]);
+  for(const change of [(v:any)=>v.operation_scope.protected_clauses[0]+=" safely",(v:any)=>v.operation_scope.prerequisites[0].source_quote+=" automatically"]){
+    const bad=structuredClone(candidate);change(bad);assert.equal(validate(bad),false);
+    assert(intakeDecisionIssues(bad,{user_text:source,recent_conversation:[],ui_observation:{state:"unknown"}}).some(i=>i.code.endsWith("not_exact")));
+  }
+  assert.equal(JSON.stringify(INTAKE_SCHEMA),before);assert.equal(prepared.catalog.choices,choices.length);
+});
+
+test("actual Codex intake dispatch uses the same source quote grammar without adding tools or altering the original input",{concurrency:false},async t=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),"operator-intake-quote-dispatch-")),keys=["OPERATOR_WORKSPACE_ROOT","OPERATOR_BRAIN","OPERATOR_CODEX_MODEL","OPERATOR_INTAKE_MODEL","OPERATOR_INTAKE_REASONING_EFFORT"],previous=Object.fromEntries(keys.map(k=>[k,process.env[k]]));
+  const interpreter=new ModelConversationIntake();let notify:(event:any)=>void=()=>{},threadOptions:any,turnOptions:any,acknowledged=0;
+  const input={user_text:"Preserve the existing notes. Change the requested parameter only.",recent_conversation:[],ui_observation:{state:"unknown" as const}};
+  const expected={route:"task",answer:null,basis:"needs_tools",requested_effect:"change",entire_request_answered:false,confidence:0.99,reason:"Requested parameter edit with preservation.",question_kind:"action",identity_fields:[],read_evidence:"not_applicable",
+    operation_scope:{schema:"revit-operator.interpreted-operation-scope/v1",requested_effect:"apply",model_effect:"apply",protected_clauses:["Preserve the existing notes."],prerequisites:[]}};
+  try {
+    process.env.OPERATOR_WORKSPACE_ROOT=path.join(root,"workspace");process.env.OPERATOR_BRAIN="codex";process.env.OPERATOR_CODEX_MODEL="gpt-6.1-sol";
+    delete process.env.OPERATOR_INTAKE_MODEL;delete process.env.OPERATOR_INTAKE_REASONING_EFFORT;
+    t.mock.method(os,"homedir",()=>path.join(root,"dummy-home"));t.mock.method(os,"tmpdir",()=>root);
+    const p=CodexAppServer.prototype as any;
+    t.mock.method(p,"ensureStarted",async()=>{});t.mock.method(p,"stopAndWait",async()=>{});
+    t.mock.method(p,"startThread",async(options:any)=>{threadOptions=options;return{model:options.model,thread:{id:"quote-thread"}};});
+    t.mock.method(p,"onNotification",(callback:any)=>{notify=callback;return()=>{};});
+    t.mock.method(p,"startBoundTurn",async(options:any)=>{turnOptions=options;notify({threadId:"quote-thread",method:"item/completed",params:{item:{type:"agentMessage",text:JSON.stringify({...expected,operation_scope:{...expected.operation_scope,protected_clauses:[conversationIntakeQuoteSchema(input).sourceQuotes[0]!.id]}})}}});return{turn:{id:"quote-turn"}};});
+    t.mock.method(p,"waitForTurnCompleted",async()=>({status:"completed"}));t.mock.method(p,"getTurnInstructionBinding",()=>({source:"synthetic-unit-fixture"}));
+    t.mock.method(p,"acknowledgePersistedTurnInstructionBinding",()=>{acknowledged++;});
+    const result=await interpreter.interpret(input,new AbortController().signal);assert.deepEqual(result.value,expected);
+    assert.deepEqual(JSON.parse(turnOptions.input[0].text),{...input,source_quote_choices:conversationIntakeQuoteSchema(input).sourceQuotes});assert.deepEqual(threadOptions.dynamicTools,[]);
+    assert.deepEqual(turnOptions.outputSchema.properties.operation_scope.anyOf[0].properties.protected_clauses.items.enum,conversationIntakeQuoteSchema(input).sourceQuotes.map(row=>row.id));
+    assert.equal(result.telemetry.model,"gpt-6.1-sol");assert.equal((result.telemetry.source_quote_catalog as any).choices,2);result.acknowledge?.();assert.equal(acknowledged,1);
+  }finally{
+    interpreter.close();await Promise.resolve();t.mock.restoreAll();
+    for(const key of keys){if(previous[key]===undefined)delete process.env[key];else process.env[key]=previous[key];}
+    assert.equal(path.dirname(root),os.tmpdir());assert(path.basename(root).startsWith("operator-intake-quote-dispatch-"));fs.rmSync(root,{recursive:true,force:true});
+  }
+});
 
 test("Responses intake uses API model defaults, preserves its own override, and rejects unsupported effort before dispatch", {concurrency:false}, async()=>{
   const keys=["OPERATOR_BRAIN","OPERATOR_OPENAI_API_KEY","OPERATOR_OPENAI_BASE_URL","OPERATOR_OPENAI_MODEL","OPERATOR_CODEX_MODEL","OPERATOR_INTAKE_MODEL","OPERATOR_INTAKE_REASONING_EFFORT"];
@@ -48,6 +107,8 @@ test("Responses intake uses API model defaults, preserves its own override, and 
     assert.equal(requests[0].reasoning.effort,"low");
     assert.equal(requests[0].tools,undefined);
     assert.equal(requests[0].text.format.type,"json_schema");
+    assert.deepEqual(requests[0].text.format.schema.properties.operation_scope.anyOf[0].properties.protected_clauses.items.enum,conversationIntakeQuoteSchema(input).sourceQuotes.map(row=>row.id));
+    assert.equal((result.telemetry.source_quote_catalog as any).choices,conversationIntakeSourceQuotes(question).length);
     process.env.OPERATOR_INTAKE_REASONING_EFFORT="none";
     await assert.rejects(interpreter.interpret(input,new AbortController().signal),/requires reasoning effort/);
     assert.equal(requests.length,1,"Unsupported effort cannot dispatch a provider call");
@@ -56,6 +117,8 @@ test("Responses intake uses API model defaults, preserves its own override, and 
     await interpreter.interpret(input,new AbortController().signal);
     assert.equal(requests[1].model,"gpt-5.6-luna");
     assert.equal(requests[1].reasoning.effort,"high");
+    await assert.rejects(interpreter.interpret({...input,user_text:"x".repeat(16001)},new AbortController().signal),/complete bounded intake source/);
+    assert.equal(requests.length,2,"Never dispatch a truncated source catalog");
   } finally {
     interpreter.close();
     for(const key of keys){if(previous[key]===undefined)delete process.env[key];else process.env[key]=previous[key];}

@@ -4,6 +4,7 @@ import { reportedOperationTargetIdentitiesV2 } from "../domain/assignment-kernel
 import type { GoalRecord } from "../goals/service.js";
 import type { VerifiedWorkPacketV1 } from "../work_packets/contract.js";
 import { WORK_RETURN_SCHEMA, type WorkReturnV1 } from "./contract.js";
+import { retainedWorkFollowupLinesV2 } from '../assignments/work_review_handoff.js';
 
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical);
@@ -24,6 +25,7 @@ export function generateWorkReturnFromKernelV2(
   packet: VerifiedWorkPacketV1 | null
 ): WorkReturnV1 {
   const pending = Object.values(snapshot.clarifications).find(item => !item.resolved_at) ?? null;
+  const followups = retainedWorkFollowupLinesV2(snapshot);
   const completed = snapshot.spec.criteria.flatMap(spec => {
     const evaluation = snapshot.criteria[spec.criterion_id];
     return evaluation?.status === "pass" || evaluation?.status === "partial" ? [spec.requirement] : [];
@@ -51,6 +53,7 @@ export function generateWorkReturnFromKernelV2(
     completed: [...new Set(completed)],
     primary_artifacts: primaryArtifacts,
     deviations_or_open_items: [...new Set([
+      ...followups,
       ...open,
       ...(executionFailure ? [`Execution stopped at ${executionFailure.phase}: ${executionFailure.code}.`] : []),
       ...snapshot.unresolved_unknown_operation_ids.map(id => `Operation ${id} requires reconciliation.`)
@@ -59,6 +62,7 @@ export function generateWorkReturnFromKernelV2(
     clarification_id: pending?.clarification_id ?? null,
     recommended_next_step: pending
       ? "Answer the focused question so this same Assignment can resume from retained work."
+      : followups.length ? "Review the saved questions and open work. Answer relevant user decisions by reference; internal tool faults remain operator repair work."
       : snapshot.terminal ? "Review the primary artifact and expand the audit packet only if needed."
         : "Continue the next unresolved criterion or work unit.",
     affected_targets: targets,

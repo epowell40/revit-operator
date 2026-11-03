@@ -48,15 +48,53 @@ function categoryLabel(value: unknown): string | null {
 function categorySelector(value: unknown): string | null {
   if (typeof value !== "string" || /[\u0000-\u001f\u007f]/.test(value)) return null;
   const selector = value.trim();
+  // Imported subcategories have positive native IDs but no BuiltInCategory.
+  // Keep that explicit selector separate from display-name proof.
+  const numericId = viewId(selector);
+  if (numericId) return `id:${numericId}`;
   if (/^OST_[A-Za-z0-9_]+$/.test(selector)) return selector;
   if (/^OST_/i.test(selector)) return null;
   const label = categoryLabel(selector);
   return label ? `label:${JSON.stringify(label)}` : null;
 }
 
+function categoryDetail(value: unknown): string | null {
+  const text = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return ['coarse','medium','fine','undefined'].includes(text) ? text : null;
+}
+
 export function isVisibilityPhasingEditV2(value: unknown): boolean {
   const r=record(value),b=record(r.body??r.arguments??value);
   return ['set_phase','set_phase_filter'].includes(String(b.action??'').trim().toLowerCase());
+}
+
+export function isVisibilityTemplateEditV2(value: unknown): boolean {
+  const r=record(value),b=record(r.body??r.arguments??value);
+  return String(b.action??'').trim().toLowerCase()==='set_template';
+}
+
+function templateRequest(value: unknown): readonly string[] {
+  const r=record(value),b=record(r.body??r.arguments??value),id=viewId(b.viewId);
+  if(!isVisibilityTemplateEditV2(value)||!id||b.dryRun===true||r.path!==undefined&&r.path!=='/revit/visibility'
+    ||r.method!==undefined&&r.method!=='POST'
+    ||Object.keys(b).some(k=>!['viewId','action','dryRun','templateName'].includes(k))
+    ||typeof b.templateName!=='string'||/[\u0000-\u001f\u007f]/.test(b.templateName))return [];
+  if(b.templateName.trim()==='')return [`native_view_template:${id}:none:true`];
+  const name=categoryLabel(b.templateName);
+  return name?[`native_view_template:${id}:name:${JSON.stringify(name)}`]:[];
+}
+
+/** Requested assignment only, not template creation, contents or appearance.
+ * The existing native setter selects by name. A separate get must report that
+ * name AND a real template ID on the sole affected, non-template view. */
+export function visibilityTemplateReadbackMatchesV2(input: unknown,payload: unknown,read: unknown,affected: readonly string[]): boolean {
+  const expected=templateRequest(input);if(!expected.length)return false;
+  const r=record(read),b=record(r.body??r.arguments??read),a=record(input),wanted=record(a.body??a.arguments??input),id=viewId(wanted.viewId);
+  if(r.path!=='/revit/visibility'||r.method!=='POST'||b.action!=='get'||viewId(b.viewId)!==id||b.dryRun===true
+    ||['linkedModelInstanceId','linkedModelId','revitLinkInstanceId','linkedModelName','revitLinkName','linkName'].some(k=>b[k]!=null)
+    ||affected.length!==1||affected[0]!==`element_id:${id}`)return false;
+  const observed=new Set(visibilityObservedValuesV2(payload));
+  return expected.every(token=>observed.has(token));
 }
 
 function phaseRequest(value: unknown): readonly string[] {
@@ -94,6 +132,7 @@ export function visibilityExpectedValuesV2(value: unknown): readonly string[] {
   const body = record(root.body ?? root.arguments ?? value);
   const id = viewId(body.viewId);
   if(isVisibilityPhasingEditV2(value))return phaseRequest(value);
+  if(isVisibilityTemplateEditV2(value))return templateRequest(value);
   if (body.action === "set_category_override") {
     // Both selectors accepted by the native handler must be checkable. A
     // display label is matched to native returned identity, never translated
@@ -103,6 +142,11 @@ export function visibilityExpectedValuesV2(value: unknown): readonly string[] {
       || ["linkedModelInstanceId", "linkedModelId", "revitLinkInstanceId", "linkedModelName", "revitLinkName", "linkName"].some(k => body[k] != null)) return [];
     const prefix = `native_category_property:${id}:${selector}:`;
     const tokens: string[] = [];
+    if (Object.hasOwn(body, "detailLevel")) {
+      const detail = categoryDetail(body.detailLevel);
+      if (!detail) return [];
+      tokens.push(prefix + `detailLevel:${detail}`);
+    }
     if (Object.hasOwn(body, "halftone")) {
       if (typeof body.halftone !== "boolean") return [];
       tokens.push(prefix + `halftone:${body.halftone}`);
@@ -137,6 +181,13 @@ export function visibilityObservedValuesV2(value: unknown): readonly string[] {
     const token = propertyToken(id, field, view[field]);
     return token ? [token] : [];
   });
+  if(view.isTemplate===false){
+    const templateName=categoryLabel(view.viewTemplate);
+    if(typeof view.viewTemplateId==='number'&&viewId(view.viewTemplateId)&&String(view.viewTemplateId)!==id&&templateName)
+      values.push(`native_view_template:${id}:name:${JSON.stringify(templateName)}`);
+    else if(view.viewTemplateId===-1&&view.viewTemplate===null)
+      values.push(`native_view_template:${id}:none:true`);
+  }
   for(const field of ['phase','phaseFilter']){
     const native=record(view[field]),nativeId=viewId(native.id),name=categoryLabel(native.name);
     if(typeof native.id==='number'&&nativeId&&name){
@@ -145,18 +196,33 @@ export function visibilityObservedValuesV2(value: unknown): readonly string[] {
     }
   }
   const category = record(view.categoryOverride);
+  const snapshot = record(view.categorySnapshot), target = record(snapshot.target);
+  const label = categoryLabel(category.categoryName);
+  const resolvedIdentity = label && snapshot.complete === true
+    && snapshot.targetCategoryId === category.categoryId && target.id === category.categoryId
+    && categoryLabel(target.name) === label;
+  const selectors: string[] = [];
   if (/^OST_[A-Za-z0-9_]+$/.test(String(category.builtInCategory ?? ""))
     && Number.isSafeInteger(category.categoryId) && Number(category.categoryId) < 0) {
-    const selectors = [String(category.builtInCategory)];
-    const label = categoryLabel(category.categoryName);
-    const snapshot = record(view.categorySnapshot), target = record(snapshot.target);
+    selectors.push(String(category.builtInCategory));
     // Display-label proof requires the separate native category snapshot's
     // resolved target, not a free-standing name beside a graphics value.
-    if (label && snapshot.complete === true && snapshot.targetCategoryId === category.categoryId
-        && target.id === category.categoryId && categoryLabel(target.name) === label)
+    if (resolvedIdentity)
       selectors.push(`label:${JSON.stringify(label)}`);
+  }
+  // A positive ID is proved only by the independent native snapshot resolving
+  // the same typed ID and name. A label, request echo, or partial snapshot
+  // cannot establish it; imported display-name ambiguity remains unsupported.
+  if (Number.isSafeInteger(category.categoryId) && Number(category.categoryId) > 0
+      && category.builtInCategory == null && resolvedIdentity)
+    selectors.push(`id:${category.categoryId}`);
     for (const selector of selectors) {
       const prefix = `native_category_property:${id}:${selector}:`;
+      const detail = categoryDetail(category.detailLevel);
+      // The separate complete native snapshot must corroborate the same category
+      // override. Whole-view detail or request echoes cannot fill this field.
+      if (resolvedIdentity && detail && categoryDetail(record(target.graphics).detailLevel) === detail)
+        values.push(prefix + `detailLevel:${detail}`);
       if (typeof category.halftone === "boolean") values.push(prefix + `halftone:${category.halftone}`);
       if (Number.isInteger(category.lineWeight) && Number(category.lineWeight) >= 1 && Number(category.lineWeight) <= 16)
         values.push(prefix + `lineWeight:${category.lineWeight}`);
@@ -164,7 +230,6 @@ export function visibilityObservedValuesV2(value: unknown): readonly string[] {
       if (["r", "g", "b"].every(k => Number.isInteger(color[k]) && Number(color[k]) >= 0 && Number(color[k]) <= 255))
         values.push(prefix + `color:${color.r},${color.g},${color.b}`);
     }
-  }
   return values;
 }
 

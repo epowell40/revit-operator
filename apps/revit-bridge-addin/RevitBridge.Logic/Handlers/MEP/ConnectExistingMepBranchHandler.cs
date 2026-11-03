@@ -17,8 +17,10 @@ namespace RevitBridge.Logic.Handlers.MEP
     /// fitting. Unlike
     /// ConnectMepBranchHandler, this operation creates no replacement branch
     /// route and therefore preserves an already accepted branch element.
+    /// The explicit replacement mode preserves all three existing curves and
+    /// atomically substitutes only a connected tee with a bridge and takeoff.
     /// </summary>
-    public sealed class ConnectExistingMepBranchHandler : IRequestHandler
+    public sealed partial class ConnectExistingMepBranchHandler : IRequestHandler
     {
         public sealed class Params
         {
@@ -27,6 +29,8 @@ namespace RevitBridge.Logic.Handlers.MEP
             public string kind { get; set; } = "duct";
             public long mainElementId { get; set; }
             public long branchElementId { get; set; }
+            public long? teeElementId { get; set; }
+            public long? secondMainElementId { get; set; }
             public long? branchConnectorId { get; set; }
             public double[]? expectedBranchOriginXyz { get; set; }
             public double originToleranceFt { get; set; } = 0.001;
@@ -45,6 +49,18 @@ namespace RevitBridge.Logic.Handlers.MEP
 
         private Task<object> HandleCore(UIApplication app, string jsonData, Action enterNativeScope)
         {
+            if (!string.IsNullOrWhiteSpace(jsonData))
+            {
+                using var body = JsonDocument.Parse(jsonData);
+                if (InlineAccessoryRequest.IsMode(body.RootElement))
+                {
+                    var inline = InlineAccessoryRequest.Parse(jsonData);
+                    var inlineDoc = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active Revit document.");
+                    return Task.FromResult(HandleInlineAccessory(app, inlineDoc, inline, enterNativeScope));
+                }
+                if (!TeeTakeoffReplacementContract.TryValidate(body.RootElement, out var replacementContractError))
+                    throw new ArgumentException(replacementContractError);
+            }
             var p = string.IsNullOrWhiteSpace(jsonData)
                 ? new Params()
                 : JsonSerializer.Deserialize<Params>(jsonData) ?? new Params();
@@ -61,6 +77,10 @@ namespace RevitBridge.Logic.Handlers.MEP
 
             var kind = MepRoutingUtil.NormalizeKind(p.kind);
             var connectionMode = NormalizeConnectionMode(p.connectionMode);
+            if (connectionMode == "replace_tee_with_takeoff")
+                return Task.FromResult(HandleTeeReplacement(app, doc, p, enterNativeScope));
+            if (p.teeElementId.HasValue || p.secondMainElementId.HasValue)
+                throw new ArgumentException("teeElementId and secondMainElementId require connectionMode replace_tee_with_takeoff.");
             var main = doc.GetElement(ElementIdCompat.Create(p.mainElementId)) as MEPCurve;
             var branch = doc.GetElement(ElementIdCompat.Create(p.branchElementId));
             if (main == null)
@@ -610,7 +630,8 @@ namespace RevitBridge.Logic.Handlers.MEP
             {
                 "takeoff_fitting" => normalized,
                 "air_terminal_on_duct" => normalized,
-                _ => throw new ArgumentException("connectionMode must be takeoff_fitting or air_terminal_on_duct.")
+                "replace_tee_with_takeoff" => normalized,
+                _ => throw new ArgumentException("connectionMode must be takeoff_fitting, air_terminal_on_duct or replace_tee_with_takeoff.")
             };
         }
 

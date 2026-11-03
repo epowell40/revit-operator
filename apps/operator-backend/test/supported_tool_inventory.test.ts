@@ -16,6 +16,20 @@ const manifest = fs.readFileSync(path.join(apps, "revit-bridge-addin/RevitBridge
 const implemented = [...manifest.matchAll(/new OperatorToolInfo\("[^"\r\n]+",\s*"(GET|POST)",\s*"([^"]+)"/g)]
   .map(match => ({ method: match[1] as "GET" | "POST", path: match[2]! }));
 
+test('retained family-authoring310 documentation failure admits only its reviewed route and alias', () => {
+  const here = new URL('./fixtures/family-authoring-hidden-310.json', import.meta.url);
+  const fixture = JSON.parse(fs.readFileSync(fs.existsSync(here) ? here : new URL('../../test/fixtures/family-authoring-hidden-310.json', import.meta.url), 'utf8'));
+  assert.match(fixture.first_response.message, /search exposure is not certified for POST \/revit\/create-family-from-template/);
+  const {method, path: route} = fixture.request;
+  assert.equal(isSupportedToolRoute(method, route), true);
+  assert.equal(isSupportedNativeTransport(method, route), true);
+  assert.equal(isAllowlisted(method, route), true);
+  assert.equal(SUPPORTED_MCP_ALIASES.includes(fixture.expected_alias), true);
+  assert.equal(isSupportedToolRoute('GET', route), false);
+  assert.equal(isSupportedToolRoute('POST', route + '-unreviewed'), false);
+  assert.equal(isSupportedToolRoute('POST', '/revit/create-arbitrary-family'), false);
+});
+
 test("Excel source inspection is admitted without exposing the unqualified legacy writer",()=>{
   assert.equal(isSupportedToolRoute('POST','/revit/inspect-excel-source'),true);
   assert.equal(isAllowlisted('POST','/revit/inspect-excel-source'),true);
@@ -68,8 +82,15 @@ test('CAD link first predispatch rejection is repaired through fixed inventory w
 
 test("supported inventory rejects every excluded source route before transport despite caller allowlists and runtime modes", async () => {
   assert.equal(isSupportedToolRoute('POST','/revit/import-vector-detail'),false);
-  assert.equal(implemented.length, 223);
-  assert.equal(SUPPORTED_NATIVE_ROUTES.length, 117);
+  assert.equal(implemented.length, 227);
+  assert.equal(SUPPORTED_NATIVE_ROUTES.length, 123);
+  for (const route of ['/revit/inspect-family-label-styles', '/revit/set-family-label-style']) {
+    assert.equal(isSupportedToolRoute('POST', route), true);
+    assert.equal(isAllowlisted('POST', route), true);
+    assert.equal(isSupportedNativeTransport('POST', route), true);
+    assert.equal(isSupportedToolRoute('GET', route), false);
+    assert.equal(isSupportedToolRoute('POST', route + '-unreviewed'), false);
+  }
   for(const route of ['/revit/import-excel-output','/revit/inspect-excel-import','/revit/inspect-vector-detail']){
     assert.equal(isSupportedToolRoute('POST',route),true);assert.equal(isAllowlisted('POST',route),true);
     assert.equal(isSupportedToolRoute('GET',route),false);assert.equal(isSupportedToolRoute('POST',route+'-other'),false);
@@ -84,12 +105,12 @@ test("supported inventory rejects every excluded source route before transport d
   assert.equal(isSupportedToolRoute("POST", "/revit/existing-conditions-mep-draft-workflow"), true,
     "The source-registered stage executor must be transport-admitted.");
   assert.equal(isSupportedNativeTransport("POST", "/revit/linked-room-boundaries"), true);
-  assert.equal(SUPPORTED_MCP_ALIASES.length, 98);
+  assert.equal(SUPPORTED_MCP_ALIASES.length, 99);
   assert.equal(SUPPORTED_MCP_ALIASES.includes("operator_plan_existing_conditions_duct_continuation"), true);
   assert.equal(SUPPORTED_MCP_ALIASES.includes("operator_manage_work_plan"), true);
   assert.equal(SUPPORTED_MCP_ALIASES.includes("write_excel"), false, "The legacy writer has no admitted, verifiable assignment effect contract.");
   const excluded = implemented.filter(route => !isSupportedNativeTransport(route.method, route.path));
-  assert.equal(excluded.length, 105);
+  assert.equal(excluded.length, 103);
   let requests = 0;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async () => { requests++; throw new Error("Excluded tool reached network"); }) as typeof fetch;

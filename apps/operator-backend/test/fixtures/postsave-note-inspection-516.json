@@ -1,0 +1,2644 @@
+{
+  "input": {
+    "method": "POST",
+    "path": "/revit/find-text-notes",
+    "body": {
+      "elementIds": [
+        1545903
+      ],
+      "max": 1
+    }
+  },
+  "payload": {
+    "ok": true,
+    "scope": "active_project",
+    "docId": null,
+    "familyDocumentId": null,
+    "familyName": null,
+    "documentTitle": "Workflow516 annotation-original Result",
+    "requestedElementIds": [
+      1545903
+    ],
+    "exactElementFilterApplied": true,
+    "itemsComplete": true,
+    "elementIds": [
+      1545903
+    ],
+    "textSamples": [
+      "INTERNAL REVIEW - QA461\r"
+    ],
+    "items": [
+      {
+        "textNoteId": 1545903,
+        "elementId": 1545903,
+        "uniqueId": "efb3a377-b20b-47ef-9313-7c36d9b5351c-001796af",
+        "text": "INTERNAL REVIEW - QA461\r",
+        "textUtf8Bytes": 24,
+        "textNormalized": "internal review qa461",
+        "textTypeId": 1421335,
+        "textTypeUniqueId": "5341c04e-b763-44b2-8cca-4f638eb81a5c-0015b017",
+        "ownerViewId": 1420963,
+        "ownerViewUniqueId": "d37b12da-a3ea-47b4-adce-c020870a5bf5-0015aea3",
+        "ownerViewName": "Cover Sheet",
+        "location": {
+          "x": 2.72,
+          "y": 0.62,
+          "z": 0
+        },
+        "center": {
+          "x": 3.0450000000000004,
+          "y": 0.6019881889763781,
+          "z": 0
+        },
+        "boundingBox": {
+          "min": {
+            "x": 2.713333333333334,
+            "y": 0.5773097112860893,
+            "z": 0
+          },
+          "max": {
+            "x": 3.376666666666667,
+            "y": 0.6266666666666667,
+            "z": 0
+          }
+        },
+        "widthFeet": 0.65,
+        "horizontalAlignment": "Left",
+        "verticalAlignment": "Top"
+      }
+    ],
+    "schedulePreservation": null
+  },
+  "read_id": "opv2_2f405c27b69dc9ccd806d5c01e4fae8fdd010fbd74fe7f84c9eb0defc9b2f08f",
+  "read_observation_id": "obsv2_36a05390e6b995e4a70ba421b42484da6ebeebaf565ff6b95d9a7d8b83bd73d3",
+  "snapshot": {
+    "schema": "revit-operator.assignment-snapshot/v2",
+    "assignment_version": 261,
+    "spec": {
+      "schema": "revit-operator.assignment-spec/v2",
+      "binding": {
+        "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+        "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+        "generation": 1,
+        "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+        "principal_id": "local:shared-token",
+        "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+      },
+      "source_user_request": "On sheet M000 (Cover Sheet), add one editable text note reading INTERNAL REVIEW - QA461 in unused space inside the printed page border. Keep it readable and clear of existing sheet content. Reuse a suitable existing text style without changing any text types or existing notes.\n\nSave the result as a separate Revit model named Workflow516 annotation-original Result.rvt in the workspace models folder. Preserve the original model, all other annotations, families, schedules, views and physical model work. Do not export a PDF. Verify the actual note and saved file, then give a concise result with its location. If a technical problem prevents completion, report it accurately and stop rather than repeat an uncertain change.",
+      "requested_effect": "apply",
+      "interpreted_scope": {
+        "source_message_id": "a08153de-3a2b-4a93-97c1-a260b18a9bf8",
+        "source_request_sha256": "160cc185c4e4e59449554320a0e6b95bef35cf244466498e0532770b1e01408a",
+        "scope": {
+          "schema": "revit-operator.interpreted-operation-scope/v1",
+          "requested_effect": "apply",
+          "model_effect": "apply",
+          "protected_clauses": [
+            "Reuse a suitable existing text style without changing any text types or existing notes.",
+            "Preserve the original model, all other annotations, families, schedules, views and physical model work.",
+            "Do not export a PDF.",
+            "If a technical problem prevents completion, report it accurately and stop rather than repeat an uncertain change."
+          ],
+          "prerequisites": []
+        }
+      },
+      "work_plan_required": true,
+      "semantic_evidence_contract": "revit-operator.semantic-evidence-contract/v2",
+      "criteria": [
+        {
+          "criterion_id": "criterion-bcd7a9ecadf186542ce5",
+          "requirement": "Return a truthful, evidence-backed result for the requested work.",
+          "required": true,
+          "semantic_fact_requirements": [
+            "task.result_available"
+          ],
+          "evidence_policy": {
+            "schema": "revit-operator.criterion-evidence-policy/v2",
+            "allowed_evidence_classes": [
+              "task_result"
+            ],
+            "allowed_fulfillment_roles": [
+              "delegated_task_execution"
+            ],
+            "allowed_fact_classes": [
+              "domain"
+            ],
+            "allowed_capability_ids": [],
+            "allowed_result_schema_ids": [],
+            "required_fact_ids": [
+              "task.result_available"
+            ],
+            "require_native_dispatch": true,
+            "require_current_generation": true
+          },
+          "accepted_evaluator_authority_ids": [
+            "operator-runtime"
+          ],
+          "accepted_observation_authority_ids": [
+            "native-host",
+            "dynamic-runtime",
+            "operator-evidence-store"
+          ]
+        }
+      ],
+      "input_variables": [],
+      "work_units": [
+        {
+          "work_unit_id": "work-discovery",
+          "requested_effect": "read",
+          "execution_class": "analysis",
+          "dependency_ids": [],
+          "criterion_ids": [
+            "criterion-bcd7a9ecadf186542ce5"
+          ],
+          "input_variable_ids": [],
+          "independently_useful": false,
+          "safe_to_retain": true,
+          "rollback_scope": "none"
+        },
+        {
+          "work_unit_id": "work-preview",
+          "requested_effect": "preview",
+          "execution_class": "coupled_atomic",
+          "dependency_ids": [],
+          "criterion_ids": [
+            "criterion-bcd7a9ecadf186542ce5"
+          ],
+          "input_variable_ids": [],
+          "independently_useful": false,
+          "safe_to_retain": false,
+          "rollback_scope": "operation"
+        },
+        {
+          "work_unit_id": "work-primary",
+          "requested_effect": "apply",
+          "execution_class": "independent",
+          "dependency_ids": [],
+          "criterion_ids": [
+            "criterion-bcd7a9ecadf186542ce5"
+          ],
+          "input_variable_ids": [],
+          "independently_useful": true,
+          "safe_to_retain": true,
+          "rollback_scope": "operation"
+        },
+        {
+          "work_unit_id": "work-verification",
+          "requested_effect": "read",
+          "execution_class": "analysis",
+          "dependency_ids": [],
+          "criterion_ids": [
+            "criterion-bcd7a9ecadf186542ce5"
+          ],
+          "input_variable_ids": [],
+          "independently_useful": false,
+          "safe_to_retain": true,
+          "rollback_scope": "none"
+        },
+        {
+          "work_unit_id": "work-evidence",
+          "requested_effect": "read",
+          "execution_class": "analysis",
+          "dependency_ids": [],
+          "criterion_ids": [
+            "criterion-bcd7a9ecadf186542ce5"
+          ],
+          "input_variable_ids": [],
+          "independently_useful": false,
+          "safe_to_retain": true,
+          "rollback_scope": "none"
+        }
+      ],
+      "authorization_policy_id": "operator-default",
+      "created_at": "2026-10-25T03:36:50.826Z"
+    },
+    "current_binding": {
+      "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+      "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+      "generation": 1,
+      "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+      "principal_id": "local:shared-token",
+      "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+    },
+    "input_values": {},
+    "pending_input_variable_ids": [],
+    "clarifications": {},
+    "work_unit_states": {
+      "work-discovery": "active",
+      "work-preview": "pending",
+      "work-primary": "retained",
+      "work-verification": "active",
+      "work-evidence": "active"
+    },
+    "pending_review_ids": [],
+    "provider_call_ids": [],
+    "provider_calls": {},
+    "in_flight_provider_call_ids": [],
+    "provider_budget_exhausted": false,
+    "execution_failure_ids": [],
+    "execution_failures": {},
+    "progress_epochs": [
+      {
+        "schema": "revit-operator.assignment-progress-epoch/v2",
+        "epoch_id": "{\"after\":14,\"assignment_id\":\"203636eb-8567-440a-9033-3f6d61e5c3d7\",\"before\":5,\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"]}",
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "before_assignment_version": 5,
+        "after_assignment_version": 14,
+        "unresolved_gap_ids": [
+          "criterion:criterion-bcd7a9ecadf186542ce5",
+          "work-plan:scope"
+        ],
+        "admitted_reasoning_call_ids": [],
+        "admitted_operation_ids": [
+          "opv2_9669c4bdabeb7ad170e53e2493c57d17c44c665bb3b5cf0fb8551f4973da6971"
+        ],
+        "new_observation_ids": [
+          "obsv2_bb92497752061707e9c0e49c56b03129711b5b962d00a533ecc50f6a03e9e615"
+        ],
+        "new_fact_identities": [
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.domain_succeeded\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.courier_executor_id\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.process_id\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.username\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.version\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.native_call_count\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.payload_hash\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.result_available\",\"target_id\":null}"
+        ],
+        "criterion_deltas": [],
+        "progress_fingerprint": "{\"criteria\":{},\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"],\"generation\":1,\"observations\":[\"obsv2_bb92497752061707e9c0e49c56b03129711b5b962d00a533ecc50f6a03e9e615\"],\"work_units\":{\"work-discovery\":\"active\",\"work-evidence\":\"pending\",\"work-preview\":\"pending\",\"work-primary\":\"pending\",\"work-verification\":\"pending\"}}",
+        "genuine_progress": true,
+        "progress_reasons": [
+          "controller_knowledge_added",
+          "work_unit_changed"
+        ],
+        "recorded_at": "2026-10-25T03:37:05.065Z"
+      },
+      {
+        "schema": "revit-operator.assignment-progress-epoch/v2",
+        "epoch_id": "{\"after\":26,\"assignment_id\":\"203636eb-8567-440a-9033-3f6d61e5c3d7\",\"before\":15,\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"]}",
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "before_assignment_version": 15,
+        "after_assignment_version": 26,
+        "unresolved_gap_ids": [
+          "criterion:criterion-bcd7a9ecadf186542ce5",
+          "work-plan:scope"
+        ],
+        "admitted_reasoning_call_ids": [],
+        "admitted_operation_ids": [
+          "opv2_a19beef6a1509bec2aec129a7b8fd0b6b7ae29e9e682930d1532ebf391f46ac4"
+        ],
+        "new_observation_ids": [
+          "obsv2_1b9e02bd5afbdc5b6510764fcf318b209307d0468fedbd6f65f9b750b4de0f53",
+          "obsv2_b044759ec2b0e6abfd10467419885e4fd8a3bab5b82fe0d5aed16b3f172a3626"
+        ],
+        "new_fact_identities": [
+          "{\"cardinality\":\"many\",\"dimensions\":{\"capability_id\":\"revit_search_tools\",\"method\":\"POST\",\"path\":\"/revit/create-sheet\"},\"fact_id\":\"control.capability_available\",\"target_id\":null}",
+          "{\"cardinality\":\"many\",\"dimensions\":{\"capability_id\":\"revit_search_tools\",\"method\":\"POST\",\"path\":\"/revit/create-text\"},\"fact_id\":\"control.capability_available\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{\"capability_id\":\"revit_search_tools\"},\"fact_id\":\"control.capability_discovery_status\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.generated_at\",\"target_id\":null}"
+        ],
+        "criterion_deltas": [],
+        "progress_fingerprint": "{\"criteria\":{},\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"],\"generation\":1,\"observations\":[\"obsv2_1b9e02bd5afbdc5b6510764fcf318b209307d0468fedbd6f65f9b750b4de0f53\",\"obsv2_b044759ec2b0e6abfd10467419885e4fd8a3bab5b82fe0d5aed16b3f172a3626\",\"obsv2_bb92497752061707e9c0e49c56b03129711b5b962d00a533ecc50f6a03e9e615\"],\"work_units\":{\"work-discovery\":\"active\",\"work-evidence\":\"pending\",\"work-preview\":\"pending\",\"work-primary\":\"pending\",\"work-verification\":\"pending\"}}",
+        "genuine_progress": true,
+        "progress_reasons": [
+          "controller_knowledge_added"
+        ],
+        "recorded_at": "2026-10-25T03:37:07.651Z"
+      },
+      {
+        "schema": "revit-operator.assignment-progress-epoch/v2",
+        "epoch_id": "{\"after\":38,\"assignment_id\":\"203636eb-8567-440a-9033-3f6d61e5c3d7\",\"before\":27,\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"]}",
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "before_assignment_version": 27,
+        "after_assignment_version": 38,
+        "unresolved_gap_ids": [
+          "criterion:criterion-bcd7a9ecadf186542ce5",
+          "work-plan:scope"
+        ],
+        "admitted_reasoning_call_ids": [],
+        "admitted_operation_ids": [
+          "opv2_5c91ad0ccc78c0b0f7d249f063ef70a923360e74ff35408eb718f7b548f526c2"
+        ],
+        "new_observation_ids": [
+          "obsv2_1b40c4df568a4d8fb4e5da4998511c91b353c187d47439b800a1bd0492364033",
+          "obsv2_462136291c8fe9f313e7d87878266cccfc004033935576be408239bde46182fc"
+        ],
+        "new_fact_identities": [
+          "{\"cardinality\":\"many\",\"dimensions\":{\"capability_id\":\"revit_tool_doc\",\"method\":\"POST\",\"path\":\"/revit/sheets\"},\"fact_id\":\"control.capability_available\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{\"capability_id\":\"revit_tool_doc\"},\"fact_id\":\"control.capability_discovery_status\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.description\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.example\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.group\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.method\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.path\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.risk\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.title\",\"target_id\":null}"
+        ],
+        "criterion_deltas": [],
+        "progress_fingerprint": "{\"criteria\":{},\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"],\"generation\":1,\"observations\":[\"obsv2_1b40c4df568a4d8fb4e5da4998511c91b353c187d47439b800a1bd0492364033\",\"obsv2_1b9e02bd5afbdc5b6510764fcf318b209307d0468fedbd6f65f9b750b4de0f53\",\"obsv2_462136291c8fe9f313e7d87878266cccfc004033935576be408239bde46182fc\",\"obsv2_b044759ec2b0e6abfd10467419885e4fd8a3bab5b82fe0d5aed16b3f172a3626\",\"obsv2_bb92497752061707e9c0e49c56b03129711b5b962d00a533ecc50f6a03e9e615\"],\"work_units\":{\"work-discovery\":\"active\",\"work-evidence\":\"pending\",\"work-preview\":\"pending\",\"work-primary\":\"pending\",\"work-verification\":\"pending\"}}",
+        "genuine_progress": true,
+        "progress_reasons": [
+          "controller_knowledge_added"
+        ],
+        "recorded_at": "2026-10-25T03:37:10.563Z"
+      },
+      {
+        "schema": "revit-operator.assignment-progress-epoch/v2",
+        "epoch_id": "{\"after\":45,\"assignment_id\":\"203636eb-8567-440a-9033-3f6d61e5c3d7\",\"before\":39,\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"]}",
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "before_assignment_version": 39,
+        "after_assignment_version": 45,
+        "unresolved_gap_ids": [
+          "criterion:criterion-bcd7a9ecadf186542ce5",
+          "work-plan:scope"
+        ],
+        "admitted_reasoning_call_ids": [],
+        "admitted_operation_ids": [
+          "opv2_00496ecaab4c19dc4cb7edb44c4b8b0e462e20846cf48e7eef6ed3fd73b77978"
+        ],
+        "new_observation_ids": [
+          "obsv2_0f18522cce7e8d8089d6a07859082178aae8e495b7944ea03936c4b8384d89d4"
+        ],
+        "new_fact_identities": [
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.action\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.is_placeholder\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.placed_schedule_count\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.placed_view_count\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.requested_placement_ids\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.sheet_element_id\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.sheet_id\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.sheet_name\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.sheet_number\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.status\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.title_block_count\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.view_id\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.viewport_count\",\"target_id\":null}"
+        ],
+        "criterion_deltas": [],
+        "progress_fingerprint": "{\"criteria\":{},\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"],\"generation\":1,\"observations\":[\"obsv2_0f18522cce7e8d8089d6a07859082178aae8e495b7944ea03936c4b8384d89d4\",\"obsv2_1b40c4df568a4d8fb4e5da4998511c91b353c187d47439b800a1bd0492364033\",\"obsv2_1b9e02bd5afbdc5b6510764fcf318b209307d0468fedbd6f65f9b750b4de0f53\",\"obsv2_462136291c8fe9f313e7d87878266cccfc004033935576be408239bde46182fc\",\"obsv2_b044759ec2b0e6abfd10467419885e4fd8a3bab5b82fe0d5aed16b3f172a3626\",\"obsv2_bb92497752061707e9c0e49c56b03129711b5b962d00a533ecc50f6a03e9e615\"],\"work_units\":{\"work-discovery\":\"active\",\"work-evidence\":\"pending\",\"work-preview\":\"pending\",\"work-primary\":\"pending\",\"work-verification\":\"pending\"}}",
+        "genuine_progress": true,
+        "progress_reasons": [
+          "controller_knowledge_added"
+        ],
+        "recorded_at": "2026-10-25T03:37:12.449Z"
+      },
+      {
+        "schema": "revit-operator.assignment-progress-epoch/v2",
+        "epoch_id": "{\"after\":57,\"assignment_id\":\"203636eb-8567-440a-9033-3f6d61e5c3d7\",\"before\":46,\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"]}",
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "before_assignment_version": 46,
+        "after_assignment_version": 57,
+        "unresolved_gap_ids": [
+          "criterion:criterion-bcd7a9ecadf186542ce5",
+          "work-plan:scope"
+        ],
+        "admitted_reasoning_call_ids": [],
+        "admitted_operation_ids": [
+          "opv2_f86fb329dff137f7984945aee6b9724017a776971a1df78dc5e2c53b46635223"
+        ],
+        "new_observation_ids": [
+          "obsv2_7d97ab183d521a1bb92411b47beeaebc0ca3487ac94312117e08e909cefb0331",
+          "obsv2_ccadfff1078a633c6d9e5099ff5e8b74acdcc7bde0b01c647d2015f98a862ffb"
+        ],
+        "new_fact_identities": [
+          "{\"cardinality\":\"many\",\"dimensions\":{\"capability_id\":\"revit_tool_doc\",\"method\":\"POST\",\"path\":\"/revit/find-text-notes\"},\"fact_id\":\"control.capability_available\",\"target_id\":null}"
+        ],
+        "criterion_deltas": [],
+        "progress_fingerprint": "{\"criteria\":{},\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"],\"generation\":1,\"observations\":[\"obsv2_0f18522cce7e8d8089d6a07859082178aae8e495b7944ea03936c4b8384d89d4\",\"obsv2_1b40c4df568a4d8fb4e5da4998511c91b353c187d47439b800a1bd0492364033\",\"obsv2_1b9e02bd5afbdc5b6510764fcf318b209307d0468fedbd6f65f9b750b4de0f53\",\"obsv2_462136291c8fe9f313e7d87878266cccfc004033935576be408239bde46182fc\",\"obsv2_7d97ab183d521a1bb92411b47beeaebc0ca3487ac94312117e08e909cefb0331\",\"obsv2_b044759ec2b0e6abfd10467419885e4fd8a3bab5b82fe0d5aed16b3f172a3626\",\"obsv2_bb92497752061707e9c0e49c56b03129711b5b962d00a533ecc50f6a03e9e615\",\"obsv2_ccadfff1078a633c6d9e5099ff5e8b74acdcc7bde0b01c647d2015f98a862ffb\"],\"work_units\":{\"work-discovery\":\"active\",\"work-evidence\":\"pending\",\"work-preview\":\"pending\",\"work-primary\":\"pending\",\"work-verification\":\"pending\"}}",
+        "genuine_progress": true,
+        "progress_reasons": [
+          "controller_knowledge_added"
+        ],
+        "recorded_at": "2026-10-25T03:37:15.748Z"
+      },
+      {
+        "schema": "revit-operator.assignment-progress-epoch/v2",
+        "epoch_id": "{\"after\":64,\"assignment_id\":\"203636eb-8567-440a-9033-3f6d61e5c3d7\",\"before\":58,\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"]}",
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "before_assignment_version": 58,
+        "after_assignment_version": 64,
+        "unresolved_gap_ids": [
+          "criterion:criterion-bcd7a9ecadf186542ce5",
+          "work-plan:scope"
+        ],
+        "admitted_reasoning_call_ids": [],
+        "admitted_operation_ids": [
+          "opv2_674a495b61d4e7574157a093248b2e3778aff475ef8415d636f07048a20c7ed9"
+        ],
+        "new_observation_ids": [
+          "obsv2_d8038bedc25e027f0da80a5d39364fb3436bda86dd6ede62fd6d0007983e4cf4"
+        ],
+        "new_fact_identities": [
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.doc_id\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.document_title\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.exact_element_filter_applied\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.family_document_id\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.family_name\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.items_complete\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.ok\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.schedule_preservation\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.scope\",\"target_id\":null}"
+        ],
+        "criterion_deltas": [],
+        "progress_fingerprint": "{\"criteria\":{},\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"],\"generation\":1,\"observations\":[\"obsv2_0f18522cce7e8d8089d6a07859082178aae8e495b7944ea03936c4b8384d89d4\",\"obsv2_1b40c4df568a4d8fb4e5da4998511c91b353c187d47439b800a1bd0492364033\",\"obsv2_1b9e02bd5afbdc5b6510764fcf318b209307d0468fedbd6f65f9b750b4de0f53\",\"obsv2_462136291c8fe9f313e7d87878266cccfc004033935576be408239bde46182fc\",\"obsv2_7d97ab183d521a1bb92411b47beeaebc0ca3487ac94312117e08e909cefb0331\",\"obsv2_b044759ec2b0e6abfd10467419885e4fd8a3bab5b82fe0d5aed16b3f172a3626\",\"obsv2_bb92497752061707e9c0e49c56b03129711b5b962d00a533ecc50f6a03e9e615\",\"obsv2_ccadfff1078a633c6d9e5099ff5e8b74acdcc7bde0b01c647d2015f98a862ffb\",\"obsv2_d8038bedc25e027f0da80a5d39364fb3436bda86dd6ede62fd6d0007983e4cf4\"],\"work_units\":{\"work-discovery\":\"active\",\"work-evidence\":\"pending\",\"work-preview\":\"pending\",\"work-primary\":\"pending\",\"work-verification\":\"pending\"}}",
+        "genuine_progress": true,
+        "progress_reasons": [
+          "controller_knowledge_added"
+        ],
+        "recorded_at": "2026-10-25T03:37:17.633Z"
+      },
+      {
+        "schema": "revit-operator.assignment-progress-epoch/v2",
+        "epoch_id": "{\"after\":76,\"assignment_id\":\"203636eb-8567-440a-9033-3f6d61e5c3d7\",\"before\":65,\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"]}",
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "before_assignment_version": 65,
+        "after_assignment_version": 76,
+        "unresolved_gap_ids": [
+          "criterion:criterion-bcd7a9ecadf186542ce5",
+          "work-plan:scope"
+        ],
+        "admitted_reasoning_call_ids": [],
+        "admitted_operation_ids": [
+          "opv2_4635a196bfbb09fd0f6d7343ae23f5b5a9ec5ad237226ad41a34b2156e6467d2"
+        ],
+        "new_observation_ids": [
+          "obsv2_acd73b4f8e725392483aaef86215f70027a3647697f2c17b15e89e79f75a67f4",
+          "obsv2_cbedcfbf89a86a65aa93e0f535d0ce82e82d9e88a1ea9b34998a49780f5f87b8"
+        ],
+        "new_fact_identities": [
+          "{\"cardinality\":\"many\",\"dimensions\":{\"capability_id\":\"revit_tool_doc\",\"method\":\"POST\",\"path\":\"/revit/create-text\"},\"fact_id\":\"control.capability_available\",\"target_id\":null}"
+        ],
+        "criterion_deltas": [],
+        "progress_fingerprint": "{\"criteria\":{},\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"],\"generation\":1,\"observations\":[\"obsv2_0f18522cce7e8d8089d6a07859082178aae8e495b7944ea03936c4b8384d89d4\",\"obsv2_1b40c4df568a4d8fb4e5da4998511c91b353c187d47439b800a1bd0492364033\",\"obsv2_1b9e02bd5afbdc5b6510764fcf318b209307d0468fedbd6f65f9b750b4de0f53\",\"obsv2_462136291c8fe9f313e7d87878266cccfc004033935576be408239bde46182fc\",\"obsv2_7d97ab183d521a1bb92411b47beeaebc0ca3487ac94312117e08e909cefb0331\",\"obsv2_acd73b4f8e725392483aaef86215f70027a3647697f2c17b15e89e79f75a67f4\",\"obsv2_b044759ec2b0e6abfd10467419885e4fd8a3bab5b82fe0d5aed16b3f172a3626\",\"obsv2_bb92497752061707e9c0e49c56b03129711b5b962d00a533ecc50f6a03e9e615\",\"obsv2_cbedcfbf89a86a65aa93e0f535d0ce82e82d9e88a1ea9b34998a49780f5f87b8\",\"obsv2_ccadfff1078a633c6d9e5099ff5e8b74acdcc7bde0b01c647d2015f98a862ffb\",\"obsv2_d8038bedc25e027f0da80a5d39364fb3436bda86dd6ede62fd6d0007983e4cf4\"],\"work_units\":{\"work-discovery\":\"active\",\"work-evidence\":\"pending\",\"work-preview\":\"pending\",\"work-primary\":\"pending\",\"work-verification\":\"pending\"}}",
+        "genuine_progress": true,
+        "progress_reasons": [
+          "controller_knowledge_added"
+        ],
+        "recorded_at": "2026-10-25T03:37:23.012Z"
+      },
+      {
+        "schema": "revit-operator.assignment-progress-epoch/v2",
+        "epoch_id": "{\"after\":83,\"assignment_id\":\"203636eb-8567-440a-9033-3f6d61e5c3d7\",\"before\":77,\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"]}",
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "before_assignment_version": 77,
+        "after_assignment_version": 83,
+        "unresolved_gap_ids": [
+          "criterion:criterion-bcd7a9ecadf186542ce5",
+          "work-plan:scope"
+        ],
+        "admitted_reasoning_call_ids": [],
+        "admitted_operation_ids": [
+          "opv2_084bd3821c9e850d3af2a235838426ca9663065378584bd16fa5a128b64f3240"
+        ],
+        "new_observation_ids": [
+          "obsv2_572c03d3d998721cf45aaa7c62f9ddd4a2cef2475d92843141c939e51215b9b8"
+        ],
+        "new_fact_identities": [
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.count\",\"target_id\":null}"
+        ],
+        "criterion_deltas": [],
+        "progress_fingerprint": "{\"criteria\":{},\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"],\"generation\":1,\"observations\":[\"obsv2_0f18522cce7e8d8089d6a07859082178aae8e495b7944ea03936c4b8384d89d4\",\"obsv2_1b40c4df568a4d8fb4e5da4998511c91b353c187d47439b800a1bd0492364033\",\"obsv2_1b9e02bd5afbdc5b6510764fcf318b209307d0468fedbd6f65f9b750b4de0f53\",\"obsv2_462136291c8fe9f313e7d87878266cccfc004033935576be408239bde46182fc\",\"obsv2_572c03d3d998721cf45aaa7c62f9ddd4a2cef2475d92843141c939e51215b9b8\",\"obsv2_7d97ab183d521a1bb92411b47beeaebc0ca3487ac94312117e08e909cefb0331\",\"obsv2_acd73b4f8e725392483aaef86215f70027a3647697f2c17b15e89e79f75a67f4\",\"obsv2_b044759ec2b0e6abfd10467419885e4fd8a3bab5b82fe0d5aed16b3f172a3626\",\"obsv2_bb92497752061707e9c0e49c56b03129711b5b962d00a533ecc50f6a03e9e615\",\"obsv2_cbedcfbf89a86a65aa93e0f535d0ce82e82d9e88a1ea9b34998a49780f5f87b8\",\"obsv2_ccadfff1078a633c6d9e5099ff5e8b74acdcc7bde0b01c647d2015f98a862ffb\",\"obsv2_d8038bedc25e027f0da80a5d39364fb3436bda86dd6ede62fd6d0007983e4cf4\"],\"work_units\":{\"work-discovery\":\"active\",\"work-evidence\":\"pending\",\"work-preview\":\"pending\",\"work-primary\":\"pending\",\"work-verification\":\"pending\"}}",
+        "genuine_progress": true,
+        "progress_reasons": [
+          "controller_knowledge_added"
+        ],
+        "recorded_at": "2026-10-25T03:37:24.805Z"
+      },
+      {
+        "schema": "revit-operator.assignment-progress-epoch/v2",
+        "epoch_id": "{\"after\":95,\"assignment_id\":\"203636eb-8567-440a-9033-3f6d61e5c3d7\",\"before\":85,\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"]}",
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "before_assignment_version": 85,
+        "after_assignment_version": 95,
+        "unresolved_gap_ids": [
+          "criterion:criterion-bcd7a9ecadf186542ce5",
+          "work-plan:scope"
+        ],
+        "admitted_reasoning_call_ids": [],
+        "admitted_operation_ids": [
+          "opv2_054a3f2d689779636a342d9271d99d00b4a2d229a09f225fd92b1a5b54ecc2f1"
+        ],
+        "new_observation_ids": [
+          "obsv2_2983e9b07d6f21a143fb711b311b974253a1f36a47345198f27ee4305631154e",
+          "obsv2_9da8f37007339b60463874b7cf236a75468ff8ef7d714fa1f9206fd89aaf5aaa"
+        ],
+        "new_fact_identities": [
+          "{\"cardinality\":\"many\",\"dimensions\":{\"capability_id\":\"revit_tool_doc\",\"method\":\"POST\",\"path\":\"/revit/export-visible-elements\"},\"fact_id\":\"control.capability_available\",\"target_id\":null}"
+        ],
+        "criterion_deltas": [],
+        "progress_fingerprint": "{\"criteria\":{},\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"],\"generation\":1,\"observations\":[\"obsv2_0f18522cce7e8d8089d6a07859082178aae8e495b7944ea03936c4b8384d89d4\",\"obsv2_1b40c4df568a4d8fb4e5da4998511c91b353c187d47439b800a1bd0492364033\",\"obsv2_1b9e02bd5afbdc5b6510764fcf318b209307d0468fedbd6f65f9b750b4de0f53\",\"obsv2_2983e9b07d6f21a143fb711b311b974253a1f36a47345198f27ee4305631154e\",\"obsv2_462136291c8fe9f313e7d87878266cccfc004033935576be408239bde46182fc\",\"obsv2_572c03d3d998721cf45aaa7c62f9ddd4a2cef2475d92843141c939e51215b9b8\",\"obsv2_7d97ab183d521a1bb92411b47beeaebc0ca3487ac94312117e08e909cefb0331\",\"obsv2_9da8f37007339b60463874b7cf236a75468ff8ef7d714fa1f9206fd89aaf5aaa\",\"obsv2_acd73b4f8e725392483aaef86215f70027a3647697f2c17b15e89e79f75a67f4\",\"obsv2_b044759ec2b0e6abfd10467419885e4fd8a3bab5b82fe0d5aed16b3f172a3626\",\"obsv2_bb92497752061707e9c0e49c56b03129711b5b962d00a533ecc50f6a03e9e615\",\"obsv2_cbedcfbf89a86a65aa93e0f535d0ce82e82d9e88a1ea9b34998a49780f5f87b8\",\"obsv2_ccadfff1078a633c6d9e5099ff5e8b74acdcc7bde0b01c647d2015f98a862ffb\",\"obsv2_d8038bedc25e027f0da80a5d39364fb3436bda86dd6ede62fd6d0007983e4cf4\"],\"work_units\":{\"work-discovery\":\"active\",\"work-evidence\":\"pending\",\"work-preview\":\"pending\",\"work-primary\":\"pending\",\"work-verification\":\"pending\"}}",
+        "genuine_progress": true,
+        "progress_reasons": [
+          "controller_knowledge_added"
+        ],
+        "recorded_at": "2026-10-25T03:37:29.434Z"
+      },
+      {
+        "schema": "revit-operator.assignment-progress-epoch/v2",
+        "epoch_id": "{\"after\":105,\"assignment_id\":\"203636eb-8567-440a-9033-3f6d61e5c3d7\",\"before\":96,\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"]}",
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "before_assignment_version": 96,
+        "after_assignment_version": 105,
+        "unresolved_gap_ids": [
+          "criterion:criterion-bcd7a9ecadf186542ce5",
+          "work-plan:scope"
+        ],
+        "admitted_reasoning_call_ids": [],
+        "admitted_operation_ids": [
+          "opv2_ceb8ab4c6f9b1bca118b3d06898f1651a0480fb784630ecdeb91c4808aaa483e"
+        ],
+        "new_observation_ids": [
+          "obsv2_89bfe2689963846db158fd93080a2f8d31ea483d66670fabfef7946975f86a1c"
+        ],
+        "new_fact_identities": [
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.ocr\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.ocr_attempts\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.ocr_errors\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.ocr_ready\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.region\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.sheet_view_id\",\"target_id\":null}"
+        ],
+        "criterion_deltas": [],
+        "progress_fingerprint": "{\"criteria\":{},\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"],\"generation\":1,\"observations\":[\"obsv2_0f18522cce7e8d8089d6a07859082178aae8e495b7944ea03936c4b8384d89d4\",\"obsv2_1b40c4df568a4d8fb4e5da4998511c91b353c187d47439b800a1bd0492364033\",\"obsv2_1b9e02bd5afbdc5b6510764fcf318b209307d0468fedbd6f65f9b750b4de0f53\",\"obsv2_2983e9b07d6f21a143fb711b311b974253a1f36a47345198f27ee4305631154e\",\"obsv2_462136291c8fe9f313e7d87878266cccfc004033935576be408239bde46182fc\",\"obsv2_572c03d3d998721cf45aaa7c62f9ddd4a2cef2475d92843141c939e51215b9b8\",\"obsv2_7d97ab183d521a1bb92411b47beeaebc0ca3487ac94312117e08e909cefb0331\",\"obsv2_89bfe2689963846db158fd93080a2f8d31ea483d66670fabfef7946975f86a1c\",\"obsv2_9da8f37007339b60463874b7cf236a75468ff8ef7d714fa1f9206fd89aaf5aaa\",\"obsv2_acd73b4f8e725392483aaef86215f70027a3647697f2c17b15e89e79f75a67f4\",\"obsv2_b044759ec2b0e6abfd10467419885e4fd8a3bab5b82fe0d5aed16b3f172a3626\",\"obsv2_bb92497752061707e9c0e49c56b03129711b5b962d00a533ecc50f6a03e9e615\",\"obsv2_cbedcfbf89a86a65aa93e0f535d0ce82e82d9e88a1ea9b34998a49780f5f87b8\",\"obsv2_ccadfff1078a633c6d9e5099ff5e8b74acdcc7bde0b01c647d2015f98a862ffb\",\"obsv2_d8038bedc25e027f0da80a5d39364fb3436bda86dd6ede62fd6d0007983e4cf4\"],\"work_units\":{\"work-discovery\":\"active\",\"work-evidence\":\"pending\",\"work-preview\":\"pending\",\"work-primary\":\"pending\",\"work-verification\":\"pending\"}}",
+        "genuine_progress": true,
+        "progress_reasons": [
+          "controller_knowledge_added"
+        ],
+        "recorded_at": "2026-10-25T03:37:36.450Z"
+      },
+      {
+        "schema": "revit-operator.assignment-progress-epoch/v2",
+        "epoch_id": "{\"after\":116,\"assignment_id\":\"203636eb-8567-440a-9033-3f6d61e5c3d7\",\"before\":110,\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"]}",
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "before_assignment_version": 110,
+        "after_assignment_version": 116,
+        "unresolved_gap_ids": [
+          "criterion:criterion-bcd7a9ecadf186542ce5",
+          "work-plan:scope"
+        ],
+        "admitted_reasoning_call_ids": [],
+        "admitted_operation_ids": [
+          "opv2_670b306b04707b6ded18165c34144ec1d3a932e6cdeb18b665eb46d227154052"
+        ],
+        "new_observation_ids": [
+          "obsv2_9593ebc482c88375728babea828da261035c6a8541e259c8ae0b0edbf2874881"
+        ],
+        "new_fact_identities": [
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.applied\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.success\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.text_note_id\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.native_change_inventory_complete\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"task.result_available\",\"target_id\":null}"
+        ],
+        "criterion_deltas": [],
+        "progress_fingerprint": "{\"criteria\":{},\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"verification:opv2_670b306b04707b6ded18165c34144ec1d3a932e6cdeb18b665eb46d227154052\",\"work-plan:scope\"],\"generation\":1,\"observations\":[\"obsv2_0f18522cce7e8d8089d6a07859082178aae8e495b7944ea03936c4b8384d89d4\",\"obsv2_1b40c4df568a4d8fb4e5da4998511c91b353c187d47439b800a1bd0492364033\",\"obsv2_1b9e02bd5afbdc5b6510764fcf318b209307d0468fedbd6f65f9b750b4de0f53\",\"obsv2_2983e9b07d6f21a143fb711b311b974253a1f36a47345198f27ee4305631154e\",\"obsv2_462136291c8fe9f313e7d87878266cccfc004033935576be408239bde46182fc\",\"obsv2_572c03d3d998721cf45aaa7c62f9ddd4a2cef2475d92843141c939e51215b9b8\",\"obsv2_7d97ab183d521a1bb92411b47beeaebc0ca3487ac94312117e08e909cefb0331\",\"obsv2_89bfe2689963846db158fd93080a2f8d31ea483d66670fabfef7946975f86a1c\",\"obsv2_9593ebc482c88375728babea828da261035c6a8541e259c8ae0b0edbf2874881\",\"obsv2_9da8f37007339b60463874b7cf236a75468ff8ef7d714fa1f9206fd89aaf5aaa\",\"obsv2_acd73b4f8e725392483aaef86215f70027a3647697f2c17b15e89e79f75a67f4\",\"obsv2_b044759ec2b0e6abfd10467419885e4fd8a3bab5b82fe0d5aed16b3f172a3626\",\"obsv2_bb92497752061707e9c0e49c56b03129711b5b962d00a533ecc50f6a03e9e615\",\"obsv2_cbedcfbf89a86a65aa93e0f535d0ce82e82d9e88a1ea9b34998a49780f5f87b8\",\"obsv2_ccadfff1078a633c6d9e5099ff5e8b74acdcc7bde0b01c647d2015f98a862ffb\",\"obsv2_d8038bedc25e027f0da80a5d39364fb3436bda86dd6ede62fd6d0007983e4cf4\"],\"work_units\":{\"work-discovery\":\"active\",\"work-evidence\":\"pending\",\"work-preview\":\"pending\",\"work-primary\":\"retained\",\"work-verification\":\"pending\"}}",
+        "genuine_progress": true,
+        "progress_reasons": [
+          "native_change_committed",
+          "controller_knowledge_added",
+          "authoritative_observation_added",
+          "work_unit_changed"
+        ],
+        "recorded_at": "2026-10-25T03:37:56.269Z"
+      },
+      {
+        "schema": "revit-operator.assignment-progress-epoch/v2",
+        "epoch_id": "{\"after\":122,\"assignment_id\":\"203636eb-8567-440a-9033-3f6d61e5c3d7\",\"before\":118,\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"verification:opv2_670b306b04707b6ded18165c34144ec1d3a932e6cdeb18b665eb46d227154052\",\"work-plan:scope\"]}",
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "before_assignment_version": 118,
+        "after_assignment_version": 122,
+        "unresolved_gap_ids": [
+          "criterion:criterion-bcd7a9ecadf186542ce5",
+          "verification:opv2_670b306b04707b6ded18165c34144ec1d3a932e6cdeb18b665eb46d227154052",
+          "work-plan:scope"
+        ],
+        "admitted_reasoning_call_ids": [],
+        "admitted_operation_ids": [
+          "opv2_02398a8651b0b32738379b1b488ca5592c3d9d60ea94a69130d88dff57b68e2d"
+        ],
+        "new_observation_ids": [
+          "obsv2_4a509d1a8ef4d469dbe9aa0a1d59572fe8345087861c40d06c8c9e3d7522b659"
+        ],
+        "new_fact_identities": [
+          "{\"cardinality\":\"many\",\"dimensions\":{},\"fact_id\":\"verification.deliverable_target_identities\",\"member_value\":[\"element_id:1545903\"],\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"verification.postcondition_satisfied\",\"target_id\":null}"
+        ],
+        "criterion_deltas": [],
+        "progress_fingerprint": "{\"criteria\":{},\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"],\"generation\":1,\"observations\":[\"obsv2_0f18522cce7e8d8089d6a07859082178aae8e495b7944ea03936c4b8384d89d4\",\"obsv2_1b40c4df568a4d8fb4e5da4998511c91b353c187d47439b800a1bd0492364033\",\"obsv2_1b9e02bd5afbdc5b6510764fcf318b209307d0468fedbd6f65f9b750b4de0f53\",\"obsv2_2983e9b07d6f21a143fb711b311b974253a1f36a47345198f27ee4305631154e\",\"obsv2_462136291c8fe9f313e7d87878266cccfc004033935576be408239bde46182fc\",\"obsv2_4a509d1a8ef4d469dbe9aa0a1d59572fe8345087861c40d06c8c9e3d7522b659\",\"obsv2_572c03d3d998721cf45aaa7c62f9ddd4a2cef2475d92843141c939e51215b9b8\",\"obsv2_7d97ab183d521a1bb92411b47beeaebc0ca3487ac94312117e08e909cefb0331\",\"obsv2_89bfe2689963846db158fd93080a2f8d31ea483d66670fabfef7946975f86a1c\",\"obsv2_9593ebc482c88375728babea828da261035c6a8541e259c8ae0b0edbf2874881\",\"obsv2_9da8f37007339b60463874b7cf236a75468ff8ef7d714fa1f9206fd89aaf5aaa\",\"obsv2_acd73b4f8e725392483aaef86215f70027a3647697f2c17b15e89e79f75a67f4\",\"obsv2_b044759ec2b0e6abfd10467419885e4fd8a3bab5b82fe0d5aed16b3f172a3626\",\"obsv2_bb92497752061707e9c0e49c56b03129711b5b962d00a533ecc50f6a03e9e615\",\"obsv2_cbedcfbf89a86a65aa93e0f535d0ce82e82d9e88a1ea9b34998a49780f5f87b8\",\"obsv2_ccadfff1078a633c6d9e5099ff5e8b74acdcc7bde0b01c647d2015f98a862ffb\",\"obsv2_d8038bedc25e027f0da80a5d39364fb3436bda86dd6ede62fd6d0007983e4cf4\"],\"work_units\":{\"work-discovery\":\"active\",\"work-evidence\":\"pending\",\"work-preview\":\"pending\",\"work-primary\":\"retained\",\"work-verification\":\"active\"}}",
+        "genuine_progress": true,
+        "progress_reasons": [
+          "verification_observation_added",
+          "gap_narrowed",
+          "authoritative_observation_added"
+        ],
+        "recorded_at": "2026-10-25T03:37:57.510Z"
+      },
+      {
+        "schema": "revit-operator.assignment-progress-epoch/v2",
+        "epoch_id": "{\"after\":129,\"assignment_id\":\"203636eb-8567-440a-9033-3f6d61e5c3d7\",\"before\":123,\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"]}",
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "before_assignment_version": 123,
+        "after_assignment_version": 129,
+        "unresolved_gap_ids": [
+          "criterion:criterion-bcd7a9ecadf186542ce5",
+          "work-plan:scope"
+        ],
+        "admitted_reasoning_call_ids": [],
+        "admitted_operation_ids": [
+          "opv2_1654806af7f7bd756b8345720fec6c0fe6b68bc70a5ec688ed58891568c145c8"
+        ],
+        "new_observation_ids": [
+          "obsv2_ba334e20f2390a2fc4b5ada8b6bf98ed0d11b081b79f4bd460adafd77c114708"
+        ],
+        "new_fact_identities": [
+          "{\"cardinality\":\"many\",\"dimensions\":{\"capability_id\":\"operator_retrieve_evidence\",\"evidence_id\":\"ev1_YNH0Y9P2OZXDZKB4WjPJQY2hED8PR_0h\",\"selection_path\":\"items\"},\"fact_id\":\"control.evidence_selection_available\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{\"capability_id\":\"operator_retrieve_evidence\",\"evidence_id\":\"ev1_YNH0Y9P2OZXDZKB4WjPJQY2hED8PR_0h\"},\"fact_id\":\"control.evidence_retrieval_status\",\"target_id\":null}"
+        ],
+        "criterion_deltas": [],
+        "progress_fingerprint": "{\"criteria\":{},\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"],\"generation\":1,\"observations\":[\"obsv2_0f18522cce7e8d8089d6a07859082178aae8e495b7944ea03936c4b8384d89d4\",\"obsv2_1b40c4df568a4d8fb4e5da4998511c91b353c187d47439b800a1bd0492364033\",\"obsv2_1b9e02bd5afbdc5b6510764fcf318b209307d0468fedbd6f65f9b750b4de0f53\",\"obsv2_2983e9b07d6f21a143fb711b311b974253a1f36a47345198f27ee4305631154e\",\"obsv2_462136291c8fe9f313e7d87878266cccfc004033935576be408239bde46182fc\",\"obsv2_4a509d1a8ef4d469dbe9aa0a1d59572fe8345087861c40d06c8c9e3d7522b659\",\"obsv2_572c03d3d998721cf45aaa7c62f9ddd4a2cef2475d92843141c939e51215b9b8\",\"obsv2_7d97ab183d521a1bb92411b47beeaebc0ca3487ac94312117e08e909cefb0331\",\"obsv2_89bfe2689963846db158fd93080a2f8d31ea483d66670fabfef7946975f86a1c\",\"obsv2_9593ebc482c88375728babea828da261035c6a8541e259c8ae0b0edbf2874881\",\"obsv2_9da8f37007339b60463874b7cf236a75468ff8ef7d714fa1f9206fd89aaf5aaa\",\"obsv2_acd73b4f8e725392483aaef86215f70027a3647697f2c17b15e89e79f75a67f4\",\"obsv2_b044759ec2b0e6abfd10467419885e4fd8a3bab5b82fe0d5aed16b3f172a3626\",\"obsv2_ba334e20f2390a2fc4b5ada8b6bf98ed0d11b081b79f4bd460adafd77c114708\",\"obsv2_bb92497752061707e9c0e49c56b03129711b5b962d00a533ecc50f6a03e9e615\",\"obsv2_cbedcfbf89a86a65aa93e0f535d0ce82e82d9e88a1ea9b34998a49780f5f87b8\",\"obsv2_ccadfff1078a633c6d9e5099ff5e8b74acdcc7bde0b01c647d2015f98a862ffb\",\"obsv2_d8038bedc25e027f0da80a5d39364fb3436bda86dd6ede62fd6d0007983e4cf4\"],\"work_units\":{\"work-discovery\":\"active\",\"work-evidence\":\"active\",\"work-preview\":\"pending\",\"work-primary\":\"retained\",\"work-verification\":\"active\"}}",
+        "genuine_progress": true,
+        "progress_reasons": [
+          "controller_knowledge_added",
+          "work_unit_changed"
+        ],
+        "recorded_at": "2026-10-25T03:38:00.391Z"
+      },
+      {
+        "schema": "revit-operator.assignment-progress-epoch/v2",
+        "epoch_id": "{\"after\":173,\"assignment_id\":\"203636eb-8567-440a-9033-3f6d61e5c3d7\",\"before\":167,\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"]}",
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "before_assignment_version": 167,
+        "after_assignment_version": 173,
+        "unresolved_gap_ids": [
+          "criterion:criterion-bcd7a9ecadf186542ce5",
+          "work-plan:scope"
+        ],
+        "admitted_reasoning_call_ids": [],
+        "admitted_operation_ids": [
+          "opv2_3aeba07c780c3ea836e13926934ada8de0c8e70b1769250bee3d143e49884a67"
+        ],
+        "new_observation_ids": [
+          "obsv2_8dfc509852ff0bc4d235b50cf85906b2b2a7416854b4ed4727c4e95c4aeb0631"
+        ],
+        "new_fact_identities": [
+          "{\"cardinality\":\"many\",\"dimensions\":{\"capability_id\":\"revit_search_tools\",\"method\":\"POST\",\"path\":\"/revit/save-as\"},\"fact_id\":\"control.capability_available\",\"target_id\":null}"
+        ],
+        "criterion_deltas": [],
+        "progress_fingerprint": "{\"criteria\":{},\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"],\"generation\":1,\"observations\":[\"obsv2_0f18522cce7e8d8089d6a07859082178aae8e495b7944ea03936c4b8384d89d4\",\"obsv2_1b40c4df568a4d8fb4e5da4998511c91b353c187d47439b800a1bd0492364033\",\"obsv2_1b9e02bd5afbdc5b6510764fcf318b209307d0468fedbd6f65f9b750b4de0f53\",\"obsv2_2983e9b07d6f21a143fb711b311b974253a1f36a47345198f27ee4305631154e\",\"obsv2_462136291c8fe9f313e7d87878266cccfc004033935576be408239bde46182fc\",\"obsv2_4a509d1a8ef4d469dbe9aa0a1d59572fe8345087861c40d06c8c9e3d7522b659\",\"obsv2_572c03d3d998721cf45aaa7c62f9ddd4a2cef2475d92843141c939e51215b9b8\",\"obsv2_7d97ab183d521a1bb92411b47beeaebc0ca3487ac94312117e08e909cefb0331\",\"obsv2_89bfe2689963846db158fd93080a2f8d31ea483d66670fabfef7946975f86a1c\",\"obsv2_8dfc509852ff0bc4d235b50cf85906b2b2a7416854b4ed4727c4e95c4aeb0631\",\"obsv2_9593ebc482c88375728babea828da261035c6a8541e259c8ae0b0edbf2874881\",\"obsv2_9da8f37007339b60463874b7cf236a75468ff8ef7d714fa1f9206fd89aaf5aaa\",\"obsv2_acd73b4f8e725392483aaef86215f70027a3647697f2c17b15e89e79f75a67f4\",\"obsv2_b044759ec2b0e6abfd10467419885e4fd8a3bab5b82fe0d5aed16b3f172a3626\",\"obsv2_ba334e20f2390a2fc4b5ada8b6bf98ed0d11b081b79f4bd460adafd77c114708\",\"obsv2_bb92497752061707e9c0e49c56b03129711b5b962d00a533ecc50f6a03e9e615\",\"obsv2_cbedcfbf89a86a65aa93e0f535d0ce82e82d9e88a1ea9b34998a49780f5f87b8\",\"obsv2_ccadfff1078a633c6d9e5099ff5e8b74acdcc7bde0b01c647d2015f98a862ffb\",\"obsv2_d8038bedc25e027f0da80a5d39364fb3436bda86dd6ede62fd6d0007983e4cf4\"],\"work_units\":{\"work-discovery\":\"active\",\"work-evidence\":\"active\",\"work-preview\":\"pending\",\"work-primary\":\"retained\",\"work-verification\":\"active\"}}",
+        "genuine_progress": true,
+        "progress_reasons": [
+          "controller_knowledge_added"
+        ],
+        "recorded_at": "2026-10-25T03:39:20.316Z"
+      },
+      {
+        "schema": "revit-operator.assignment-progress-epoch/v2",
+        "epoch_id": "{\"after\":180,\"assignment_id\":\"203636eb-8567-440a-9033-3f6d61e5c3d7\",\"before\":175,\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"]}",
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "before_assignment_version": 175,
+        "after_assignment_version": 180,
+        "unresolved_gap_ids": [
+          "criterion:criterion-bcd7a9ecadf186542ce5",
+          "work-plan:scope"
+        ],
+        "admitted_reasoning_call_ids": [],
+        "admitted_operation_ids": [
+          "opv2_3bc9ed030b0be586afb0ab9dafa386b31122e45a6e4362d2f4885a72949dcd77"
+        ],
+        "new_observation_ids": [
+          "obsv2_a34d820c4aa2989545ddcdb48afc9d94de8c53a0f01dc6dcacf9fcfd88a238bc"
+        ],
+        "new_fact_identities": [
+          "{\"cardinality\":\"one\",\"dimensions\":{\"capability_id\":\"operator_retrieve_evidence\",\"evidence_id\":\"ev1_OGR58z212oH6zF01IpvrLvvOuIZKvLK-\"},\"fact_id\":\"control.evidence_retrieval_status\",\"target_id\":null}"
+        ],
+        "criterion_deltas": [],
+        "progress_fingerprint": "{\"criteria\":{},\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"],\"generation\":1,\"observations\":[\"obsv2_0f18522cce7e8d8089d6a07859082178aae8e495b7944ea03936c4b8384d89d4\",\"obsv2_1b40c4df568a4d8fb4e5da4998511c91b353c187d47439b800a1bd0492364033\",\"obsv2_1b9e02bd5afbdc5b6510764fcf318b209307d0468fedbd6f65f9b750b4de0f53\",\"obsv2_2983e9b07d6f21a143fb711b311b974253a1f36a47345198f27ee4305631154e\",\"obsv2_462136291c8fe9f313e7d87878266cccfc004033935576be408239bde46182fc\",\"obsv2_4a509d1a8ef4d469dbe9aa0a1d59572fe8345087861c40d06c8c9e3d7522b659\",\"obsv2_572c03d3d998721cf45aaa7c62f9ddd4a2cef2475d92843141c939e51215b9b8\",\"obsv2_7d97ab183d521a1bb92411b47beeaebc0ca3487ac94312117e08e909cefb0331\",\"obsv2_89bfe2689963846db158fd93080a2f8d31ea483d66670fabfef7946975f86a1c\",\"obsv2_8dfc509852ff0bc4d235b50cf85906b2b2a7416854b4ed4727c4e95c4aeb0631\",\"obsv2_9593ebc482c88375728babea828da261035c6a8541e259c8ae0b0edbf2874881\",\"obsv2_9da8f37007339b60463874b7cf236a75468ff8ef7d714fa1f9206fd89aaf5aaa\",\"obsv2_a34d820c4aa2989545ddcdb48afc9d94de8c53a0f01dc6dcacf9fcfd88a238bc\",\"obsv2_acd73b4f8e725392483aaef86215f70027a3647697f2c17b15e89e79f75a67f4\",\"obsv2_b044759ec2b0e6abfd10467419885e4fd8a3bab5b82fe0d5aed16b3f172a3626\",\"obsv2_ba334e20f2390a2fc4b5ada8b6bf98ed0d11b081b79f4bd460adafd77c114708\",\"obsv2_bb92497752061707e9c0e49c56b03129711b5b962d00a533ecc50f6a03e9e615\",\"obsv2_cbedcfbf89a86a65aa93e0f535d0ce82e82d9e88a1ea9b34998a49780f5f87b8\",\"obsv2_ccadfff1078a633c6d9e5099ff5e8b74acdcc7bde0b01c647d2015f98a862ffb\",\"obsv2_d8038bedc25e027f0da80a5d39364fb3436bda86dd6ede62fd6d0007983e4cf4\"],\"work_units\":{\"work-discovery\":\"active\",\"work-evidence\":\"active\",\"work-preview\":\"pending\",\"work-primary\":\"retained\",\"work-verification\":\"active\"}}",
+        "genuine_progress": true,
+        "progress_reasons": [
+          "controller_knowledge_added"
+        ],
+        "recorded_at": "2026-10-25T03:39:26.794Z"
+      },
+      {
+        "schema": "revit-operator.assignment-progress-epoch/v2",
+        "epoch_id": "{\"after\":196,\"assignment_id\":\"203636eb-8567-440a-9033-3f6d61e5c3d7\",\"before\":186,\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"]}",
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "before_assignment_version": 186,
+        "after_assignment_version": 196,
+        "unresolved_gap_ids": [
+          "criterion:criterion-bcd7a9ecadf186542ce5",
+          "work-plan:scope"
+        ],
+        "admitted_reasoning_call_ids": [],
+        "admitted_operation_ids": [
+          "opv2_25999c7929324f36ce5d068de8d4ec918853fef607594639f5e0919712297132"
+        ],
+        "new_observation_ids": [
+          "obsv2_7e837b1e4df251ebac3e04d1dbe238e0fd0b0743b3cb13139d96330958646f9d",
+          "obsv2_89f888ebf775e6f805e5da93e4627b8dc13a8f715dd9dd2eede7cc2f72914d20"
+        ],
+        "new_fact_identities": [
+          "{\"cardinality\":\"many\",\"dimensions\":{\"capability_id\":\"revit_tool_doc\",\"method\":\"POST\",\"path\":\"/revit/inspect-exported-files\"},\"fact_id\":\"control.capability_available\",\"target_id\":null}"
+        ],
+        "criterion_deltas": [],
+        "progress_fingerprint": "{\"criteria\":{},\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"],\"generation\":1,\"observations\":[\"obsv2_0f18522cce7e8d8089d6a07859082178aae8e495b7944ea03936c4b8384d89d4\",\"obsv2_1b40c4df568a4d8fb4e5da4998511c91b353c187d47439b800a1bd0492364033\",\"obsv2_1b9e02bd5afbdc5b6510764fcf318b209307d0468fedbd6f65f9b750b4de0f53\",\"obsv2_2983e9b07d6f21a143fb711b311b974253a1f36a47345198f27ee4305631154e\",\"obsv2_462136291c8fe9f313e7d87878266cccfc004033935576be408239bde46182fc\",\"obsv2_4a509d1a8ef4d469dbe9aa0a1d59572fe8345087861c40d06c8c9e3d7522b659\",\"obsv2_572c03d3d998721cf45aaa7c62f9ddd4a2cef2475d92843141c939e51215b9b8\",\"obsv2_7d97ab183d521a1bb92411b47beeaebc0ca3487ac94312117e08e909cefb0331\",\"obsv2_7e837b1e4df251ebac3e04d1dbe238e0fd0b0743b3cb13139d96330958646f9d\",\"obsv2_89bfe2689963846db158fd93080a2f8d31ea483d66670fabfef7946975f86a1c\",\"obsv2_89f888ebf775e6f805e5da93e4627b8dc13a8f715dd9dd2eede7cc2f72914d20\",\"obsv2_8dfc509852ff0bc4d235b50cf85906b2b2a7416854b4ed4727c4e95c4aeb0631\",\"obsv2_9593ebc482c88375728babea828da261035c6a8541e259c8ae0b0edbf2874881\",\"obsv2_9da8f37007339b60463874b7cf236a75468ff8ef7d714fa1f9206fd89aaf5aaa\",\"obsv2_a34d820c4aa2989545ddcdb48afc9d94de8c53a0f01dc6dcacf9fcfd88a238bc\",\"obsv2_acd73b4f8e725392483aaef86215f70027a3647697f2c17b15e89e79f75a67f4\",\"obsv2_b044759ec2b0e6abfd10467419885e4fd8a3bab5b82fe0d5aed16b3f172a3626\",\"obsv2_ba334e20f2390a2fc4b5ada8b6bf98ed0d11b081b79f4bd460adafd77c114708\",\"obsv2_bb92497752061707e9c0e49c56b03129711b5b962d00a533ecc50f6a03e9e615\",\"obsv2_cbedcfbf89a86a65aa93e0f535d0ce82e82d9e88a1ea9b34998a49780f5f87b8\",\"obsv2_ccadfff1078a633c6d9e5099ff5e8b74acdcc7bde0b01c647d2015f98a862ffb\",\"obsv2_d8038bedc25e027f0da80a5d39364fb3436bda86dd6ede62fd6d0007983e4cf4\"],\"work_units\":{\"work-discovery\":\"active\",\"work-evidence\":\"active\",\"work-preview\":\"pending\",\"work-primary\":\"retained\",\"work-verification\":\"active\"}}",
+        "genuine_progress": true,
+        "progress_reasons": [
+          "controller_knowledge_added"
+        ],
+        "recorded_at": "2026-10-25T03:39:36.180Z"
+      },
+      {
+        "schema": "revit-operator.assignment-progress-epoch/v2",
+        "epoch_id": "{\"after\":203,\"assignment_id\":\"203636eb-8567-440a-9033-3f6d61e5c3d7\",\"before\":197,\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"]}",
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "before_assignment_version": 197,
+        "after_assignment_version": 203,
+        "unresolved_gap_ids": [
+          "criterion:criterion-bcd7a9ecadf186542ce5",
+          "work-plan:scope"
+        ],
+        "admitted_reasoning_call_ids": [],
+        "admitted_operation_ids": [
+          "opv2_ca0f9636f100b0e433508dcbca1ffd8f6b7366bcb8e6b3fdc253fecefbdbbcc2"
+        ],
+        "new_observation_ids": [
+          "obsv2_3d74ace46131d93dab5da65be419347fc69ae3f22a549132485de4f5742badd6"
+        ],
+        "new_fact_identities": [
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.schema\",\"target_id\":null}"
+        ],
+        "criterion_deltas": [],
+        "progress_fingerprint": "{\"criteria\":{},\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"],\"generation\":1,\"observations\":[\"obsv2_0f18522cce7e8d8089d6a07859082178aae8e495b7944ea03936c4b8384d89d4\",\"obsv2_1b40c4df568a4d8fb4e5da4998511c91b353c187d47439b800a1bd0492364033\",\"obsv2_1b9e02bd5afbdc5b6510764fcf318b209307d0468fedbd6f65f9b750b4de0f53\",\"obsv2_2983e9b07d6f21a143fb711b311b974253a1f36a47345198f27ee4305631154e\",\"obsv2_3d74ace46131d93dab5da65be419347fc69ae3f22a549132485de4f5742badd6\",\"obsv2_462136291c8fe9f313e7d87878266cccfc004033935576be408239bde46182fc\",\"obsv2_4a509d1a8ef4d469dbe9aa0a1d59572fe8345087861c40d06c8c9e3d7522b659\",\"obsv2_572c03d3d998721cf45aaa7c62f9ddd4a2cef2475d92843141c939e51215b9b8\",\"obsv2_7d97ab183d521a1bb92411b47beeaebc0ca3487ac94312117e08e909cefb0331\",\"obsv2_7e837b1e4df251ebac3e04d1dbe238e0fd0b0743b3cb13139d96330958646f9d\",\"obsv2_89bfe2689963846db158fd93080a2f8d31ea483d66670fabfef7946975f86a1c\",\"obsv2_89f888ebf775e6f805e5da93e4627b8dc13a8f715dd9dd2eede7cc2f72914d20\",\"obsv2_8dfc509852ff0bc4d235b50cf85906b2b2a7416854b4ed4727c4e95c4aeb0631\",\"obsv2_9593ebc482c88375728babea828da261035c6a8541e259c8ae0b0edbf2874881\",\"obsv2_9da8f37007339b60463874b7cf236a75468ff8ef7d714fa1f9206fd89aaf5aaa\",\"obsv2_a34d820c4aa2989545ddcdb48afc9d94de8c53a0f01dc6dcacf9fcfd88a238bc\",\"obsv2_acd73b4f8e725392483aaef86215f70027a3647697f2c17b15e89e79f75a67f4\",\"obsv2_b044759ec2b0e6abfd10467419885e4fd8a3bab5b82fe0d5aed16b3f172a3626\",\"obsv2_ba334e20f2390a2fc4b5ada8b6bf98ed0d11b081b79f4bd460adafd77c114708\",\"obsv2_bb92497752061707e9c0e49c56b03129711b5b962d00a533ecc50f6a03e9e615\",\"obsv2_cbedcfbf89a86a65aa93e0f535d0ce82e82d9e88a1ea9b34998a49780f5f87b8\",\"obsv2_ccadfff1078a633c6d9e5099ff5e8b74acdcc7bde0b01c647d2015f98a862ffb\",\"obsv2_d8038bedc25e027f0da80a5d39364fb3436bda86dd6ede62fd6d0007983e4cf4\"],\"work_units\":{\"work-discovery\":\"active\",\"work-evidence\":\"active\",\"work-preview\":\"pending\",\"work-primary\":\"retained\",\"work-verification\":\"active\"}}",
+        "genuine_progress": true,
+        "progress_reasons": [
+          "controller_knowledge_added"
+        ],
+        "recorded_at": "2026-10-25T03:39:42.324Z"
+      },
+      {
+        "schema": "revit-operator.assignment-progress-epoch/v2",
+        "epoch_id": "{\"after\":215,\"assignment_id\":\"203636eb-8567-440a-9033-3f6d61e5c3d7\",\"before\":204,\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"]}",
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "before_assignment_version": 204,
+        "after_assignment_version": 215,
+        "unresolved_gap_ids": [
+          "criterion:criterion-bcd7a9ecadf186542ce5",
+          "work-plan:scope"
+        ],
+        "admitted_reasoning_call_ids": [],
+        "admitted_operation_ids": [
+          "opv2_bc7b8bb417cb966a1d650ec92909b692a861a3247fe28515b243d1ae11245260"
+        ],
+        "new_observation_ids": [
+          "obsv2_3c13ff9ba858a017fdbdb794db950c2689df58d6ebd8890c56dbd35bd3b81c54",
+          "obsv2_77c40c68fa5bf42e500ee4c98f852d78f1e99c0e44c3410936502895aa5070f0"
+        ],
+        "new_fact_identities": [
+          "{\"cardinality\":\"many\",\"dimensions\":{\"capability_id\":\"revit_tool_doc\",\"method\":\"POST\",\"path\":\"/revit/get-element-summary\"},\"fact_id\":\"control.capability_available\",\"target_id\":null}"
+        ],
+        "criterion_deltas": [],
+        "progress_fingerprint": "{\"criteria\":{},\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"],\"generation\":1,\"observations\":[\"obsv2_0f18522cce7e8d8089d6a07859082178aae8e495b7944ea03936c4b8384d89d4\",\"obsv2_1b40c4df568a4d8fb4e5da4998511c91b353c187d47439b800a1bd0492364033\",\"obsv2_1b9e02bd5afbdc5b6510764fcf318b209307d0468fedbd6f65f9b750b4de0f53\",\"obsv2_2983e9b07d6f21a143fb711b311b974253a1f36a47345198f27ee4305631154e\",\"obsv2_3c13ff9ba858a017fdbdb794db950c2689df58d6ebd8890c56dbd35bd3b81c54\",\"obsv2_3d74ace46131d93dab5da65be419347fc69ae3f22a549132485de4f5742badd6\",\"obsv2_462136291c8fe9f313e7d87878266cccfc004033935576be408239bde46182fc\",\"obsv2_4a509d1a8ef4d469dbe9aa0a1d59572fe8345087861c40d06c8c9e3d7522b659\",\"obsv2_572c03d3d998721cf45aaa7c62f9ddd4a2cef2475d92843141c939e51215b9b8\",\"obsv2_77c40c68fa5bf42e500ee4c98f852d78f1e99c0e44c3410936502895aa5070f0\",\"obsv2_7d97ab183d521a1bb92411b47beeaebc0ca3487ac94312117e08e909cefb0331\",\"obsv2_7e837b1e4df251ebac3e04d1dbe238e0fd0b0743b3cb13139d96330958646f9d\",\"obsv2_89bfe2689963846db158fd93080a2f8d31ea483d66670fabfef7946975f86a1c\",\"obsv2_89f888ebf775e6f805e5da93e4627b8dc13a8f715dd9dd2eede7cc2f72914d20\",\"obsv2_8dfc509852ff0bc4d235b50cf85906b2b2a7416854b4ed4727c4e95c4aeb0631\",\"obsv2_9593ebc482c88375728babea828da261035c6a8541e259c8ae0b0edbf2874881\",\"obsv2_9da8f37007339b60463874b7cf236a75468ff8ef7d714fa1f9206fd89aaf5aaa\",\"obsv2_a34d820c4aa2989545ddcdb48afc9d94de8c53a0f01dc6dcacf9fcfd88a238bc\",\"obsv2_acd73b4f8e725392483aaef86215f70027a3647697f2c17b15e89e79f75a67f4\",\"obsv2_b044759ec2b0e6abfd10467419885e4fd8a3bab5b82fe0d5aed16b3f172a3626\",\"obsv2_ba334e20f2390a2fc4b5ada8b6bf98ed0d11b081b79f4bd460adafd77c114708\",\"obsv2_bb92497752061707e9c0e49c56b03129711b5b962d00a533ecc50f6a03e9e615\",\"obsv2_cbedcfbf89a86a65aa93e0f535d0ce82e82d9e88a1ea9b34998a49780f5f87b8\",\"obsv2_ccadfff1078a633c6d9e5099ff5e8b74acdcc7bde0b01c647d2015f98a862ffb\",\"obsv2_d8038bedc25e027f0da80a5d39364fb3436bda86dd6ede62fd6d0007983e4cf4\"],\"work_units\":{\"work-discovery\":\"active\",\"work-evidence\":\"active\",\"work-preview\":\"pending\",\"work-primary\":\"retained\",\"work-verification\":\"active\"}}",
+        "genuine_progress": true,
+        "progress_reasons": [
+          "controller_knowledge_added"
+        ],
+        "recorded_at": "2026-10-25T03:39:46.248Z"
+      },
+      {
+        "schema": "revit-operator.assignment-progress-epoch/v2",
+        "epoch_id": "{\"after\":222,\"assignment_id\":\"203636eb-8567-440a-9033-3f6d61e5c3d7\",\"before\":216,\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"]}",
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "before_assignment_version": 216,
+        "after_assignment_version": 222,
+        "unresolved_gap_ids": [
+          "criterion:criterion-bcd7a9ecadf186542ce5",
+          "work-plan:scope"
+        ],
+        "admitted_reasoning_call_ids": [],
+        "admitted_operation_ids": [
+          "opv2_7d10ec3559d7c2b19f1bc70488b1c8d9f56e9d905026400b25669c3ee83e32e0"
+        ],
+        "new_observation_ids": [
+          "obsv2_eb7a2fab64d0245d622c531c73aa246fcf53b6ba5dd0abc06f030f2882582c95"
+        ],
+        "new_fact_identities": [],
+        "criterion_deltas": [],
+        "progress_fingerprint": "{\"criteria\":{},\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"],\"generation\":1,\"observations\":[\"obsv2_0f18522cce7e8d8089d6a07859082178aae8e495b7944ea03936c4b8384d89d4\",\"obsv2_1b40c4df568a4d8fb4e5da4998511c91b353c187d47439b800a1bd0492364033\",\"obsv2_1b9e02bd5afbdc5b6510764fcf318b209307d0468fedbd6f65f9b750b4de0f53\",\"obsv2_2983e9b07d6f21a143fb711b311b974253a1f36a47345198f27ee4305631154e\",\"obsv2_3c13ff9ba858a017fdbdb794db950c2689df58d6ebd8890c56dbd35bd3b81c54\",\"obsv2_3d74ace46131d93dab5da65be419347fc69ae3f22a549132485de4f5742badd6\",\"obsv2_462136291c8fe9f313e7d87878266cccfc004033935576be408239bde46182fc\",\"obsv2_4a509d1a8ef4d469dbe9aa0a1d59572fe8345087861c40d06c8c9e3d7522b659\",\"obsv2_572c03d3d998721cf45aaa7c62f9ddd4a2cef2475d92843141c939e51215b9b8\",\"obsv2_77c40c68fa5bf42e500ee4c98f852d78f1e99c0e44c3410936502895aa5070f0\",\"obsv2_7d97ab183d521a1bb92411b47beeaebc0ca3487ac94312117e08e909cefb0331\",\"obsv2_7e837b1e4df251ebac3e04d1dbe238e0fd0b0743b3cb13139d96330958646f9d\",\"obsv2_89bfe2689963846db158fd93080a2f8d31ea483d66670fabfef7946975f86a1c\",\"obsv2_89f888ebf775e6f805e5da93e4627b8dc13a8f715dd9dd2eede7cc2f72914d20\",\"obsv2_8dfc509852ff0bc4d235b50cf85906b2b2a7416854b4ed4727c4e95c4aeb0631\",\"obsv2_9593ebc482c88375728babea828da261035c6a8541e259c8ae0b0edbf2874881\",\"obsv2_9da8f37007339b60463874b7cf236a75468ff8ef7d714fa1f9206fd89aaf5aaa\",\"obsv2_a34d820c4aa2989545ddcdb48afc9d94de8c53a0f01dc6dcacf9fcfd88a238bc\",\"obsv2_acd73b4f8e725392483aaef86215f70027a3647697f2c17b15e89e79f75a67f4\",\"obsv2_b044759ec2b0e6abfd10467419885e4fd8a3bab5b82fe0d5aed16b3f172a3626\",\"obsv2_ba334e20f2390a2fc4b5ada8b6bf98ed0d11b081b79f4bd460adafd77c114708\",\"obsv2_bb92497752061707e9c0e49c56b03129711b5b962d00a533ecc50f6a03e9e615\",\"obsv2_cbedcfbf89a86a65aa93e0f535d0ce82e82d9e88a1ea9b34998a49780f5f87b8\",\"obsv2_ccadfff1078a633c6d9e5099ff5e8b74acdcc7bde0b01c647d2015f98a862ffb\",\"obsv2_d8038bedc25e027f0da80a5d39364fb3436bda86dd6ede62fd6d0007983e4cf4\",\"obsv2_eb7a2fab64d0245d622c531c73aa246fcf53b6ba5dd0abc06f030f2882582c95\"],\"work_units\":{\"work-discovery\":\"active\",\"work-evidence\":\"active\",\"work-preview\":\"pending\",\"work-primary\":\"retained\",\"work-verification\":\"active\"}}",
+        "genuine_progress": true,
+        "progress_reasons": [
+          "controller_knowledge_added"
+        ],
+        "recorded_at": "2026-10-25T03:39:48.415Z"
+      },
+      {
+        "schema": "revit-operator.assignment-progress-epoch/v2",
+        "epoch_id": "{\"after\":236,\"assignment_id\":\"203636eb-8567-440a-9033-3f6d61e5c3d7\",\"before\":230,\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"]}",
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "before_assignment_version": 230,
+        "after_assignment_version": 236,
+        "unresolved_gap_ids": [
+          "criterion:criterion-bcd7a9ecadf186542ce5",
+          "work-plan:scope"
+        ],
+        "admitted_reasoning_call_ids": [],
+        "admitted_operation_ids": [
+          "opv2_67bb21be53ec329f671e7400e37b7db0eb982ff73b343ce02b1ec1b4b96e37b0"
+        ],
+        "new_observation_ids": [
+          "obsv2_3b5bf088f70923fc27e9bdee373241f331b752005b26b3d46f4e18b4c7edbb91"
+        ],
+        "new_fact_identities": [
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.compact\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.dry_run\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.error\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.maximum_backups\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.overwrite\",\"target_id\":null}",
+          "{\"cardinality\":\"one\",\"dimensions\":{},\"fact_id\":\"control.field.save_as_central\",\"target_id\":null}"
+        ],
+        "criterion_deltas": [],
+        "progress_fingerprint": "{\"criteria\":{},\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"verification:opv2_67bb21be53ec329f671e7400e37b7db0eb982ff73b343ce02b1ec1b4b96e37b0\",\"work-plan:scope\"],\"generation\":1,\"observations\":[\"obsv2_0f18522cce7e8d8089d6a07859082178aae8e495b7944ea03936c4b8384d89d4\",\"obsv2_1b40c4df568a4d8fb4e5da4998511c91b353c187d47439b800a1bd0492364033\",\"obsv2_1b9e02bd5afbdc5b6510764fcf318b209307d0468fedbd6f65f9b750b4de0f53\",\"obsv2_2983e9b07d6f21a143fb711b311b974253a1f36a47345198f27ee4305631154e\",\"obsv2_3b5bf088f70923fc27e9bdee373241f331b752005b26b3d46f4e18b4c7edbb91\",\"obsv2_3c13ff9ba858a017fdbdb794db950c2689df58d6ebd8890c56dbd35bd3b81c54\",\"obsv2_3d74ace46131d93dab5da65be419347fc69ae3f22a549132485de4f5742badd6\",\"obsv2_462136291c8fe9f313e7d87878266cccfc004033935576be408239bde46182fc\",\"obsv2_4a509d1a8ef4d469dbe9aa0a1d59572fe8345087861c40d06c8c9e3d7522b659\",\"obsv2_572c03d3d998721cf45aaa7c62f9ddd4a2cef2475d92843141c939e51215b9b8\",\"obsv2_77c40c68fa5bf42e500ee4c98f852d78f1e99c0e44c3410936502895aa5070f0\",\"obsv2_7d97ab183d521a1bb92411b47beeaebc0ca3487ac94312117e08e909cefb0331\",\"obsv2_7e837b1e4df251ebac3e04d1dbe238e0fd0b0743b3cb13139d96330958646f9d\",\"obsv2_89bfe2689963846db158fd93080a2f8d31ea483d66670fabfef7946975f86a1c\",\"obsv2_89f888ebf775e6f805e5da93e4627b8dc13a8f715dd9dd2eede7cc2f72914d20\",\"obsv2_8dfc509852ff0bc4d235b50cf85906b2b2a7416854b4ed4727c4e95c4aeb0631\",\"obsv2_9593ebc482c88375728babea828da261035c6a8541e259c8ae0b0edbf2874881\",\"obsv2_9da8f37007339b60463874b7cf236a75468ff8ef7d714fa1f9206fd89aaf5aaa\",\"obsv2_a34d820c4aa2989545ddcdb48afc9d94de8c53a0f01dc6dcacf9fcfd88a238bc\",\"obsv2_acd73b4f8e725392483aaef86215f70027a3647697f2c17b15e89e79f75a67f4\",\"obsv2_b044759ec2b0e6abfd10467419885e4fd8a3bab5b82fe0d5aed16b3f172a3626\",\"obsv2_ba334e20f2390a2fc4b5ada8b6bf98ed0d11b081b79f4bd460adafd77c114708\",\"obsv2_bb92497752061707e9c0e49c56b03129711b5b962d00a533ecc50f6a03e9e615\",\"obsv2_cbedcfbf89a86a65aa93e0f535d0ce82e82d9e88a1ea9b34998a49780f5f87b8\",\"obsv2_ccadfff1078a633c6d9e5099ff5e8b74acdcc7bde0b01c647d2015f98a862ffb\",\"obsv2_d8038bedc25e027f0da80a5d39364fb3436bda86dd6ede62fd6d0007983e4cf4\",\"obsv2_eb7a2fab64d0245d622c531c73aa246fcf53b6ba5dd0abc06f030f2882582c95\"],\"work_units\":{\"work-discovery\":\"active\",\"work-evidence\":\"active\",\"work-preview\":\"pending\",\"work-primary\":\"retained\",\"work-verification\":\"active\"}}",
+        "genuine_progress": true,
+        "progress_reasons": [
+          "controller_knowledge_added"
+        ],
+        "recorded_at": "2026-10-25T03:40:04.073Z"
+      },
+      {
+        "schema": "revit-operator.assignment-progress-epoch/v2",
+        "epoch_id": "{\"after\":242,\"assignment_id\":\"203636eb-8567-440a-9033-3f6d61e5c3d7\",\"before\":238,\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"verification:opv2_67bb21be53ec329f671e7400e37b7db0eb982ff73b343ce02b1ec1b4b96e37b0\",\"work-plan:scope\"]}",
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "before_assignment_version": 238,
+        "after_assignment_version": 242,
+        "unresolved_gap_ids": [
+          "criterion:criterion-bcd7a9ecadf186542ce5",
+          "verification:opv2_67bb21be53ec329f671e7400e37b7db0eb982ff73b343ce02b1ec1b4b96e37b0",
+          "work-plan:scope"
+        ],
+        "admitted_reasoning_call_ids": [],
+        "admitted_operation_ids": [
+          "opv2_1a6771e864067c046e4a285ad41566c019f6859e79bb1401f8fb154b08ab451c"
+        ],
+        "new_observation_ids": [
+          "obsv2_2ee88d9863646617745ebb6548f1ef726fd910e4e4f30bb1d4b8b7362c18caad"
+        ],
+        "new_fact_identities": [],
+        "criterion_deltas": [],
+        "progress_fingerprint": "{\"criteria\":{},\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"],\"generation\":1,\"observations\":[\"obsv2_0f18522cce7e8d8089d6a07859082178aae8e495b7944ea03936c4b8384d89d4\",\"obsv2_1b40c4df568a4d8fb4e5da4998511c91b353c187d47439b800a1bd0492364033\",\"obsv2_1b9e02bd5afbdc5b6510764fcf318b209307d0468fedbd6f65f9b750b4de0f53\",\"obsv2_2983e9b07d6f21a143fb711b311b974253a1f36a47345198f27ee4305631154e\",\"obsv2_2ee88d9863646617745ebb6548f1ef726fd910e4e4f30bb1d4b8b7362c18caad\",\"obsv2_3b5bf088f70923fc27e9bdee373241f331b752005b26b3d46f4e18b4c7edbb91\",\"obsv2_3c13ff9ba858a017fdbdb794db950c2689df58d6ebd8890c56dbd35bd3b81c54\",\"obsv2_3d74ace46131d93dab5da65be419347fc69ae3f22a549132485de4f5742badd6\",\"obsv2_462136291c8fe9f313e7d87878266cccfc004033935576be408239bde46182fc\",\"obsv2_4a509d1a8ef4d469dbe9aa0a1d59572fe8345087861c40d06c8c9e3d7522b659\",\"obsv2_572c03d3d998721cf45aaa7c62f9ddd4a2cef2475d92843141c939e51215b9b8\",\"obsv2_77c40c68fa5bf42e500ee4c98f852d78f1e99c0e44c3410936502895aa5070f0\",\"obsv2_7d97ab183d521a1bb92411b47beeaebc0ca3487ac94312117e08e909cefb0331\",\"obsv2_7e837b1e4df251ebac3e04d1dbe238e0fd0b0743b3cb13139d96330958646f9d\",\"obsv2_89bfe2689963846db158fd93080a2f8d31ea483d66670fabfef7946975f86a1c\",\"obsv2_89f888ebf775e6f805e5da93e4627b8dc13a8f715dd9dd2eede7cc2f72914d20\",\"obsv2_8dfc509852ff0bc4d235b50cf85906b2b2a7416854b4ed4727c4e95c4aeb0631\",\"obsv2_9593ebc482c88375728babea828da261035c6a8541e259c8ae0b0edbf2874881\",\"obsv2_9da8f37007339b60463874b7cf236a75468ff8ef7d714fa1f9206fd89aaf5aaa\",\"obsv2_a34d820c4aa2989545ddcdb48afc9d94de8c53a0f01dc6dcacf9fcfd88a238bc\",\"obsv2_acd73b4f8e725392483aaef86215f70027a3647697f2c17b15e89e79f75a67f4\",\"obsv2_b044759ec2b0e6abfd10467419885e4fd8a3bab5b82fe0d5aed16b3f172a3626\",\"obsv2_ba334e20f2390a2fc4b5ada8b6bf98ed0d11b081b79f4bd460adafd77c114708\",\"obsv2_bb92497752061707e9c0e49c56b03129711b5b962d00a533ecc50f6a03e9e615\",\"obsv2_cbedcfbf89a86a65aa93e0f535d0ce82e82d9e88a1ea9b34998a49780f5f87b8\",\"obsv2_ccadfff1078a633c6d9e5099ff5e8b74acdcc7bde0b01c647d2015f98a862ffb\",\"obsv2_d8038bedc25e027f0da80a5d39364fb3436bda86dd6ede62fd6d0007983e4cf4\",\"obsv2_eb7a2fab64d0245d622c531c73aa246fcf53b6ba5dd0abc06f030f2882582c95\"],\"work_units\":{\"work-discovery\":\"active\",\"work-evidence\":\"active\",\"work-preview\":\"pending\",\"work-primary\":\"retained\",\"work-verification\":\"active\"}}",
+        "genuine_progress": true,
+        "progress_reasons": [
+          "gap_narrowed"
+        ],
+        "recorded_at": "2026-10-25T03:40:04.684Z"
+      },
+      {
+        "schema": "revit-operator.assignment-progress-epoch/v2",
+        "epoch_id": "{\"after\":250,\"assignment_id\":\"203636eb-8567-440a-9033-3f6d61e5c3d7\",\"before\":244,\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"]}",
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "before_assignment_version": 244,
+        "after_assignment_version": 250,
+        "unresolved_gap_ids": [
+          "criterion:criterion-bcd7a9ecadf186542ce5",
+          "work-plan:scope"
+        ],
+        "admitted_reasoning_call_ids": [],
+        "admitted_operation_ids": [
+          "opv2_2f405c27b69dc9ccd806d5c01e4fae8fdd010fbd74fe7f84c9eb0defc9b2f08f"
+        ],
+        "new_observation_ids": [
+          "obsv2_36a05390e6b995e4a70ba421b42484da6ebeebaf565ff6b95d9a7d8b83bd73d3"
+        ],
+        "new_fact_identities": [],
+        "criterion_deltas": [],
+        "progress_fingerprint": "{\"criteria\":{},\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"],\"generation\":1,\"observations\":[\"obsv2_0f18522cce7e8d8089d6a07859082178aae8e495b7944ea03936c4b8384d89d4\",\"obsv2_1b40c4df568a4d8fb4e5da4998511c91b353c187d47439b800a1bd0492364033\",\"obsv2_1b9e02bd5afbdc5b6510764fcf318b209307d0468fedbd6f65f9b750b4de0f53\",\"obsv2_2983e9b07d6f21a143fb711b311b974253a1f36a47345198f27ee4305631154e\",\"obsv2_2ee88d9863646617745ebb6548f1ef726fd910e4e4f30bb1d4b8b7362c18caad\",\"obsv2_36a05390e6b995e4a70ba421b42484da6ebeebaf565ff6b95d9a7d8b83bd73d3\",\"obsv2_3b5bf088f70923fc27e9bdee373241f331b752005b26b3d46f4e18b4c7edbb91\",\"obsv2_3c13ff9ba858a017fdbdb794db950c2689df58d6ebd8890c56dbd35bd3b81c54\",\"obsv2_3d74ace46131d93dab5da65be419347fc69ae3f22a549132485de4f5742badd6\",\"obsv2_462136291c8fe9f313e7d87878266cccfc004033935576be408239bde46182fc\",\"obsv2_4a509d1a8ef4d469dbe9aa0a1d59572fe8345087861c40d06c8c9e3d7522b659\",\"obsv2_572c03d3d998721cf45aaa7c62f9ddd4a2cef2475d92843141c939e51215b9b8\",\"obsv2_77c40c68fa5bf42e500ee4c98f852d78f1e99c0e44c3410936502895aa5070f0\",\"obsv2_7d97ab183d521a1bb92411b47beeaebc0ca3487ac94312117e08e909cefb0331\",\"obsv2_7e837b1e4df251ebac3e04d1dbe238e0fd0b0743b3cb13139d96330958646f9d\",\"obsv2_89bfe2689963846db158fd93080a2f8d31ea483d66670fabfef7946975f86a1c\",\"obsv2_89f888ebf775e6f805e5da93e4627b8dc13a8f715dd9dd2eede7cc2f72914d20\",\"obsv2_8dfc509852ff0bc4d235b50cf85906b2b2a7416854b4ed4727c4e95c4aeb0631\",\"obsv2_9593ebc482c88375728babea828da261035c6a8541e259c8ae0b0edbf2874881\",\"obsv2_9da8f37007339b60463874b7cf236a75468ff8ef7d714fa1f9206fd89aaf5aaa\",\"obsv2_a34d820c4aa2989545ddcdb48afc9d94de8c53a0f01dc6dcacf9fcfd88a238bc\",\"obsv2_acd73b4f8e725392483aaef86215f70027a3647697f2c17b15e89e79f75a67f4\",\"obsv2_b044759ec2b0e6abfd10467419885e4fd8a3bab5b82fe0d5aed16b3f172a3626\",\"obsv2_ba334e20f2390a2fc4b5ada8b6bf98ed0d11b081b79f4bd460adafd77c114708\",\"obsv2_bb92497752061707e9c0e49c56b03129711b5b962d00a533ecc50f6a03e9e615\",\"obsv2_cbedcfbf89a86a65aa93e0f535d0ce82e82d9e88a1ea9b34998a49780f5f87b8\",\"obsv2_ccadfff1078a633c6d9e5099ff5e8b74acdcc7bde0b01c647d2015f98a862ffb\",\"obsv2_d8038bedc25e027f0da80a5d39364fb3436bda86dd6ede62fd6d0007983e4cf4\",\"obsv2_eb7a2fab64d0245d622c531c73aa246fcf53b6ba5dd0abc06f030f2882582c95\"],\"work_units\":{\"work-discovery\":\"active\",\"work-evidence\":\"active\",\"work-preview\":\"pending\",\"work-primary\":\"retained\",\"work-verification\":\"active\"}}",
+        "genuine_progress": true,
+        "progress_reasons": [
+          "controller_knowledge_added"
+        ],
+        "recorded_at": "2026-10-25T03:40:14.387Z"
+      },
+      {
+        "schema": "revit-operator.assignment-progress-epoch/v2",
+        "epoch_id": "{\"after\":257,\"assignment_id\":\"203636eb-8567-440a-9033-3f6d61e5c3d7\",\"before\":251,\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"]}",
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "before_assignment_version": 251,
+        "after_assignment_version": 257,
+        "unresolved_gap_ids": [
+          "criterion:criterion-bcd7a9ecadf186542ce5",
+          "work-plan:scope"
+        ],
+        "admitted_reasoning_call_ids": [],
+        "admitted_operation_ids": [
+          "opv2_5269d79f8cbc8cfa071cac723d05d85638e77e72772175aec4722f8dc46ed79a"
+        ],
+        "new_observation_ids": [
+          "obsv2_61c98268ce7f16bd5d95f0d3ff11a6db1fff39da359da87618da8a21dfebe3f4"
+        ],
+        "new_fact_identities": [
+          "{\"cardinality\":\"many\",\"dimensions\":{\"capability_id\":\"revit_search_tools\",\"method\":\"POST\",\"path\":\"/revit/get-family-file-path\"},\"fact_id\":\"control.capability_available\",\"target_id\":null}",
+          "{\"cardinality\":\"many\",\"dimensions\":{\"capability_id\":\"revit_search_tools\",\"method\":\"POST\",\"path\":\"/revit/read-family-evolution\"},\"fact_id\":\"control.capability_available\",\"target_id\":null}"
+        ],
+        "criterion_deltas": [],
+        "progress_fingerprint": "{\"criteria\":{},\"gaps\":[\"criterion:criterion-bcd7a9ecadf186542ce5\",\"work-plan:scope\"],\"generation\":1,\"observations\":[\"obsv2_0f18522cce7e8d8089d6a07859082178aae8e495b7944ea03936c4b8384d89d4\",\"obsv2_1b40c4df568a4d8fb4e5da4998511c91b353c187d47439b800a1bd0492364033\",\"obsv2_1b9e02bd5afbdc5b6510764fcf318b209307d0468fedbd6f65f9b750b4de0f53\",\"obsv2_2983e9b07d6f21a143fb711b311b974253a1f36a47345198f27ee4305631154e\",\"obsv2_2ee88d9863646617745ebb6548f1ef726fd910e4e4f30bb1d4b8b7362c18caad\",\"obsv2_36a05390e6b995e4a70ba421b42484da6ebeebaf565ff6b95d9a7d8b83bd73d3\",\"obsv2_3b5bf088f70923fc27e9bdee373241f331b752005b26b3d46f4e18b4c7edbb91\",\"obsv2_3c13ff9ba858a017fdbdb794db950c2689df58d6ebd8890c56dbd35bd3b81c54\",\"obsv2_3d74ace46131d93dab5da65be419347fc69ae3f22a549132485de4f5742badd6\",\"obsv2_462136291c8fe9f313e7d87878266cccfc004033935576be408239bde46182fc\",\"obsv2_4a509d1a8ef4d469dbe9aa0a1d59572fe8345087861c40d06c8c9e3d7522b659\",\"obsv2_572c03d3d998721cf45aaa7c62f9ddd4a2cef2475d92843141c939e51215b9b8\",\"obsv2_61c98268ce7f16bd5d95f0d3ff11a6db1fff39da359da87618da8a21dfebe3f4\",\"obsv2_77c40c68fa5bf42e500ee4c98f852d78f1e99c0e44c3410936502895aa5070f0\",\"obsv2_7d97ab183d521a1bb92411b47beeaebc0ca3487ac94312117e08e909cefb0331\",\"obsv2_7e837b1e4df251ebac3e04d1dbe238e0fd0b0743b3cb13139d96330958646f9d\",\"obsv2_89bfe2689963846db158fd93080a2f8d31ea483d66670fabfef7946975f86a1c\",\"obsv2_89f888ebf775e6f805e5da93e4627b8dc13a8f715dd9dd2eede7cc2f72914d20\",\"obsv2_8dfc509852ff0bc4d235b50cf85906b2b2a7416854b4ed4727c4e95c4aeb0631\",\"obsv2_9593ebc482c88375728babea828da261035c6a8541e259c8ae0b0edbf2874881\",\"obsv2_9da8f37007339b60463874b7cf236a75468ff8ef7d714fa1f9206fd89aaf5aaa\",\"obsv2_a34d820c4aa2989545ddcdb48afc9d94de8c53a0f01dc6dcacf9fcfd88a238bc\",\"obsv2_acd73b4f8e725392483aaef86215f70027a3647697f2c17b15e89e79f75a67f4\",\"obsv2_b044759ec2b0e6abfd10467419885e4fd8a3bab5b82fe0d5aed16b3f172a3626\",\"obsv2_ba334e20f2390a2fc4b5ada8b6bf98ed0d11b081b79f4bd460adafd77c114708\",\"obsv2_bb92497752061707e9c0e49c56b03129711b5b962d00a533ecc50f6a03e9e615\",\"obsv2_cbedcfbf89a86a65aa93e0f535d0ce82e82d9e88a1ea9b34998a49780f5f87b8\",\"obsv2_ccadfff1078a633c6d9e5099ff5e8b74acdcc7bde0b01c647d2015f98a862ffb\",\"obsv2_d8038bedc25e027f0da80a5d39364fb3436bda86dd6ede62fd6d0007983e4cf4\",\"obsv2_eb7a2fab64d0245d622c531c73aa246fcf53b6ba5dd0abc06f030f2882582c95\"],\"work_units\":{\"work-discovery\":\"active\",\"work-evidence\":\"active\",\"work-preview\":\"pending\",\"work-primary\":\"retained\",\"work-verification\":\"active\"}}",
+        "genuine_progress": true,
+        "progress_reasons": [
+          "controller_knowledge_added"
+        ],
+        "recorded_at": "2026-10-25T03:40:18.325Z"
+      }
+    ],
+    "operations": {
+      "opv2_2f405c27b69dc9ccd806d5c01e4fae8fdd010fbd74fe7f84c9eb0defc9b2f08f": {
+        "schema": "revit-operator.operation/v2",
+        "operation_id": "opv2_2f405c27b69dc9ccd806d5c01e4fae8fdd010fbd74fe7f84c9eb0defc9b2f08f",
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "work_unit_id": "work-discovery",
+        "capability_id": "revit_call_tool",
+        "requested_effect": "read",
+        "purpose": "discovery",
+        "operation_role": "root",
+        "fulfillment_role": "supporting_control",
+        "blocks_parent_settlement": false,
+        "request_identity": {
+          "capability_id": "revit_call_tool",
+          "method": "POST",
+          "path": "/revit/find-text-notes",
+          "request_signature": "a1684a07729b69b6c6a05fa6ad0bac5cbb0defb957811e440c0dd4661eb9c56f"
+        },
+        "advances_criterion_ids": [],
+        "eligible_criterion_ids": [],
+        "resolves_gap_ids": [
+          "criterion:criterion-bcd7a9ecadf186542ce5",
+          "work-plan:scope"
+        ],
+        "target": {
+          "target_id": "id:1545903",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17",
+          "semantic_scope": {
+            "target_0": "elementids:1545903",
+            "target_1": "id:1545903"
+          }
+        },
+        "input": {
+          "method": "POST",
+          "path": "/revit/find-text-notes",
+          "body": {
+            "elementIds": [
+              1545903
+            ],
+            "max": 1
+          }
+        },
+        "admission_state": "admitted",
+        "dispatch_state": "dispatched",
+        "persistent_effect": "none",
+        "settlement_state": "settled",
+        "observation_ids": [
+          "obsv2_36a05390e6b995e4a70ba421b42484da6ebeebaf565ff6b95d9a7d8b83bd73d3"
+        ],
+        "verification_operation_ids": [],
+        "opened_at": "2026-10-25T03:40:13.896Z",
+        "deadline_at": "2026-10-25T03:44:13.896Z",
+        "admitted_assignment_version": 245,
+        "settled_assignment_version": 250,
+        "dispatch_started_at": "2026-10-25T03:40:13.998Z",
+        "dispatch_authority": "native",
+        "dispatched_at": "2026-10-25T03:40:13.998Z",
+        "result": {
+          "schema": "revit-operator.operation-result/v2",
+          "result_id": "resultv2_1ee63f2ca507518d353cf924bbefc8bdfb780013b447e7f7bdddd0ac526ad1f6",
+          "operation_id": "opv2_2f405c27b69dc9ccd806d5c01e4fae8fdd010fbd74fe7f84c9eb0defc9b2f08f",
+          "binding": {
+            "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+            "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+            "generation": 1,
+            "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+            "principal_id": "local:shared-token",
+            "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+          },
+          "status": "succeeded",
+          "dispatch_state": "dispatched",
+          "persistent_effect": "none",
+          "native_transaction_state": "not_applicable",
+          "authority": "native-host",
+          "result_schema_id": "operator-native/POST:/revit/find-text-notes/v2",
+          "observation_required": true,
+          "affected_target_identities": [],
+          "raw_payload_hash": "436ba6da1a8164a22879bf243ffe965b3bc97c1819f4b7e49dbb281c5c7ec67e",
+          "payload_provenance": {
+            "schema": "revit-operator.payload-provenance/v2",
+            "source": {
+              "algorithm": "sha256",
+              "representation": "utf8_json_bytes",
+              "canonicalization_version": null,
+              "digest": "f1a7c5159ad3022ff398c3eb9a0d607b0612d7545d4ac8efdbb8140c578485de",
+              "byte_count": 1646
+            },
+            "normalized": {
+              "algorithm": "sha256",
+              "representation": "canonical_json",
+              "canonicalization_version": "revit-operator.canonical-json.utf8-ordinal.v2",
+              "digest": "436ba6da1a8164a22879bf243ffe965b3bc97c1819f4b7e49dbb281c5c7ec67e",
+              "byte_count": 1050
+            },
+            "transformation_id": "revit-operator.native-result-control-extraction",
+            "transformation_version": "1"
+          },
+          "receipt_id": "9eea80decdafcb5bb27e665e194446167a65570cdcef719c0afe4fcfeff28293",
+          "native_correlation_id": "9eea80decdafcb5bb27e665e194446167a65570cdcef719c0afe4fcfeff28293",
+          "request_identity": {
+            "capability_id": "revit_call_tool",
+            "method": "POST",
+            "path": "/revit/find-text-notes",
+            "request_signature": "a1684a07729b69b6c6a05fa6ad0bac5cbb0defb957811e440c0dd4661eb9c56f"
+          },
+          "completed_at": "2026-10-25T03:40:14.144Z"
+        },
+        "observation_commit_attempts": 0,
+        "settled_at": "2026-10-25T03:40:14.144Z"
+      },
+      "opv2_7d10ec3559d7c2b19f1bc70488b1c8d9f56e9d905026400b25669c3ee83e32e0": {
+        "schema": "revit-operator.operation/v2",
+        "operation_id": "opv2_7d10ec3559d7c2b19f1bc70488b1c8d9f56e9d905026400b25669c3ee83e32e0",
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "work_unit_id": "work-discovery",
+        "capability_id": "revit_call_tool",
+        "requested_effect": "read",
+        "purpose": "discovery",
+        "operation_role": "root",
+        "fulfillment_role": "supporting_control",
+        "blocks_parent_settlement": false,
+        "request_identity": {
+          "capability_id": "revit_call_tool",
+          "method": "POST",
+          "path": "/revit/get-element-summary",
+          "request_signature": "ef9e601e727ff2b441103031e8e94ee49e25fd69393bb879970fef8d9d05ad93"
+        },
+        "advances_criterion_ids": [],
+        "eligible_criterion_ids": [],
+        "resolves_gap_ids": [
+          "criterion:criterion-bcd7a9ecadf186542ce5",
+          "work-plan:scope"
+        ],
+        "target": {
+          "target_id": "id:1545903",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17",
+          "semantic_scope": {
+            "target_0": "elementids:1545903",
+            "target_1": "id:1545903"
+          }
+        },
+        "input": {
+          "method": "POST",
+          "path": "/revit/get-element-summary",
+          "body": {
+            "elementIds": [
+              1545903
+            ],
+            "viewId": 1420963
+          }
+        },
+        "admission_state": "admitted",
+        "dispatch_state": "dispatched",
+        "persistent_effect": "none",
+        "settlement_state": "settled",
+        "observation_ids": [
+          "obsv2_eb7a2fab64d0245d622c531c73aa246fcf53b6ba5dd0abc06f030f2882582c95"
+        ],
+        "verification_operation_ids": [],
+        "opened_at": "2026-10-25T03:39:47.971Z",
+        "deadline_at": "2026-10-25T03:43:47.971Z",
+        "admitted_assignment_version": 217,
+        "settled_assignment_version": 222,
+        "dispatch_started_at": "2026-10-25T03:39:48.066Z",
+        "dispatch_authority": "native",
+        "dispatched_at": "2026-10-25T03:39:48.066Z",
+        "result": {
+          "schema": "revit-operator.operation-result/v2",
+          "result_id": "resultv2_6fb174928a0c6e08b67085057916fc74fb139de26371f6aaf4321dc9bdd6fc2f",
+          "operation_id": "opv2_7d10ec3559d7c2b19f1bc70488b1c8d9f56e9d905026400b25669c3ee83e32e0",
+          "binding": {
+            "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+            "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+            "generation": 1,
+            "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+            "principal_id": "local:shared-token",
+            "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+          },
+          "status": "succeeded",
+          "dispatch_state": "dispatched",
+          "persistent_effect": "none",
+          "native_transaction_state": "not_applicable",
+          "authority": "native-host",
+          "result_schema_id": "operator-native/POST:/revit/get-element-summary/v2",
+          "observation_required": true,
+          "affected_target_identities": [],
+          "raw_payload_hash": "f592a9fcdecc233afded43b41ab55a86e96e01666eced3dc1fa83f4e6fab26c7",
+          "payload_provenance": {
+            "schema": "revit-operator.payload-provenance/v2",
+            "source": {
+              "algorithm": "sha256",
+              "representation": "utf8_json_bytes",
+              "canonicalization_version": null,
+              "digest": "c8700fa7cb9fce6266e02c410b8e2d217ffd3ed3dfbd83d51a2816976b8732cc",
+              "byte_count": 1197
+            },
+            "normalized": {
+              "algorithm": "sha256",
+              "representation": "canonical_json",
+              "canonicalization_version": "revit-operator.canonical-json.utf8-ordinal.v2",
+              "digest": "f592a9fcdecc233afded43b41ab55a86e96e01666eced3dc1fa83f4e6fab26c7",
+              "byte_count": 598
+            },
+            "transformation_id": "revit-operator.native-result-control-extraction",
+            "transformation_version": "1"
+          },
+          "receipt_id": "1e6ce4398e4539020731d0703087dcdb0b3a7661a79c6444090db2907b8a9455",
+          "native_correlation_id": "1e6ce4398e4539020731d0703087dcdb0b3a7661a79c6444090db2907b8a9455",
+          "request_identity": {
+            "capability_id": "revit_call_tool",
+            "method": "POST",
+            "path": "/revit/get-element-summary",
+            "request_signature": "ef9e601e727ff2b441103031e8e94ee49e25fd69393bb879970fef8d9d05ad93"
+          },
+          "completed_at": "2026-10-25T03:39:48.207Z"
+        },
+        "observation_commit_attempts": 0,
+        "settled_at": "2026-10-25T03:39:48.207Z"
+      },
+      "opv2_670b306b04707b6ded18165c34144ec1d3a932e6cdeb18b665eb46d227154052": {
+        "schema": "revit-operator.operation/v2",
+        "operation_id": "opv2_670b306b04707b6ded18165c34144ec1d3a932e6cdeb18b665eb46d227154052",
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "work_unit_id": "work-primary",
+        "capability_id": "revit_call_tool",
+        "requested_effect": "apply",
+        "purpose": "work",
+        "operation_role": "root",
+        "fulfillment_role": "delegated_task_execution",
+        "delegation_authority_id": "delegation:opv2_670b306b04707b6ded18165c34144ec1d3a932e6cdeb18b665eb46d227154052",
+        "blocks_parent_settlement": false,
+        "request_identity": {
+          "capability_id": "revit_call_tool",
+          "method": "POST",
+          "path": "/revit/create-text",
+          "request_signature": "ad62cf0b1a7262613382fb17dbb0e73f1421c36dc7706883cb14f673f52c7897"
+        },
+        "advances_criterion_ids": [
+          "criterion-bcd7a9ecadf186542ce5"
+        ],
+        "eligible_criterion_ids": [
+          "criterion-bcd7a9ecadf186542ce5"
+        ],
+        "resolves_gap_ids": [
+          "criterion:criterion-bcd7a9ecadf186542ce5",
+          "work-plan:scope"
+        ],
+        "target": {
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "input": {
+          "method": "POST",
+          "path": "/revit/create-text",
+          "body": {
+            "action": "create",
+            "viewId": 1420963,
+            "x": 2.72,
+            "y": 0.62,
+            "widthFt": 0.65,
+            "text": "INTERNAL REVIEW - QA461",
+            "typeId": 1421335,
+            "dryRun": false
+          }
+        },
+        "admission_state": "admitted",
+        "dispatch_state": "dispatched",
+        "persistent_effect": "applied",
+        "settlement_state": "settled",
+        "observation_ids": [
+          "obsv2_9593ebc482c88375728babea828da261035c6a8541e259c8ae0b0edbf2874881"
+        ],
+        "verification_operation_ids": [
+          "opv2_02398a8651b0b32738379b1b488ca5592c3d9d60ea94a69130d88dff57b68e2d"
+        ],
+        "opened_at": "2026-10-25T03:37:54.965Z",
+        "deadline_at": "2026-10-25T03:41:54.965Z",
+        "admitted_assignment_version": 111,
+        "settled_assignment_version": 116,
+        "dispatch_started_at": "2026-10-25T03:37:55.024Z",
+        "dispatch_authority": "native",
+        "dispatched_at": "2026-10-25T03:37:55.024Z",
+        "result": {
+          "schema": "revit-operator.operation-result/v2",
+          "result_id": "resultv2_3265703d9a419be6f4e367bcb08c6f8b3ee86a244ce5185e7b2e2af05083773b",
+          "operation_id": "opv2_670b306b04707b6ded18165c34144ec1d3a932e6cdeb18b665eb46d227154052",
+          "binding": {
+            "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+            "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+            "generation": 1,
+            "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+            "principal_id": "local:shared-token",
+            "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+          },
+          "status": "succeeded",
+          "dispatch_state": "dispatched",
+          "persistent_effect": "applied",
+          "native_transaction_state": "committed",
+          "authority": "native-host",
+          "result_schema_id": "operator-native/POST:/revit/create-text/v2",
+          "observation_required": true,
+          "affected_target_identities": [
+            "element_id:1420970",
+            "element_id:1422218",
+            "element_id:1488968",
+            "element_id:1521719",
+            "element_id:1521731",
+            "element_id:1543793",
+            "element_id:1545903"
+          ],
+          "raw_payload_hash": "4e8da8fb70fdfc9c571af1ab3d8e0a8d53f25051998070867da3f718d314a31a",
+          "payload_provenance": {
+            "schema": "revit-operator.payload-provenance/v2",
+            "source": {
+              "algorithm": "sha256",
+              "representation": "utf8_json_bytes",
+              "canonicalization_version": null,
+              "digest": "f39273dca5924d42d48653ef6e0475de4aafd5fb9f9329bea9904a5792da4fb7",
+              "byte_count": 311298
+            },
+            "normalized": {
+              "algorithm": "sha256",
+              "representation": "canonical_json",
+              "canonicalization_version": "revit-operator.canonical-json.utf8-ordinal.v2",
+              "digest": "4e8da8fb70fdfc9c571af1ab3d8e0a8d53f25051998070867da3f718d314a31a",
+              "byte_count": 310550
+            },
+            "transformation_id": "revit-operator.native-result-control-extraction",
+            "transformation_version": "1"
+          },
+          "receipt_id": "792e7827fbaa38218a98134834e84e45cad6ec06a36501fa9699868b3086c55e",
+          "native_correlation_id": "792e7827fbaa38218a98134834e84e45cad6ec06a36501fa9699868b3086c55e",
+          "request_identity": {
+            "capability_id": "revit_call_tool",
+            "method": "POST",
+            "path": "/revit/create-text",
+            "request_signature": "ad62cf0b1a7262613382fb17dbb0e73f1421c36dc7706883cb14f673f52c7897"
+          },
+          "completed_at": "2026-10-25T03:37:55.944Z"
+        },
+        "observation_commit_attempts": 0,
+        "settled_at": "2026-10-25T03:37:55.944Z"
+      },
+      "opv2_02398a8651b0b32738379b1b488ca5592c3d9d60ea94a69130d88dff57b68e2d": {
+        "schema": "revit-operator.operation/v2",
+        "operation_id": "opv2_02398a8651b0b32738379b1b488ca5592c3d9d60ea94a69130d88dff57b68e2d",
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "work_unit_id": "work-verification",
+        "capability_id": "revit_call_tool",
+        "requested_effect": "read",
+        "purpose": "verification",
+        "operation_role": "root",
+        "fulfillment_role": "verification",
+        "delegation_authority_id": "delegation:opv2_02398a8651b0b32738379b1b488ca5592c3d9d60ea94a69130d88dff57b68e2d",
+        "blocks_parent_settlement": false,
+        "request_identity": {
+          "capability_id": "revit_call_tool",
+          "method": "POST",
+          "path": "/revit/find-text-notes",
+          "request_signature": "9f34ab493a051d4f8f5fde09159b9e4789f5ccc5f8f8970d37a2d0859d231459"
+        },
+        "advances_criterion_ids": [],
+        "eligible_criterion_ids": [],
+        "resolves_gap_ids": [
+          "criterion:criterion-bcd7a9ecadf186542ce5",
+          "verification:opv2_670b306b04707b6ded18165c34144ec1d3a932e6cdeb18b665eb46d227154052"
+        ],
+        "target": {
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17",
+          "semantic_scope": {
+            "target_0": "id:1420970",
+            "target_1": "id:1422218",
+            "target_2": "id:1488968",
+            "target_3": "id:1521719",
+            "target_4": "id:1521731",
+            "target_5": "id:1543793",
+            "target_6": "id:1545903"
+          }
+        },
+        "input": {
+          "method": "POST",
+          "path": "/revit/find-text-notes",
+          "body": {
+            "elementIds": [
+              1545903
+            ],
+            "max": 1,
+            "preservationScheduleIds": [
+              1420970,
+              1422218,
+              1488968,
+              1521719,
+              1521731,
+              1543793
+            ]
+          }
+        },
+        "admission_state": "admitted",
+        "dispatch_state": "dispatched",
+        "persistent_effect": "none",
+        "settlement_state": "settled",
+        "observation_ids": [
+          "obsv2_4a509d1a8ef4d469dbe9aa0a1d59572fe8345087861c40d06c8c9e3d7522b659"
+        ],
+        "verification_operation_ids": [],
+        "verification_of_operation_id": "opv2_670b306b04707b6ded18165c34144ec1d3a932e6cdeb18b665eb46d227154052",
+        "opened_at": "2026-10-25T03:37:56.404Z",
+        "deadline_at": "2026-10-25T03:41:56.404Z",
+        "admitted_assignment_version": 118,
+        "settled_assignment_version": 122,
+        "dispatch_started_at": "2026-10-25T03:37:56.521Z",
+        "dispatch_authority": "native",
+        "dispatched_at": "2026-10-25T03:37:56.521Z",
+        "result": {
+          "schema": "revit-operator.operation-result/v2",
+          "result_id": "resultv2_13677660c918d99a116721a7e51c89562e06ba67dd6efabca562502e6a8234d0",
+          "operation_id": "opv2_02398a8651b0b32738379b1b488ca5592c3d9d60ea94a69130d88dff57b68e2d",
+          "binding": {
+            "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+            "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+            "generation": 1,
+            "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+            "principal_id": "local:shared-token",
+            "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+          },
+          "status": "succeeded",
+          "dispatch_state": "dispatched",
+          "persistent_effect": "none",
+          "native_transaction_state": "not_applicable",
+          "authority": "native-host",
+          "result_schema_id": "operator-native/POST:/revit/find-text-notes/v2",
+          "observation_required": true,
+          "affected_target_identities": [],
+          "raw_payload_hash": "7800feed898e75bd5f05dea9ca77dc80bb76b2efa187f3b4e8032c7acaed0958",
+          "payload_provenance": {
+            "schema": "revit-operator.payload-provenance/v2",
+            "source": {
+              "algorithm": "sha256",
+              "representation": "utf8_json_bytes",
+              "canonicalization_version": null,
+              "digest": "366bbe38e0ea8b3ac2afc813b5cdd951b014319f6f27a1c35e4966cb3111aefc",
+              "byte_count": 156443
+            },
+            "normalized": {
+              "algorithm": "sha256",
+              "representation": "canonical_json",
+              "canonicalization_version": "revit-operator.canonical-json.utf8-ordinal.v2",
+              "digest": "7800feed898e75bd5f05dea9ca77dc80bb76b2efa187f3b4e8032c7acaed0958",
+              "byte_count": 155847
+            },
+            "transformation_id": "revit-operator.native-result-control-extraction",
+            "transformation_version": "1"
+          },
+          "receipt_id": "3e9940b099493cdd3d5556ccdcb7f4b018b5ad122c35f73f263fbfee1a4d4d07",
+          "native_correlation_id": "3e9940b099493cdd3d5556ccdcb7f4b018b5ad122c35f73f263fbfee1a4d4d07",
+          "request_identity": {
+            "capability_id": "revit_call_tool",
+            "method": "POST",
+            "path": "/revit/find-text-notes",
+            "request_signature": "9f34ab493a051d4f8f5fde09159b9e4789f5ccc5f8f8970d37a2d0859d231459"
+          },
+          "completed_at": "2026-10-25T03:37:57.133Z"
+        },
+        "observation_commit_attempts": 0,
+        "settled_at": "2026-10-25T03:37:57.133Z"
+      },
+      "opv2_67bb21be53ec329f671e7400e37b7db0eb982ff73b343ce02b1ec1b4b96e37b0": {
+        "schema": "revit-operator.operation/v2",
+        "operation_id": "opv2_67bb21be53ec329f671e7400e37b7db0eb982ff73b343ce02b1ec1b4b96e37b0",
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "work_unit_id": "work-primary",
+        "capability_id": "revit_call_tool",
+        "requested_effect": "apply",
+        "purpose": "work",
+        "operation_role": "root",
+        "fulfillment_role": "delegated_task_execution",
+        "delegation_authority_id": "delegation:opv2_67bb21be53ec329f671e7400e37b7db0eb982ff73b343ce02b1ec1b4b96e37b0",
+        "blocks_parent_settlement": false,
+        "request_identity": {
+          "capability_id": "revit_call_tool",
+          "method": "POST",
+          "path": "/revit/save-as",
+          "request_signature": "90f0debe0bd1b4f387b2b4a6f20695bdf7b50cf11d95b44797bffecb6fd63899"
+        },
+        "advances_criterion_ids": [
+          "criterion-bcd7a9ecadf186542ce5"
+        ],
+        "eligible_criterion_ids": [
+          "criterion-bcd7a9ecadf186542ce5"
+        ],
+        "resolves_gap_ids": [
+          "criterion:criterion-bcd7a9ecadf186542ce5",
+          "work-plan:scope"
+        ],
+        "target": {
+          "target_id": "path:c:/wt/local-first-development-workflow/local-work/user-failure-repair-20261007/workflow-development-516/isolated-api-workspace04/artifacts/models/workflow516 annotation-original result.rvt",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "input": {
+          "method": "POST",
+          "path": "/revit/save-as",
+          "body": {
+            "filePath": "C:\\wt\\local-first-development-workflow\\local-work\\user-failure-repair-20261007\\workflow-development-516\\isolated-api-workspace04\\artifacts\\models\\Workflow516 annotation-original Result.rvt",
+            "overwrite": false,
+            "dryRun": false
+          }
+        },
+        "admission_state": "admitted",
+        "dispatch_state": "dispatched",
+        "persistent_effect": "applied",
+        "settlement_state": "settled",
+        "observation_ids": [
+          "obsv2_3b5bf088f70923fc27e9bdee373241f331b752005b26b3d46f4e18b4c7edbb91"
+        ],
+        "verification_operation_ids": [
+          "opv2_1a6771e864067c046e4a285ad41566c019f6859e79bb1401f8fb154b08ab451c"
+        ],
+        "opened_at": "2026-10-25T03:39:58.694Z",
+        "deadline_at": "2026-10-25T03:43:58.694Z",
+        "admitted_assignment_version": 231,
+        "settled_assignment_version": 236,
+        "dispatch_started_at": "2026-10-25T03:39:58.784Z",
+        "dispatch_authority": "native",
+        "dispatched_at": "2026-10-25T03:39:58.784Z",
+        "result": {
+          "schema": "revit-operator.operation-result/v2",
+          "result_id": "resultv2_54ac0a2644b0461738cdedd1968e4151792544d64c322adaec00ef528b8c4318",
+          "operation_id": "opv2_67bb21be53ec329f671e7400e37b7db0eb982ff73b343ce02b1ec1b4b96e37b0",
+          "binding": {
+            "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+            "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+            "generation": 1,
+            "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+            "principal_id": "local:shared-token",
+            "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+          },
+          "status": "succeeded",
+          "dispatch_state": "dispatched",
+          "persistent_effect": "applied",
+          "native_transaction_state": "not_applicable",
+          "native_artifact_receipt": {
+            "schema": "revit-operator.native-artifact-receipt.v1",
+            "method": "POST",
+            "path": "/revit/save-as",
+            "save_document": {
+              "native_save_returned": true,
+              "before": {
+                "session_id": "037270019e9241ceac6bf28955e7fce3",
+                "project_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17",
+                "path": "C:\\wt\\local-first-development-workflow\\local-work\\user-failure-repair-20261007\\workflow-development-516\\isolated-api-workspace04\\artifacts\\models\\Workflow516 annotation-original Input.rvt"
+              },
+              "after": {
+                "session_id": "0aaf488aebc64e7991e78db203a3d5b0",
+                "project_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17",
+                "path": "C:\\wt\\local-first-development-workflow\\local-work\\user-failure-repair-20261007\\workflow-development-516\\isolated-api-workspace04\\artifacts\\models\\Workflow516 annotation-original Result.rvt"
+              },
+              "same_document": true,
+              "document_session_changed": true,
+              "document_path_changed": true,
+              "project_binding_changed": false
+            },
+            "phase": "apply",
+            "status": "complete",
+            "expected_output_paths": [
+              "C:\\wt\\local-first-development-workflow\\local-work\\user-failure-repair-20261007\\workflow-development-516\\isolated-api-workspace04\\artifacts\\models\\Workflow516 annotation-original Result.rvt"
+            ],
+            "expected_export_calls": 1,
+            "export_calls": [
+              true
+            ],
+            "outputs": [
+              {
+                "path": "C:\\wt\\local-first-development-workflow\\local-work\\user-failure-repair-20261007\\workflow-development-516\\isolated-api-workspace04\\artifacts\\models\\Workflow516 annotation-original Result.rvt",
+                "size_bytes": 22695936,
+                "sha256": "15f318f10a608f3c49ae2c6c4cddc37aac4f45051646cf1448610686cc08900a",
+                "fresh_output": true,
+                "exists": true,
+                "readable": true,
+                "stable_read": true
+              }
+            ]
+          },
+          "authority": "native-host",
+          "result_schema_id": "operator-native/POST:/revit/save-as/v2",
+          "observation_required": true,
+          "affected_target_identities": [
+            "artifact_path:C:\\wt\\local-first-development-workflow\\local-work\\user-failure-repair-20261007\\workflow-development-516\\isolated-api-workspace04\\artifacts\\models\\Workflow516 annotation-original Result.rvt"
+          ],
+          "raw_payload_hash": "d3e9d436e2ca682ad3b0133dd081f7fa3dd99469ba573e62a6d7340e9876d2de",
+          "payload_provenance": {
+            "schema": "revit-operator.payload-provenance/v2",
+            "source": {
+              "algorithm": "sha256",
+              "representation": "utf8_json_bytes",
+              "canonicalization_version": null,
+              "digest": "c3336f47b28b555e48fcb6ac2d00ce5624c5b99982d5663357e213ab6dc08e34",
+              "byte_count": 3220
+            },
+            "normalized": {
+              "algorithm": "sha256",
+              "representation": "canonical_json",
+              "canonicalization_version": "revit-operator.canonical-json.utf8-ordinal.v2",
+              "digest": "d3e9d436e2ca682ad3b0133dd081f7fa3dd99469ba573e62a6d7340e9876d2de",
+              "byte_count": 2336
+            },
+            "transformation_id": "revit-operator.native-result-control-extraction",
+            "transformation_version": "1"
+          },
+          "receipt_id": "a2f9570803be55f6f5e72d71be7c5383d61db413432475efd1855e6c38797dcf",
+          "native_correlation_id": "a2f9570803be55f6f5e72d71be7c5383d61db413432475efd1855e6c38797dcf",
+          "request_identity": {
+            "capability_id": "revit_call_tool",
+            "method": "POST",
+            "path": "/revit/save-as",
+            "request_signature": "90f0debe0bd1b4f387b2b4a6f20695bdf7b50cf11d95b44797bffecb6fd63899"
+          },
+          "completed_at": "2026-10-25T03:40:03.826Z"
+        },
+        "observation_commit_attempts": 0,
+        "settled_at": "2026-10-25T03:40:03.826Z"
+      },
+      "opv2_1a6771e864067c046e4a285ad41566c019f6859e79bb1401f8fb154b08ab451c": {
+        "schema": "revit-operator.operation/v2",
+        "operation_id": "opv2_1a6771e864067c046e4a285ad41566c019f6859e79bb1401f8fb154b08ab451c",
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "work_unit_id": "work-verification",
+        "capability_id": "revit_call_tool",
+        "requested_effect": "read",
+        "purpose": "verification",
+        "operation_role": "root",
+        "fulfillment_role": "verification",
+        "delegation_authority_id": "delegation:opv2_1a6771e864067c046e4a285ad41566c019f6859e79bb1401f8fb154b08ab451c",
+        "blocks_parent_settlement": false,
+        "request_identity": {
+          "capability_id": "revit_call_tool",
+          "method": "POST",
+          "path": "/revit/inspect-exported-files",
+          "request_signature": "90dce6daa7e1532198e488ee03b1ab85f079f15a52148ca75e0aee05be34e3e0"
+        },
+        "advances_criterion_ids": [],
+        "eligible_criterion_ids": [],
+        "resolves_gap_ids": [
+          "criterion:criterion-bcd7a9ecadf186542ce5",
+          "verification:opv2_67bb21be53ec329f671e7400e37b7db0eb982ff73b343ce02b1ec1b4b96e37b0"
+        ],
+        "target": {
+          "target_id": "artifact_path:c:/wt/local-first-development-workflow/local-work/user-failure-repair-20261007/workflow-development-516/isolated-api-workspace04/artifacts/models/workflow516 annotation-original result.rvt",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "input": {
+          "method": "POST",
+          "path": "/revit/inspect-exported-files",
+          "body": {
+            "paths": [
+              "C:\\wt\\local-first-development-workflow\\local-work\\user-failure-repair-20261007\\workflow-development-516\\isolated-api-workspace04\\artifacts\\models\\Workflow516 annotation-original Result.rvt"
+            ]
+          }
+        },
+        "admission_state": "admitted",
+        "dispatch_state": "dispatched",
+        "persistent_effect": "none",
+        "settlement_state": "settled",
+        "observation_ids": [
+          "obsv2_2ee88d9863646617745ebb6548f1ef726fd910e4e4f30bb1d4b8b7362c18caad"
+        ],
+        "verification_operation_ids": [],
+        "verification_of_operation_id": "opv2_67bb21be53ec329f671e7400e37b7db0eb982ff73b343ce02b1ec1b4b96e37b0",
+        "opened_at": "2026-10-25T03:40:04.186Z",
+        "deadline_at": "2026-10-25T03:44:04.186Z",
+        "admitted_assignment_version": 238,
+        "settled_assignment_version": 242,
+        "dispatch_started_at": "2026-10-25T03:40:04.353Z",
+        "dispatch_authority": "native",
+        "dispatched_at": "2026-10-25T03:40:04.353Z",
+        "result": {
+          "schema": "revit-operator.operation-result/v2",
+          "result_id": "resultv2_1f0e773dbfa62b66f50b0dd82f1a7e8cf29d7ed69040ef8eb10fb74acdd1f7ac",
+          "operation_id": "opv2_1a6771e864067c046e4a285ad41566c019f6859e79bb1401f8fb154b08ab451c",
+          "binding": {
+            "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+            "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+            "generation": 1,
+            "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+            "principal_id": "local:shared-token",
+            "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+          },
+          "status": "succeeded",
+          "dispatch_state": "dispatched",
+          "persistent_effect": "none",
+          "native_transaction_state": "not_applicable",
+          "authority": "native-host",
+          "result_schema_id": "operator-native/POST:/revit/inspect-exported-files/v2",
+          "observation_required": true,
+          "affected_target_identities": [],
+          "raw_payload_hash": "c1a5857415eb60f2a9f05bbed01b9f2a978355e0efa9d613af02634a44b7d97e",
+          "payload_provenance": {
+            "schema": "revit-operator.payload-provenance/v2",
+            "source": {
+              "algorithm": "sha256",
+              "representation": "utf8_json_bytes",
+              "canonicalization_version": null,
+              "digest": "91d02ecfd39e421e25810a9a7aa1f9e9925a8902cfa3aaf1251e0efa5c9967da",
+              "byte_count": 1727
+            },
+            "normalized": {
+              "algorithm": "sha256",
+              "representation": "canonical_json",
+              "canonicalization_version": "revit-operator.canonical-json.utf8-ordinal.v2",
+              "digest": "c1a5857415eb60f2a9f05bbed01b9f2a978355e0efa9d613af02634a44b7d97e",
+              "byte_count": 1124
+            },
+            "transformation_id": "revit-operator.native-result-control-extraction",
+            "transformation_version": "1"
+          },
+          "receipt_id": "2d87adb9cc2ebdb74e4f776e69a7bc659cb5a583945a244826b8a48dd23ddfd5",
+          "native_correlation_id": "2d87adb9cc2ebdb74e4f776e69a7bc659cb5a583945a244826b8a48dd23ddfd5",
+          "request_identity": {
+            "capability_id": "revit_call_tool",
+            "method": "POST",
+            "path": "/revit/inspect-exported-files",
+            "request_signature": "90dce6daa7e1532198e488ee03b1ab85f079f15a52148ca75e0aee05be34e3e0"
+          },
+          "completed_at": "2026-10-25T03:40:04.446Z"
+        },
+        "observation_commit_attempts": 0,
+        "settled_at": "2026-10-25T03:40:04.446Z"
+      }
+    },
+    "observations": {
+      "obsv2_36a05390e6b995e4a70ba421b42484da6ebeebaf565ff6b95d9a7d8b83bd73d3": {
+        "schema": "revit-operator.observation/v2",
+        "observation_id": "obsv2_36a05390e6b995e4a70ba421b42484da6ebeebaf565ff6b95d9a7d8b83bd73d3",
+        "operation_id": "opv2_2f405c27b69dc9ccd806d5c01e4fae8fdd010fbd74fe7f84c9eb0defc9b2f08f",
+        "fulfillment_role": "supporting_control",
+        "evidence_class": "control",
+        "capability_id": "revit_call_tool",
+        "eligible_criterion_ids": [],
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "result_schema_id": "operator-native/POST:/revit/find-text-notes/v2",
+        "raw_payload_ref": "evidence:ev1_RLIG5v1idpcdzZ-4HcMEhAtAlYFKFaIT",
+        "raw_payload_hash": "436ba6da1a8164a22879bf243ffe965b3bc97c1819f4b7e49dbb281c5c7ec67e",
+        "payload_provenance": {
+          "schema": "revit-operator.payload-provenance/v2",
+          "source": {
+            "algorithm": "sha256",
+            "representation": "utf8_json_bytes",
+            "canonicalization_version": null,
+            "digest": "f1a7c5159ad3022ff398c3eb9a0d607b0612d7545d4ac8efdbb8140c578485de",
+            "byte_count": 1646
+          },
+          "normalized": {
+            "algorithm": "sha256",
+            "representation": "canonical_json",
+            "canonicalization_version": "revit-operator.canonical-json.utf8-ordinal.v2",
+            "digest": "436ba6da1a8164a22879bf243ffe965b3bc97c1819f4b7e49dbb281c5c7ec67e",
+            "byte_count": 1050
+          },
+          "transformation_id": "revit-operator.native-result-control-extraction",
+          "transformation_version": "1"
+        },
+        "facts": [
+          {
+            "fact_id": "control.result_available",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.domain_succeeded",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.native_call_count",
+            "fact_class": "control",
+            "value": 1
+          },
+          {
+            "fact_id": "control.payload_hash",
+            "fact_class": "control",
+            "value": "436ba6da1a8164a22879bf243ffe965b3bc97c1819f4b7e49dbb281c5c7ec67e"
+          },
+          {
+            "fact_id": "control.field.ok",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.field.scope",
+            "fact_class": "control",
+            "value": "active_project"
+          },
+          {
+            "fact_id": "control.field.doc_id",
+            "fact_class": "control",
+            "value": null
+          },
+          {
+            "fact_id": "control.field.family_document_id",
+            "fact_class": "control",
+            "value": null
+          },
+          {
+            "fact_id": "control.field.family_name",
+            "fact_class": "control",
+            "value": null
+          },
+          {
+            "fact_id": "control.field.document_title",
+            "fact_class": "control",
+            "value": "Workflow516 annotation-original Result"
+          },
+          {
+            "fact_id": "control.field.exact_element_filter_applied",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.field.items_complete",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.field.schedule_preservation",
+            "fact_class": "control",
+            "value": null
+          }
+        ],
+        "target_scope": {},
+        "observed_at": "2026-10-25T03:40:14.144Z",
+        "verification_relevance": [
+          "control"
+        ]
+      },
+      "obsv2_eb7a2fab64d0245d622c531c73aa246fcf53b6ba5dd0abc06f030f2882582c95": {
+        "schema": "revit-operator.observation/v2",
+        "observation_id": "obsv2_eb7a2fab64d0245d622c531c73aa246fcf53b6ba5dd0abc06f030f2882582c95",
+        "operation_id": "opv2_7d10ec3559d7c2b19f1bc70488b1c8d9f56e9d905026400b25669c3ee83e32e0",
+        "fulfillment_role": "supporting_control",
+        "evidence_class": "control",
+        "capability_id": "revit_call_tool",
+        "eligible_criterion_ids": [],
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "result_schema_id": "operator-native/POST:/revit/get-element-summary/v2",
+        "raw_payload_ref": "evidence:ev1_tlTf9FzB0SMFCoQgYD7lcreG6z5eGFF0",
+        "raw_payload_hash": "f592a9fcdecc233afded43b41ab55a86e96e01666eced3dc1fa83f4e6fab26c7",
+        "payload_provenance": {
+          "schema": "revit-operator.payload-provenance/v2",
+          "source": {
+            "algorithm": "sha256",
+            "representation": "utf8_json_bytes",
+            "canonicalization_version": null,
+            "digest": "c8700fa7cb9fce6266e02c410b8e2d217ffd3ed3dfbd83d51a2816976b8732cc",
+            "byte_count": 1197
+          },
+          "normalized": {
+            "algorithm": "sha256",
+            "representation": "canonical_json",
+            "canonicalization_version": "revit-operator.canonical-json.utf8-ordinal.v2",
+            "digest": "f592a9fcdecc233afded43b41ab55a86e96e01666eced3dc1fa83f4e6fab26c7",
+            "byte_count": 598
+          },
+          "transformation_id": "revit-operator.native-result-control-extraction",
+          "transformation_version": "1"
+        },
+        "facts": [
+          {
+            "fact_id": "control.result_available",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.domain_succeeded",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.native_call_count",
+            "fact_class": "control",
+            "value": 1
+          },
+          {
+            "fact_id": "control.payload_hash",
+            "fact_class": "control",
+            "value": "f592a9fcdecc233afded43b41ab55a86e96e01666eced3dc1fa83f4e6fab26c7"
+          }
+        ],
+        "target_scope": {},
+        "observed_at": "2026-10-25T03:39:48.207Z",
+        "verification_relevance": [
+          "control"
+        ]
+      },
+      "obsv2_9593ebc482c88375728babea828da261035c6a8541e259c8ae0b0edbf2874881": {
+        "schema": "revit-operator.observation/v2",
+        "observation_id": "obsv2_9593ebc482c88375728babea828da261035c6a8541e259c8ae0b0edbf2874881",
+        "operation_id": "opv2_670b306b04707b6ded18165c34144ec1d3a932e6cdeb18b665eb46d227154052",
+        "fulfillment_role": "delegated_task_execution",
+        "evidence_class": "task_result",
+        "capability_id": "revit_call_tool",
+        "eligible_criterion_ids": [
+          "criterion-bcd7a9ecadf186542ce5"
+        ],
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "result_schema_id": "operator-native/POST:/revit/create-text/v2",
+        "raw_payload_ref": "evidence:ev1_anSjDyHjBLZXSYtPwc9S-T6oIbyQKRHr",
+        "raw_payload_hash": "4e8da8fb70fdfc9c571af1ab3d8e0a8d53f25051998070867da3f718d314a31a",
+        "payload_provenance": {
+          "schema": "revit-operator.payload-provenance/v2",
+          "source": {
+            "algorithm": "sha256",
+            "representation": "utf8_json_bytes",
+            "canonicalization_version": null,
+            "digest": "f39273dca5924d42d48653ef6e0475de4aafd5fb9f9329bea9904a5792da4fb7",
+            "byte_count": 311298
+          },
+          "normalized": {
+            "algorithm": "sha256",
+            "representation": "canonical_json",
+            "canonicalization_version": "revit-operator.canonical-json.utf8-ordinal.v2",
+            "digest": "4e8da8fb70fdfc9c571af1ab3d8e0a8d53f25051998070867da3f718d314a31a",
+            "byte_count": 310550
+          },
+          "transformation_id": "revit-operator.native-result-control-extraction",
+          "transformation_version": "1"
+        },
+        "facts": [
+          {
+            "fact_id": "control.result_available",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.domain_succeeded",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.native_call_count",
+            "fact_class": "control",
+            "value": 1
+          },
+          {
+            "fact_id": "control.payload_hash",
+            "fact_class": "control",
+            "value": "4e8da8fb70fdfc9c571af1ab3d8e0a8d53f25051998070867da3f718d314a31a"
+          },
+          {
+            "fact_id": "task.result_available",
+            "fact_class": "domain",
+            "value": true
+          },
+          {
+            "fact_id": "control.field.action",
+            "fact_class": "control",
+            "value": "create"
+          },
+          {
+            "fact_id": "control.field.text_note_id",
+            "fact_class": "control",
+            "value": 1545903
+          },
+          {
+            "fact_id": "control.field.view_id",
+            "fact_class": "control",
+            "value": 1420963
+          },
+          {
+            "fact_id": "control.field.success",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.field.applied",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.field.status",
+            "fact_class": "control",
+            "value": "Success"
+          },
+          {
+            "fact_id": "control.native_change_inventory_complete",
+            "fact_class": "control",
+            "value": true
+          }
+        ],
+        "target_scope": {},
+        "observed_at": "2026-10-25T03:37:55.944Z",
+        "verification_relevance": [
+          "task_result"
+        ]
+      },
+      "obsv2_4a509d1a8ef4d469dbe9aa0a1d59572fe8345087861c40d06c8c9e3d7522b659": {
+        "schema": "revit-operator.observation/v2",
+        "observation_id": "obsv2_4a509d1a8ef4d469dbe9aa0a1d59572fe8345087861c40d06c8c9e3d7522b659",
+        "operation_id": "opv2_02398a8651b0b32738379b1b488ca5592c3d9d60ea94a69130d88dff57b68e2d",
+        "fulfillment_role": "verification",
+        "evidence_class": "verification",
+        "capability_id": "revit_call_tool",
+        "eligible_criterion_ids": [],
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "result_schema_id": "operator-native/POST:/revit/find-text-notes/v2",
+        "raw_payload_ref": "evidence:ev1_YNH0Y9P2OZXDZKB4WjPJQY2hED8PR_0h",
+        "raw_payload_hash": "7800feed898e75bd5f05dea9ca77dc80bb76b2efa187f3b4e8032c7acaed0958",
+        "payload_provenance": {
+          "schema": "revit-operator.payload-provenance/v2",
+          "source": {
+            "algorithm": "sha256",
+            "representation": "utf8_json_bytes",
+            "canonicalization_version": null,
+            "digest": "366bbe38e0ea8b3ac2afc813b5cdd951b014319f6f27a1c35e4966cb3111aefc",
+            "byte_count": 156443
+          },
+          "normalized": {
+            "algorithm": "sha256",
+            "representation": "canonical_json",
+            "canonicalization_version": "revit-operator.canonical-json.utf8-ordinal.v2",
+            "digest": "7800feed898e75bd5f05dea9ca77dc80bb76b2efa187f3b4e8032c7acaed0958",
+            "byte_count": 155847
+          },
+          "transformation_id": "revit-operator.native-result-control-extraction",
+          "transformation_version": "1"
+        },
+        "facts": [
+          {
+            "fact_id": "control.result_available",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.domain_succeeded",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.native_call_count",
+            "fact_class": "control",
+            "value": 1
+          },
+          {
+            "fact_id": "control.payload_hash",
+            "fact_class": "control",
+            "value": "7800feed898e75bd5f05dea9ca77dc80bb76b2efa187f3b4e8032c7acaed0958"
+          },
+          {
+            "fact_id": "control.field.ok",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.field.scope",
+            "fact_class": "control",
+            "value": "active_project"
+          },
+          {
+            "fact_id": "control.field.doc_id",
+            "fact_class": "control",
+            "value": null
+          },
+          {
+            "fact_id": "control.field.family_document_id",
+            "fact_class": "control",
+            "value": null
+          },
+          {
+            "fact_id": "control.field.family_name",
+            "fact_class": "control",
+            "value": null
+          },
+          {
+            "fact_id": "control.field.document_title",
+            "fact_class": "control",
+            "value": "Workflow516 annotation-original Input"
+          },
+          {
+            "fact_id": "control.field.exact_element_filter_applied",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.field.items_complete",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "verification.postcondition_satisfied",
+            "fact_class": "verification",
+            "value": true
+          },
+          {
+            "fact_id": "verification.deliverable_target_identities",
+            "fact_class": "verification",
+            "value": [
+              "element_id:1545903"
+            ],
+            "cardinality": "many"
+          }
+        ],
+        "target_scope": {},
+        "observed_at": "2026-10-25T03:37:57.133Z",
+        "verification_relevance": [
+          "verification"
+        ]
+      },
+      "obsv2_3b5bf088f70923fc27e9bdee373241f331b752005b26b3d46f4e18b4c7edbb91": {
+        "schema": "revit-operator.observation/v2",
+        "observation_id": "obsv2_3b5bf088f70923fc27e9bdee373241f331b752005b26b3d46f4e18b4c7edbb91",
+        "operation_id": "opv2_67bb21be53ec329f671e7400e37b7db0eb982ff73b343ce02b1ec1b4b96e37b0",
+        "fulfillment_role": "delegated_task_execution",
+        "evidence_class": "task_result",
+        "capability_id": "revit_call_tool",
+        "eligible_criterion_ids": [
+          "criterion-bcd7a9ecadf186542ce5"
+        ],
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "result_schema_id": "operator-native/POST:/revit/save-as/v2",
+        "raw_payload_ref": "evidence:ev1_lNegq11iuL-eXn9-yABGEPKeh90ZoymR",
+        "raw_payload_hash": "d3e9d436e2ca682ad3b0133dd081f7fa3dd99469ba573e62a6d7340e9876d2de",
+        "payload_provenance": {
+          "schema": "revit-operator.payload-provenance/v2",
+          "source": {
+            "algorithm": "sha256",
+            "representation": "utf8_json_bytes",
+            "canonicalization_version": null,
+            "digest": "c3336f47b28b555e48fcb6ac2d00ce5624c5b99982d5663357e213ab6dc08e34",
+            "byte_count": 3220
+          },
+          "normalized": {
+            "algorithm": "sha256",
+            "representation": "canonical_json",
+            "canonicalization_version": "revit-operator.canonical-json.utf8-ordinal.v2",
+            "digest": "d3e9d436e2ca682ad3b0133dd081f7fa3dd99469ba573e62a6d7340e9876d2de",
+            "byte_count": 2336
+          },
+          "transformation_id": "revit-operator.native-result-control-extraction",
+          "transformation_version": "1"
+        },
+        "facts": [
+          {
+            "fact_id": "control.result_available",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.domain_succeeded",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.native_call_count",
+            "fact_class": "control",
+            "value": 1
+          },
+          {
+            "fact_id": "control.payload_hash",
+            "fact_class": "control",
+            "value": "d3e9d436e2ca682ad3b0133dd081f7fa3dd99469ba573e62a6d7340e9876d2de"
+          },
+          {
+            "fact_id": "task.result_available",
+            "fact_class": "domain",
+            "value": true
+          },
+          {
+            "fact_id": "control.field.status",
+            "fact_class": "control",
+            "value": "Success"
+          },
+          {
+            "fact_id": "control.field.ok",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.field.error",
+            "fact_class": "control",
+            "value": null
+          },
+          {
+            "fact_id": "control.field.dry_run",
+            "fact_class": "control",
+            "value": false
+          },
+          {
+            "fact_id": "control.field.path",
+            "fact_class": "control",
+            "value": "C:\\wt\\local-first-development-workflow\\local-work\\user-failure-repair-20261007\\workflow-development-516\\isolated-api-workspace04\\artifacts\\models\\Workflow516 annotation-original Result.rvt"
+          },
+          {
+            "fact_id": "control.field.overwrite",
+            "fact_class": "control",
+            "value": false
+          },
+          {
+            "fact_id": "control.field.compact",
+            "fact_class": "control",
+            "value": false
+          },
+          {
+            "fact_id": "control.field.maximum_backups",
+            "fact_class": "control",
+            "value": 3
+          },
+          {
+            "fact_id": "control.field.save_as_central",
+            "fact_class": "control",
+            "value": false
+          }
+        ],
+        "target_scope": {},
+        "observed_at": "2026-10-25T03:40:03.826Z",
+        "verification_relevance": [
+          "task_result"
+        ]
+      },
+      "obsv2_2ee88d9863646617745ebb6548f1ef726fd910e4e4f30bb1d4b8b7362c18caad": {
+        "schema": "revit-operator.observation/v2",
+        "observation_id": "obsv2_2ee88d9863646617745ebb6548f1ef726fd910e4e4f30bb1d4b8b7362c18caad",
+        "operation_id": "opv2_1a6771e864067c046e4a285ad41566c019f6859e79bb1401f8fb154b08ab451c",
+        "fulfillment_role": "verification",
+        "evidence_class": "verification",
+        "capability_id": "revit_call_tool",
+        "eligible_criterion_ids": [],
+        "binding": {
+          "assignment_id": "203636eb-8567-440a-9033-3f6d61e5c3d7",
+          "run_id": "sidecar:cb700740-8ed3-4fd2-a246-ed2a4edda1e7",
+          "generation": 1,
+          "session_id": "c124a7b7-ffb7-5bfb-9bfe-9b708fa1b817",
+          "principal_id": "local:shared-token",
+          "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+        },
+        "authority": "native-host",
+        "result_schema_id": "operator-native/POST:/revit/inspect-exported-files/v2",
+        "raw_payload_ref": "evidence:ev1_CJocMfTwY7toj-qW17Q1kva7weKAqwSi",
+        "raw_payload_hash": "c1a5857415eb60f2a9f05bbed01b9f2a978355e0efa9d613af02634a44b7d97e",
+        "payload_provenance": {
+          "schema": "revit-operator.payload-provenance/v2",
+          "source": {
+            "algorithm": "sha256",
+            "representation": "utf8_json_bytes",
+            "canonicalization_version": null,
+            "digest": "91d02ecfd39e421e25810a9a7aa1f9e9925a8902cfa3aaf1251e0efa5c9967da",
+            "byte_count": 1727
+          },
+          "normalized": {
+            "algorithm": "sha256",
+            "representation": "canonical_json",
+            "canonicalization_version": "revit-operator.canonical-json.utf8-ordinal.v2",
+            "digest": "c1a5857415eb60f2a9f05bbed01b9f2a978355e0efa9d613af02634a44b7d97e",
+            "byte_count": 1124
+          },
+          "transformation_id": "revit-operator.native-result-control-extraction",
+          "transformation_version": "1"
+        },
+        "facts": [
+          {
+            "fact_id": "control.result_available",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.domain_succeeded",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.native_call_count",
+            "fact_class": "control",
+            "value": 1
+          },
+          {
+            "fact_id": "control.payload_hash",
+            "fact_class": "control",
+            "value": "c1a5857415eb60f2a9f05bbed01b9f2a978355e0efa9d613af02634a44b7d97e"
+          },
+          {
+            "fact_id": "control.field.schema",
+            "fact_class": "control",
+            "value": "revit-operator.exported-file-inspection.v1"
+          },
+          {
+            "fact_id": "control.field.ok",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "control.field.items_complete",
+            "fact_class": "control",
+            "value": true
+          },
+          {
+            "fact_id": "verification.postcondition_satisfied",
+            "fact_class": "verification",
+            "value": true
+          }
+        ],
+        "target_scope": {},
+        "observed_at": "2026-10-25T03:40:04.446Z",
+        "verification_relevance": [
+          "verification"
+        ]
+      }
+    },
+    "observation_versions": {
+      "obsv2_bb92497752061707e9c0e49c56b03129711b5b962d00a533ecc50f6a03e9e615": 13,
+      "obsv2_1b9e02bd5afbdc5b6510764fcf318b209307d0468fedbd6f65f9b750b4de0f53": 23,
+      "obsv2_b044759ec2b0e6abfd10467419885e4fd8a3bab5b82fe0d5aed16b3f172a3626": 26,
+      "obsv2_462136291c8fe9f313e7d87878266cccfc004033935576be408239bde46182fc": 35,
+      "obsv2_1b40c4df568a4d8fb4e5da4998511c91b353c187d47439b800a1bd0492364033": 38,
+      "obsv2_0f18522cce7e8d8089d6a07859082178aae8e495b7944ea03936c4b8384d89d4": 45,
+      "obsv2_7d97ab183d521a1bb92411b47beeaebc0ca3487ac94312117e08e909cefb0331": 54,
+      "obsv2_ccadfff1078a633c6d9e5099ff5e8b74acdcc7bde0b01c647d2015f98a862ffb": 57,
+      "obsv2_d8038bedc25e027f0da80a5d39364fb3436bda86dd6ede62fd6d0007983e4cf4": 64,
+      "obsv2_acd73b4f8e725392483aaef86215f70027a3647697f2c17b15e89e79f75a67f4": 73,
+      "obsv2_cbedcfbf89a86a65aa93e0f535d0ce82e82d9e88a1ea9b34998a49780f5f87b8": 76,
+      "obsv2_572c03d3d998721cf45aaa7c62f9ddd4a2cef2475d92843141c939e51215b9b8": 83,
+      "obsv2_9da8f37007339b60463874b7cf236a75468ff8ef7d714fa1f9206fd89aaf5aaa": 92,
+      "obsv2_2983e9b07d6f21a143fb711b311b974253a1f36a47345198f27ee4305631154e": 95,
+      "obsv2_89bfe2689963846db158fd93080a2f8d31ea483d66670fabfef7946975f86a1c": 104,
+      "obsv2_9593ebc482c88375728babea828da261035c6a8541e259c8ae0b0edbf2874881": 116,
+      "obsv2_4a509d1a8ef4d469dbe9aa0a1d59572fe8345087861c40d06c8c9e3d7522b659": 122,
+      "obsv2_ba334e20f2390a2fc4b5ada8b6bf98ed0d11b081b79f4bd460adafd77c114708": 129,
+      "obsv2_8dfc509852ff0bc4d235b50cf85906b2b2a7416854b4ed4727c4e95c4aeb0631": 173,
+      "obsv2_a34d820c4aa2989545ddcdb48afc9d94de8c53a0f01dc6dcacf9fcfd88a238bc": 180,
+      "obsv2_89f888ebf775e6f805e5da93e4627b8dc13a8f715dd9dd2eede7cc2f72914d20": 193,
+      "obsv2_7e837b1e4df251ebac3e04d1dbe238e0fd0b0743b3cb13139d96330958646f9d": 196,
+      "obsv2_3d74ace46131d93dab5da65be419347fc69ae3f22a549132485de4f5742badd6": 203,
+      "obsv2_77c40c68fa5bf42e500ee4c98f852d78f1e99c0e44c3410936502895aa5070f0": 212,
+      "obsv2_3c13ff9ba858a017fdbdb794db950c2689df58d6ebd8890c56dbd35bd3b81c54": 215,
+      "obsv2_eb7a2fab64d0245d622c531c73aa246fcf53b6ba5dd0abc06f030f2882582c95": 222,
+      "obsv2_3b5bf088f70923fc27e9bdee373241f331b752005b26b3d46f4e18b4c7edbb91": 236,
+      "obsv2_2ee88d9863646617745ebb6548f1ef726fd910e4e4f30bb1d4b8b7362c18caad": 242,
+      "obsv2_36a05390e6b995e4a70ba421b42484da6ebeebaf565ff6b95d9a7d8b83bd73d3": 250,
+      "obsv2_61c98268ce7f16bd5d95f0d3ff11a6db1fff39da359da87618da8a21dfebe3f4": 257
+    },
+    "criteria": {},
+    "criterion_evaluation_versions": {},
+    "outcome": "active",
+    "terminal": false,
+    "operation_children": {
+      "opv2_9669c4bdabeb7ad170e53e2493c57d17c44c665bb3b5cf0fb8551f4973da6971": [
+        "opv2_7c3e89d365f75b96164933c0d4c081f9079e3a00ede5d5dd7c8a94183f81edbb"
+      ],
+      "opv2_a19beef6a1509bec2aec129a7b8fd0b6b7ae29e9e682930d1532ebf391f46ac4": [
+        "opv2_5a7b930995841b6271b48783e422aa22cfd334ca186c5e0e182bb40d39ce8332"
+      ],
+      "opv2_5c91ad0ccc78c0b0f7d249f063ef70a923360e74ff35408eb718f7b548f526c2": [
+        "opv2_80ca21e50cd6cd8b8aeb9092a6dc9fb035538af29b61d190199bd45a00dfb18f"
+      ],
+      "opv2_f86fb329dff137f7984945aee6b9724017a776971a1df78dc5e2c53b46635223": [
+        "opv2_30fa89937b98bc29d13339344227bc4e48150747800578e3a29fc95a1e56ba8a"
+      ],
+      "opv2_4635a196bfbb09fd0f6d7343ae23f5b5a9ec5ad237226ad41a34b2156e6467d2": [
+        "opv2_ce8c6b6e15bf69c9e847d12c2a60f2585093d8f2f842e87f8b9518d100227a66"
+      ],
+      "opv2_054a3f2d689779636a342d9271d99d00b4a2d229a09f225fd92b1a5b54ecc2f1": [
+        "opv2_bfe3fa389a21cc843cb468de334b875f8c282f1e109a821ff8bcf0d30bc4c04d"
+      ],
+      "opv2_ceb8ab4c6f9b1bca118b3d06898f1651a0480fb784630ecdeb91c4808aaa483e": [
+        "opv2_8a471fcc2ef200f6c2076ad3ab0cc83f9d0101af882f95d0d1011302f65cf3e8"
+      ],
+      "opv2_25999c7929324f36ce5d068de8d4ec918853fef607594639f5e0919712297132": [
+        "opv2_bd6a960ed7f7be4f1c631141c931f0bb8abb6b0d81bfeafb80ed34a773045277"
+      ],
+      "opv2_bc7b8bb417cb966a1d650ec92909b692a861a3247fe28515b243d1ae11245260": [
+        "opv2_faef0236921ab5900e366d0cd8047b23a32d007bb7987ff44786aa7202cab186"
+      ]
+    },
+    "blocking_child_operation_ids": [],
+    "in_flight_operation_ids": [],
+    "unresolved_unknown_operation_ids": [],
+    "quiescent": false,
+    "work_plan": {
+      "schema": "revit-operator.assignment-work-plan/v2",
+      "items": [
+        {
+          "item_id": "m000-note",
+          "description": "Add exactly one editable TextNote INTERNAL REVIEW - QA461 to unused space inside M000 printed border, reusing existing 1/4 inch Trebuchet MS type 1421335. Do not modify existing notes, types or any other model content.",
+          "source_basis": "Full user request; live context confirms Input.rvt under workspace artifacts/models; M000 native sheet detail and complete five-note inventory contain no exact note. Full-sheet capture visually inspected; unused lower-right area below Sheet Index and right of instructions supports approximate x=2.72,y=0.62 feet.",
+          "kind": "edit",
+          "declared_at": "2026-10-25T03:37:52.390Z",
+          "operation_ids": [
+            "opv2_670b306b04707b6ded18165c34144ec1d3a932e6cdeb18b665eb46d227154052"
+          ],
+          "completed_at": "2026-10-25T03:39:28.905Z"
+        },
+        {
+          "item_id": "m000-native-check",
+          "description": "Verify exact new note text, editable TextNote identity, owner sheet, existing type, position and bounded native change set.",
+          "source_basis": "User requires actual note verification and preservation; native readback after create.",
+          "kind": "inspection",
+          "depends_on": [
+            "m000-note"
+          ],
+          "declared_at": "2026-10-25T03:37:52.390Z",
+          "operation_ids": [
+            "opv2_7d10ec3559d7c2b19f1bc70488b1c8d9f56e9d905026400b25669c3ee83e32e0"
+          ],
+          "completed_at": "2026-10-25T03:39:53.809Z",
+          "inspection": {
+            "observation_ids": [
+              "obsv2_eb7a2fab64d0245d622c531c73aa246fcf53b6ba5dd0abc06f030f2882582c95"
+            ],
+            "target_ids": [
+              "element_id:1545903"
+            ]
+          }
+        },
+        {
+          "item_id": "m000-owner-visual",
+          "description": "Desktop owner final visual check on active M000 for readability, printed border containment and clearance; keep pending in helper handoff.",
+          "source_basis": "User requests readable note clear of content; scoped helper instruction leaves final review_current_work to desktop owner.",
+          "kind": "inspection",
+          "depends_on": [
+            "m000-note"
+          ],
+          "declared_at": "2026-10-25T03:37:52.390Z",
+          "operation_ids": [
+            "opv2_7d10ec3559d7c2b19f1bc70488b1c8d9f56e9d905026400b25669c3ee83e32e0"
+          ],
+          "completed_at": "2026-10-25T03:39:56.584Z",
+          "inspection": {
+            "observation_ids": [
+              "obsv2_eb7a2fab64d0245d622c531c73aa246fcf53b6ba5dd0abc06f030f2882582c95"
+            ],
+            "target_ids": [
+              "element_id:1545903"
+            ]
+          }
+        },
+        {
+          "item_id": "result-save",
+          "description": "Save As distinct workspace artifacts/models/Workflow516 annotation-original Result.rvt, preserve Input.rvt, independently inspect saved file and active clean document identity; no PDF.",
+          "source_basis": "Full original request and live actual Input path establish workspace models folder. SaveAs/closeout explicitly pending for desktop owner.",
+          "kind": "edit",
+          "depends_on": [
+            "m000-native-check",
+            "m000-owner-visual"
+          ],
+          "declared_at": "2026-10-25T03:37:52.390Z",
+          "operation_ids": []
+        }
+      ],
+      "assumptions": [
+        "Only one new native TextNote is authorized; no text-type changes or existing content edits.",
+        "Final visual inspection and SaveAs are intentionally not performed by this scoped helper. Output destination is the sibling of the observed active Input.rvt: C:\\wt\\local-first-development-workflow\\local-work\\user-failure-repair-20261007\\workflow-development-516\\isolated-api-workspace04\\artifacts\\models\\Workflow516 annotation-original Result.rvt."
+      ]
+    }
+  },
+  "provenance": "Actual516 candidate02 active03:40:39 prefix before finalfailure; exact note/save/identity operations+observations andworkplan retained. Unrelated readonly/provider ledger omitted only in fixture. Production history unchanged."
+}

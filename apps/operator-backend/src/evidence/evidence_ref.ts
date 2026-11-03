@@ -43,6 +43,8 @@ export type EvidenceRefV1 = {
   target_scope: string[];
   bounded_summary: string;
   key_typed_facts: Record<string, string | number | boolean | null>;
+  /** Internal storage path. Large JSON objects may be gzip-compressed; use the
+   * evidence reader to recover and hash-check the original logical bytes. */
   artifact_location: string;
   redaction_status: "not_needed" | "screened";
   secret_screening_status: "passed";
@@ -128,7 +130,7 @@ export type EvidenceRetrievalRequest = {
   evidence_id: string;
   scope: EvidenceScope;
   fields?: string[];
-  item_range?: { path: string; start: number; count: number; fields?: string[] };
+  item_range?: import("@revitoperator/assignment-kernel-v2-contracts").EvidenceItemRangeV1;
   text_range?: { start: number; length: number };
   target_subset?: string[];
   image?: true;
@@ -146,7 +148,11 @@ export type EvidenceRetrievalResult = {
   image_byte_limit?: number;
   pagination?: { path: string; start: number; requested_count: number; returned_count: number; total_items: number;
     has_more: boolean; next_start: number | null; byte_limited: boolean; requested_rows_complete: boolean;
-    source_rows_exhausted: boolean; fields?: string[]; row_projection?: "selected_fields" };
+    source_rows_exhausted: boolean; fields?: string[]; row_projection?: "selected_fields";
+    selection_query?: {cursor_basis:"selected_rank";source_total_items:number;matched_total_items:number;scanned_retained_rows:number;
+      retained_scan_complete:boolean;non_comparable_filter_rows:number;unavailable_numeric_order_rows:number;selected_rows_exhausted:boolean;
+      filters?:readonly import("@revitoperator/assignment-kernel-v2-contracts").EvidenceScalarFilterV1[];
+      orderBy?:import("@revitoperator/assignment-kernel-v2-contracts").EvidenceNumericOrderV1} };
   missing_fields?: string[];
   selection_origins?: Record<string, "payload" | "deterministic_projection">;
 };

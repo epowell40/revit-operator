@@ -64,6 +64,18 @@ namespace RevitBridge.Handlers
             => new RevitBridge.Logic.Handlers.FindFamilyTextNotesHandler().Handle(app, jsonData);
     }
 
+    public sealed class InspectFamilyLabelStylesHandler : IRequestHandler
+    {
+        public Task<object> Handle(UIApplication app, string jsonData)
+            => new RevitBridge.Logic.Handlers.InspectFamilyLabelStylesHandler().Handle(app, jsonData);
+    }
+
+    public sealed class SetFamilyLabelStyleHandler : IRequestHandler
+    {
+        public Task<object> Handle(UIApplication app, string jsonData)
+            => new RevitBridge.Logic.Handlers.SetFamilyLabelStyleHandler().Handle(app, jsonData);
+    }
+
     public sealed class SetTextNoteTextHandler : IRequestHandler
     {
         public Task<object> Handle(UIApplication app, string jsonData)

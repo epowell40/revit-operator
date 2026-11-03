@@ -1,12 +1,16 @@
 import { committedDrawingSpecImportReadbackPlanV2 } from "../verification/drawing_spec_import_v2.js";
+import {committedNativeProgramParameterReadbackPlanV2} from '../verification/native_program_parameter_postcondition_v2.js';
 import {committedExcelTableImportReadbackPlanV2} from '../verification/excel_table_import_v2.js';
-import {committedVectorDetailReadbackPlanV2} from '../verification/vector_detail_import_v2.js';
-import {prepareVectorSourceProofV2} from '../verification/vector_detail_source_proof_v2.js';
+import {committedVectorDetailReadbackPlanV2,committedVectorAnnotationRefreshPlanV2} from '../verification/vector_detail_import_v2.js';
+import {committedVectorStrokeCadReadbackPlanV2} from '../verification/vector_stroke_cad_readback_v2.js';
+import {prepareVectorSourceProofV2,vectorVerificationHandoffV2} from '../verification/vector_detail_source_proof_v2.js';
+import {committedArtifactReadbackPlanV2} from '../verification/committed_artifact_readback_plan_v2.js';
 import {committedDeletedElementsReadbackPlansV2}from '../verification/deleted_elements_postcondition_v2.js';
-import { committedCheckNeedsRefreshV2 } from '../verification/regular_schedule_recheck_v2.js';
+import { committedCheckNeedsRefreshV2,committedDraftingIdentityRefreshPlanV2,committedDraftingIdentityReadbackPlanV2 } from '../verification/regular_schedule_recheck_v2.js';
 import { checkedEditIsCurrentV2 } from '../verification/current_postcondition_v2.js';
 import { committedRegularSchedulePresentationReadbackPlanV2 } from "../verification/regular_schedule_presentation_v2.js";
 import { committedProjectParameterBindingReadbackPlanV2 } from "../verification/project_parameter_binding_v2.js";
+import {committedNativeDetailLineReadbackPlanV2,committedNativeDetailLineRefreshPlanV2}from'../verification/native_detail_line_graph_v2.js';
 import type { CodexServerRequest } from "../codex/app_server.js";
 import { CodexMcpToolRuntime } from "../codex/mcp_tool_runtime.js";
 import { RevitToolParallelGuard } from "../codex/revit_tool_parallel_guard.js";
@@ -43,6 +47,7 @@ import { recordAssignmentTurnProgress } from "../assignments/turn_settlement.js"
 import { currentAssignmentJournalContext } from "../assignments/turn_journal.js";
 import { bindCanonicalAssignmentToolArguments } from "../assignments/tool_argument_binding.js";
 import { getAssignmentKernelSnapshotV2 } from "../assignments/assignment_kernel_v2_store.js";
+import { captureNativeInteractiveDispatchObserver,requireNativeInteractiveInvocation } from '../assignments/native_interactive_input.js';
 import { recoverRetainedAssignmentCompletionsV2 } from "../assignments/assignment_kernel_v2_completion_recovery.js";
 import { codexAssignmentEvidenceContextV2 } from "./codex_assignment_evidence.js";
 import { nativeChildProjectionReferencesV2 } from "../assignments/assignment_kernel_v2_child_projection.js";
@@ -67,8 +72,13 @@ import { expandExactRegisteredStageToolArguments } from "../existing_conditions/
 import { committedTagReadbackPlanV2 } from "../verification/committed_tag_readback_plan_v2.js";
 import { committedVisibilityReadbackPlanV2 } from "../verification/committed_visibility_readback_plan_v2.js";
 import { committedParameterReadbackPlanV2, committedTypedParameterReadbackPlanV2 } from "../verification/committed_parameter_readback_plan_v2.js";
+import {committedInlineAccessoryReadbackPlanV2} from '../verification/inline_accessory_evidence_v2.js';
+import {committedNativeAccessoryReadbackPlanV2} from '../verification/native_accessory_evidence_v2.js';
+import {committedTeeTakeoffReadbackPlanV2} from '../verification/tee_takeoff_evidence_v2.js';
 import { committedCircuitReadbackPlanV2, committedTypedCircuitReadbackPlanV2 } from "../verification/circuit_membership_postcondition_v2.js";
 import { committedElementTypeReadbackPlanV2 } from "../verification/element_type_postcondition_v2.js";
+import {committedFamilySessionReadbackPlanV2} from '../verification/family_session_verification_v2.js';
+import { committedFamilyLabelStyleReadbackPlanV2 } from '../verification/family_label_style_v2.js';
 import { committedDuplicatedTypeReadbackPlanV2 } from "../verification/duplicated_type_postcondition_v2.js";
 import { committedCreatedTagReadbackPlanV2 } from "../verification/created_tag_postcondition_v2.js";
 import { committedSheetMoveReadbackPlansV2 } from "../verification/sheet_move_postcondition_v2.js";
@@ -230,6 +240,22 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
     };
   }
   if ((v2Snapshot?.terminal ?? false) || (journalContext && journalContext.projection.terminal_state !== "open")) {
+    // Terminal execution still forbids every tool dispatch. A same-bound
+    // scoped helper may retain its already-requested written report only;
+    // this is untrusted presentation, not completion or a new native action.
+    if(v2Snapshot&&v2Binding&&params.tool==='operator_manage_work_plan'
+      &&params.arguments?.action==='propose_completion'){
+      try{
+        const bound=bindCanonicalAssignmentToolArguments(params.tool,params.arguments,{session_id:sessionId,
+          assignment_id:v2Binding.assignment_id,run_id:v2Binding.run_id,generation:v2Binding.generation});
+        await runtime.validateToolArguments?.(String(params.tool),bound.arguments);
+        const returned=retainDesktopHelperReturnV1({owner:runtime,turn_id:params.turnId,binding:v2Binding,
+          marker:teammateDesktopHelperScopeForOwner(runtime,params.turnId),tool:String(params.tool),arguments:bound.arguments});
+        if(returned){runtime.queueAssignmentKernelV2TurnStop(params.turnId,DESKTOP_HELPER_RETURN_REASON);
+          const response={success:true,contentItems:[{type:'inputText' as const,text:desktopHelperReturnMessageV1(returned)}]};
+          attachCurrentAssignmentContext(response,params.tool,v2Binding.assignment_id);return response;}
+      }catch(error){return {success:false,contentItems:[{type:'inputText',text:'Scoped written report not retained: '+String(error).slice(0,1200)}]};}
+    }
     return {
       contentItems: [{
         type: "inputText",
@@ -272,7 +298,7 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
     }
     if(decision?.decision==='yield'&&lease){
       const returned=retainDesktopHelperReturnV1({owner:runtime,turn_id:params.turnId,binding:v2Snapshot.current_binding,
-        marker,tool:'host_desktop_helper_call_yield',arguments:{report:desktopHelperBudgetReportV1(v2Snapshot,lease)}});
+        marker,tool:'host_desktop_helper_call_yield',arguments:{report:desktopHelperBudgetReportV1(v2Snapshot,lease,decision.reason)}});
       if(returned){runtime.queueAssignmentKernelV2TurnStop(params.turnId,DESKTOP_HELPER_RETURN_REASON);
         const response={success:true,contentItems:[{type:'inputText' as const,text:desktopHelperReturnMessageV1(returned)}]};
         attachCurrentAssignmentContext(response,params.tool,v2Binding.assignment_id);return response;}
@@ -292,7 +318,8 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
   if (!parallel.accepted) {
     return { contentItems: [{ type: "inputText", text: parallel.message ?? "Concurrent dependent Revit call blocked." }], success: false };
   }
-  const teammateGate = guardTeammateMcpCall(runtime, boundParams, v2Snapshot);
+  const teammateGate = guardTeammateMcpCall(runtime, boundParams, v2Snapshot,
+    isCommittedReadbackReservationV2(hostBoundary)?{token:hostBoundary,request:boundRequest}:undefined);
   if (!teammateGate.allowed) {
     parallel.release();
     return { contentItems: [{ type: "inputText", text: teammateGate.message ?? "Host teammate-loop guard blocked this Revit call." }], success: false };
@@ -354,6 +381,7 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
     }
     let lease: ReturnType<typeof openAssignmentKernelOperationV2>;
     try {
+      requireNativeInteractiveInvocation(v2Snapshot,String(params.tool),boundArguments.arguments as Record<string,unknown>);
       if(hostBoundary===HOST_READBACK){
         const fresh=getAssignmentKernelSnapshotV2(v2Binding.assignment_id);
         const exhausted=fresh?assignmentNativeReadbackResourceBlockerV2(fresh,defaultAssignmentWorkBudgetV2(fresh,DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2),new Date().toISOString(),1):'assignment_missing';
@@ -385,6 +413,7 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
     }
     let accepted = false;
     let rawResult: any;
+    const observeInteractiveDispatch = captureNativeInteractiveDispatchObserver();
     try {
       rawResult = await runtime.callTool(params.tool, boundArguments.arguments, {
         turnId: params.turnId,
@@ -393,6 +422,8 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
         onMcpAccepted: () => {
           markAssignmentKernelOperationDispatchStartedV2(lease);
           accepted = true;
+          const dispatched = getAssignmentKernelSnapshotV2(lease.assignment_id);
+          if (dispatched) observeInteractiveDispatch(dispatched, lease.operation_id);
         }
       });
       recordTeammateMcpResult(runtime, teammateGate, rawResult);
@@ -420,22 +451,32 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
       const current = getAssignmentKernelSnapshotV2(lease.assignment_id);
       const typedRead = current?.operations[lease.operation_id]
         ? committedTypedParameterReadbackPlanV2(current,current.operations[lease.operation_id]!,rawResult)
-          ?? committedTypedCircuitReadbackPlanV2(current,current.operations[lease.operation_id]!,rawResult) : null;
+          ?? committedTypedCircuitReadbackPlanV2(current,current.operations[lease.operation_id]!,rawResult)
+          ?? committedVectorStrokeCadReadbackPlanV2(current,current.operations[lease.operation_id]!) : null;
       const readPlan = typedRead?.plan ?? (current?.operations[lease.operation_id]
-        ? committedTagReadbackPlanV2(current, current.operations[lease.operation_id]!)
+        ? committedNativeProgramParameterReadbackPlanV2(current,current.operations[lease.operation_id]!)
+          ?? committedTagReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedVisibilityReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedScheduleCellBackgroundReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedRegularSchedulePresentationReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedDrawingSpecImportReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedExcelTableImportReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedVectorDetailReadbackPlanV2(current, current.operations[lease.operation_id]!)
+          ?? committedDraftingIdentityReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedProjectParameterBindingReadbackPlanV2(current, current.operations[lease.operation_id]!)
+          ?? committedNativeDetailLineReadbackPlanV2(current,current.operations[lease.operation_id]!)
           ?? committedNativeSchedulePresentationReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedScheduleReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedCreatedScheduleReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedSavedDocumentReadbackPlanV2(current, current.operations[lease.operation_id]!)
+          ?? committedArtifactReadbackPlanV2(current, current.operations[lease.operation_id]!)
+          ?? committedInlineAccessoryReadbackPlanV2(current, current.operations[lease.operation_id]!)
+          ?? committedNativeAccessoryReadbackPlanV2(current, current.operations[lease.operation_id]!)
+          ?? committedTeeTakeoffReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedParameterReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedElementTypeReadbackPlanV2(current, current.operations[lease.operation_id]!)
+          ?? committedFamilyLabelStyleReadbackPlanV2(current, current.operations[lease.operation_id]!)
+          ?? committedFamilySessionReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedDuplicatedTypeReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedCreatedTagReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedNativeAnnotationReadbackPlanV2(current, current.operations[lease.operation_id]!)
@@ -494,13 +535,19 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
       // apply, reinterpret a failed check, or manufacture a final proof fact.
       if(current?.operations[lease.operation_id]?.requested_effect==='apply') {
         parallel.release();
+        const vectorCheckpoint=current.operations[lease.operation_id]?.input.path==='/revit/save-as';
         for(let n=0;n<16;n++) {
           const before=getAssignmentKernelSnapshotV2(lease.assignment_id);if(!before)break;
           const candidate=Object.values(before.operations)
-            .filter(op=>committedCheckNeedsRefreshV2(before,op))
+            .filter(op=>committedCheckNeedsRefreshV2(before,op)
+              &&(vectorCheckpoint||!['/revit/import-vector-annotations','/revit/link-cad','/revit/create-drafting-view'].includes(String(op.input.path??''))))
             .sort((a,b)=>`${b.settled_at??b.opened_at}:${b.operation_id}`.localeCompare(`${a.settled_at??a.opened_at}:${a.operation_id}`))
             .map(op=>({op,plan:committedRegularSchedulePresentationReadbackPlanV2(before,op)
-              ??committedVisibilityReadbackPlanV2(before,op)})).find(v=>v.plan);
+              ??committedVisibilityReadbackPlanV2(before,op)
+              ??committedVectorAnnotationRefreshPlanV2(before,op)
+              ??committedVectorStrokeCadReadbackPlanV2(before,op)?.plan
+              ??committedDraftingIdentityRefreshPlanV2(before,op)
+              ??committedNativeDetailLineRefreshPlanV2(before,op)})).find(v=>v.plan);
           if(!candidate)break;
           try {
             const response=await handleCodexDynamicToolCall(runtime,{
@@ -544,6 +591,8 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
       if (hostReadResponse) response.contentItems.push({ type:"inputText", text:
         "Host requested a separate bounded native readback. Its result and verification status are retained in the assignment context; the edit receipt itself is not proof." },
         ...hostReadResponse.contentItems);
+      const vectorHandoff=vectorVerificationHandoffV2(sourceProof,getAssignmentKernelSnapshotV2(lease.assignment_id),lease.operation_id);
+      if(vectorHandoff)response.contentItems.push({type:'inputText',text:JSON.stringify(vectorHandoff)});
       attachCurrentAssignmentContext(response, params.tool, lease.assignment_id, lease.operation_id);
       return response;
     } catch (error) {

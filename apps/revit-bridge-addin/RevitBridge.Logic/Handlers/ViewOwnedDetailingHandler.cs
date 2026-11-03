@@ -20,6 +20,11 @@ namespace RevitBridge.Logic.Handlers
             public long? viewId { get; set; }
             public List<long>? viewIds { get; set; }
             public int? limit { get; set; }
+            public bool? includeCadGeometry { get; set; }
+            public int? cadGeometryLimit { get; set; }
+            public long? cadElementId { get; set; }
+            public int? cadGeometryOffset { get; set; }
+            public bool? cadTargetOnly { get; set; }
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
@@ -31,15 +36,42 @@ namespace RevitBridge.Logic.Handlers
             var ids = request.viewIds ?? (request.viewId.HasValue ? new List<long> { request.viewId.Value } : new List<long>());
             if (ids.Count < 1 || ids.Count > 2 || ids.Any(id => id <= 0) || ids.Distinct().Count() != ids.Count)
                 throw new ArgumentException("view-owned-detailing requires one or two distinct positive view IDs.");
+            CadGeometryTargetReadContract.Validate(request.cadTargetOnly, ids.Count, request.includeCadGeometry, request.cadElementId, request.cadGeometryOffset, request.limit);
             var limit = ViewOwnedDetailingInventoryContract.ValidateLimit(request.limit);
             var doc = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active project document.");
+            var cadBudget = request.includeCadGeometry == true ? new CadGeometryReadBudget(request.cadGeometryLimit) : null;
+            if (request.cadElementId.HasValue || request.cadGeometryOffset.HasValue)
+            {
+                if (cadBudget == null || ids.Count != 1 || !request.cadElementId.HasValue || request.cadElementId <= 0
+                    || !request.cadGeometryOffset.HasValue || request.cadGeometryOffset < 0 || request.cadGeometryOffset > CadGeometryPageWindow.MaximumPrimitives)
+                    throw new ArgumentException("CAD paging requires one owner view, includeCadGeometry=true, exact positive cadElementId and bounded cadGeometryOffset.");
+                var target = doc.GetElement(ElementIdCompat.Create(request.cadElementId.Value)) as ImportInstance;
+                if (target == null || ElementIdCompat.GetValue(target.OwnerViewId) != ids[0])
+                    throw new ArgumentException("Exact CAD page target is not an import owned by the requested view.");
+                if (request.cadTargetOnly == true)
+                {
+                    var owner = doc.GetElement(ElementIdCompat.Create(ids[0])) as View
+                        ?? throw new ArgumentException("Exact CAD owner view is missing.");
+                    var geometry = NativeCadGeometry.ReadPage(target, owner, cadBudget!, request.cadGeometryOffset!.Value);
+                    return Task.FromResult<object>(new
+                    {
+                        schema = "revit-operator.cad-geometry-target/v1", scope = "exact_owner_view_cad_target", read_only = true,
+                        wholeViewInventoryRead = false, requestedViewId = ids[0], requestedCadElementId = request.cadElementId.Value,
+                        view = new { id = ids[0], uniqueId = owner.UniqueId, name = owner.Name, viewType = owner.ViewType.ToString(), scale = SafeScale(owner) },
+                        targetReadComplete = geometry.page?.complete == true && geometry.issues.Length == 0,
+                        target = new { elementId = ElementIdCompat.GetValue(target.Id), uniqueId = target.UniqueId,
+                            ownerViewId = ElementIdCompat.GetValue(target.OwnerViewId), className = target.GetType().Name, cadGeometry = geometry },
+                        note = "Complete bounded native CAD pages only. No whole-view annotation inventory or source/style/visual verification is asserted. Continue every contiguous page with the same complete native geometry digest."
+                    });
+                }
+            }
             var views = new List<object>();
             var viewsComplete = true;
             foreach (var id in ids)
             {
                 var view = doc.GetElement(ElementIdCompat.Create(id)) as View
                     ?? throw new ArgumentException($"View {id} not found.");
-                var inventory = ReadView(doc, view, limit);
+                var inventory = ReadView(doc, view, limit, cadBudget, request.cadElementId, request.cadGeometryOffset);
                 views.Add(inventory.payload);
                 viewsComplete &= inventory.complete;
             }
@@ -54,7 +86,7 @@ namespace RevitBridge.Logic.Handlers
             });
         }
 
-        private static (object payload, bool complete) ReadView(Document doc, View view, int limit)
+        private static (object payload, bool complete) ReadView(Document doc, View view, int limit, CadGeometryReadBudget? cadBudget, long? cadElementId, int? cadOffset)
         {
             // A view-scoped collector also returns visible model elements. This exact owner
             // filter is the same native relation used by DuplicateViewHandler's receipt.
@@ -70,6 +102,8 @@ namespace RevitBridge.Logic.Handlers
             var unclassifiedCount = 0;
             var incompleteTextCount = 0;
             var incompleteSignatureCount = 0;
+            var cadGeometryComplete = true;
+            var cadPageComplete = true;
             foreach (var element in owned)
             {
                 try
@@ -100,6 +134,11 @@ namespace RevitBridge.Logic.Handlers
                             element.Category?.BuiltInCategory.ToString() ?? element.Category!.Name,
                             type?.UniqueId, text, geometryKey!)
                         : null;
+                    var cadGeometry = cadBudget != null && element is ImportInstance imported
+                        && (!cadElementId.HasValue || ElementIdCompat.GetValue(element.Id) == cadElementId.Value)
+                        ? cadOffset.HasValue ? NativeCadGeometry.ReadPage(imported, view, cadBudget, cadOffset.Value)
+                            : NativeCadGeometry.Read(imported, view, cadBudget) : null;
+                    if (cadGeometry != null) { cadGeometryComplete &= cadGeometry.complete; cadPageComplete &= cadGeometry.page?.complete ?? cadGeometry.complete; }
                     items.Add(new
                     {
                         elementId = ElementIdCompat.GetValue(element.Id),
@@ -120,6 +159,7 @@ namespace RevitBridge.Logic.Handlers
                         semanticSignatureComplete = signatureComplete,
                         semanticGeometryKey = geometryKey,
                         boundingBox = box,
+                        cadGeometry,
                         curve
                     });
                 }
@@ -134,7 +174,7 @@ namespace RevitBridge.Logic.Handlers
             var payload = new
             {
                 view = new { id = ElementIdCompat.GetValue(view.Id), uniqueId = view.UniqueId, name = view.Name,
-                    viewType = view.ViewType.ToString() },
+                    viewType = view.ViewType.ToString(), scale = SafeScale(view) },
                 limit,
                 totalOwnedCount = bounded.TotalOwnedCount,
                 annotationCount,
@@ -145,11 +185,17 @@ namespace RevitBridge.Logic.Handlers
                 unclassifiedCount,
                 incompleteTextCount,
                 incompleteSignatureCount,
+                cadGeometryRequested = cadBudget != null,
+                cadGeometryComplete = cadBudget == null ? (bool?)null : cadGeometryComplete && unreadableIds.Count == 0,
+                cadGeometryPageComplete = cadOffset.HasValue ? (bool?)(cadPageComplete && unreadableIds.Count == 0) : null,
+                requestedCadElementId = cadElementId,
                 itemsComplete = complete,
                 items = bounded.Items
             };
             return (payload, complete);
         }
+
+        private static int? SafeScale(View view) { try { return view.Scale; } catch { return null; } }
 
         private static string? ReadVisibleText(Element element)
         {

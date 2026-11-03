@@ -16,6 +16,22 @@ const prompt = "Prepare a room-by-room Excel workbook of the information we can 
 const context = { revit: { source: { live: true }, process_id: 42, document: { title: "Rooms", path: "C:/fixture/Rooms.rvt", projectIdentity: { fingerprint: "model" } } } };
 const exportArgs = { method: "POST", path: "/revit/export-elements-xlsx", body: { elementIds: [42], parameterNames: ["Area", "Number"], fileName: "rooms.xlsx", dryRun: false } };
 
+const multilineCopy="Create a separate reviewed copy of the currently open Revit model at:\nC:\\fixture\\Vector Diagram Reviewed.rvt\n\nSave that copy first, without overwriting the original or changing any model/drawing content. Then inspect the existing diagram. Do not perform source extraction, redraw, import or style edits.";
+test('explicit copy destination on the next line remains a file effect with model preservation',()=>{
+  assert.deepEqual(requestedArtifactExportPaths(multilineCopy),['/revit/save-as']);
+  const owner={},lease=beginTeammateLoopOwner(owner,{user_text:multilineCopy,context} as any);
+  try{
+    assert.equal(guardTeammateMcpCall(owner,{tool:'revit_call_tool',arguments:{method:'POST',path:'/revit/save-as',body:{filePath:'C:\\fixture\\Vector Diagram Reviewed.rvt',overwrite:false,dryRun:false}}}).allowed,true);
+    for(const route of ['/revit/delete','/revit/set-parameter','/revit/export-elements-xlsx','/revit/export-pdf'])
+      assert.equal(guardTeammateMcpCall(owner,{tool:'revit_call_tool',arguments:{method:'POST',path:route,body:{elementIds:[42]}}}).allowed,false,route);
+  }finally{endTeammateLoopOwner(lease);}
+  for(const text of ['Read-only: '+multilineCopy,'Explain how to '+multilineCopy,'Do not '+multilineCopy,
+    multilineCopy+' Do not save any files.',multilineCopy+' Wait for my approval.',
+    multilineCopy.replace('Create','Could we create'),multilineCopy.replace('.rvt','.pdf'),
+    'Inspect a copy of the currently open Revit model at:\nC:\\fixture\\Copy.rvt'])
+    assert(!requestedArtifactExportPaths(text).includes('/revit/save-as'),text);
+});
+
 test("explicit native Save As remains separate from permission for other model edits", () => {
   const source="Inspect the current panel ratings without changing them. Save a separate copy to C:\\fixture\\Delivery Verified.rvt. Do not overwrite the starting model or any existing result. Verify the save and exact destination through native results and fresh document readback. Do not substitute another folder. No other model edits or linked-model changes.";
   assert.deepEqual(requestedArtifactExportPaths(source),["/revit/save-as"]);
@@ -126,7 +142,10 @@ test("artifact preflight checks do not turn an affirmative file request into pre
     "Resolve one bounded mechanical sub-discipline sheet set, export it as one combined color PDF named TEST-MECHANICAL-ISSUE.pdf in the benchmark output folder, then verify the file exists, is nonempty, has the same page count and ordering as the preflight sheet list, and record a content hash.",
     "Export the selected sheets to a combined PDF. Compare its pages with the preflight sheet list. Do not change the Revit model.",
     "For the current sheets, create a PDF and check the page order against the preflight list. Do not change Revit.",
-    "Preflight the sheet list, then export a PDF. Do not change the model."
+    "Preflight the sheet list, then export a PDF. Do not change the model.",
+    "Print a PDF of all the sheets in the open model. Check that the PDF includes every printable sheet. Do not save the model.",
+    "Please print the selected sheets to a PDF. Do not change the model.",
+    "Could you print a combined PDF of the sheets without changing Revit?"
   ];
   for (const text of requests) {
     assert.deepEqual(requestedArtifactExportPaths(text), ["/revit/export-pdf"], text);
@@ -145,15 +164,19 @@ test("artifact preflight checks do not turn an affirmative file request into pre
     "Create a PDF without writing any files.", "Create a PDF. Do not save the PDF.",
     "Can you explain how to export a PDF?", "Should we export a PDF?", "Do not export a PDF.",
     "Read-only: export a PDF plan.", "Preview the sheet set, then export a PDF only if I approve.",
-    "Review only: export a PDF.", "Export a PDF. Do not commit.", "Export a PDF. Don't write."
+    "Review only: export a PDF.", "Export a PDF. Do not commit.", "Export a PDF. Don't write.",
+    "Print a PDF. Do not create any files.", "Do not print a PDF.", "Don't print the sheets to a PDF.",
+    "Explain how to print a PDF.", "Print a PDF after I approve.", "Print a PDF later.",
+    "Print the sheets to the office printer.", "Print an Excel workbook.", "Read-only: print a PDF plan.",
+    "Print a PDF. Never print the PDF.", "Print a PDF without writing output files."
   ]) assert.deepEqual(requestedArtifactExportPaths(text), [], text);
 });
 
-test("PDF-only authority reaches canonical admission without allowing a workbook or model mutation", () => {
+test("print-a-PDF authority reaches canonical admission without allowing a workbook or model mutation", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-pdf-admission-"));
   const previous = [process.env.OPERATOR_WORKSPACE_ROOT, process.env.OPERATOR_ASSIGNMENT_KERNEL_V2];
   process.env.OPERATOR_WORKSPACE_ROOT = root; process.env.OPERATOR_ASSIGNMENT_KERNEL_V2 = "1"; __testOnlyResetGoalListCache();
-  const text = "Export the sheets as a combined PDF. Verify against the preflight sheet list. Do not change the model.";
+  const text = "Print a PDF of all the sheets in the open model. Check that the PDF includes every printable sheet. Do not save the model.";
   try {
     const prepared = prepareAssignmentTurn({ sessionId: "pdf-session", messageId: "message", userText: text,
       toolResults: [], source: "chat", createdBy: "principal", requestContext: context })!;

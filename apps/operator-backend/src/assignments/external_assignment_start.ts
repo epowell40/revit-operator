@@ -6,6 +6,7 @@ import { ensureAssignmentRunForTurn } from "./turn_journal.js";
 import { classifyAutoGoalRequest } from "../goals/auto_goal.js";
 import { assertConversationIntakeResolved, retainedIntakeDecision } from "../conversation_intake.js";
 import { preparePdfWorkAllowance, type PdfWorkAllowanceV1 } from "./pdf_work_allowance.js";
+import {getAssignmentKernelSnapshotV2} from './assignment_kernel_v2_store.js';
 
 /** The controller sends the user's request; the backend owns its effect contract. */
 export function normalizeExternalAssignmentRequest(input: Record<string, unknown>): Record<string, unknown> {
@@ -34,6 +35,20 @@ export type ExternalAssignmentRunBinding = Readonly<{
   kernelVersion: 1 | 2;
 }>;
 
+/** Check before setAgentGoal: a new Sidecar start cannot overwrite the source
+ * projection of an existing canonical task, then receive that task's old run. */
+export function retainedExternalAssignmentStart(input:Record<string,unknown>,current:GoalRecord|null):ExternalAssignmentRunBinding|null{
+  if(input.start_assignment_run!==true||!current)return null;
+  const snapshot=getAssignmentKernelSnapshotV2(current.id);if(!snapshot)return null;
+  const requested=typeof input.assignment_run_id==='string'?input.assignment_run_id.trim():'';
+  const source=typeof input.objective==='string'?input.objective.trim():'';
+  if(requested===snapshot.current_binding.run_id&&source===snapshot.spec.source_user_request
+    &&input.session_id===snapshot.current_binding.session_id)
+    return {assignmentId:current.id,runId:snapshot.current_binding.run_id,generation:snapshot.current_binding.generation,kernelVersion:2};
+  throw Object.assign(new Error('This conversation already has a saved task. Add direction or Resume that task; use New Chat for a separate task.'),
+    {code:'external_assignment_requires_continuation'});
+}
+
 /** Trusted external-controller edge. V2 and V1 are mutually exclusive writes. */
 export function startExternalAssignmentRun(input: Readonly<{
   goal: GoalRecord;
@@ -44,6 +59,9 @@ export function startExternalAssignmentRun(input: Readonly<{
 }>): ExternalAssignmentRunBinding {
   const runId = input.requestedRunId?.trim() || `external:${randomUUID()}`;
   if (assignmentKernelV2Enabled()) {
+    const existing=getAssignmentKernelSnapshotV2(input.goal.id);
+    if(existing&&(existing.current_binding.run_id!==runId||existing.current_binding.session_id!==input.sessionId||existing.spec.source_user_request!==input.goal.objective))
+      throw Object.assign(new Error('The saved task must continue under its existing run and source; a new start was not admitted.'),{code:'external_assignment_requires_continuation'});
     const binding = createAssignmentKernelForGoalV2({
       goal: input.goal,
       run_id: runId,

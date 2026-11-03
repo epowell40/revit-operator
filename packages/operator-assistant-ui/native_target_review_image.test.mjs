@@ -1,10 +1,24 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import {createHash}from'node:crypto';
-import {readNativeTargetReviewImage}from'./native_target_review_image.mjs';
+import {readNativeTargetReviewImage,consumeNativeTargetReviewImage,assertNativeReviewCaptureCapacity}from'./native_target_review_image.mjs';
 const pixels=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAYAAACM/rhtAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAcSURBVFhH7cEBAQAAAIIg/69uSEABAAAAAAB8GhkoAAFF1RG0AAAAAElFTkSuQmCC','base64');
 function fixture(){const root=fs.mkdtempSync(path.join(os.tmpdir(),'native-review-image-')),captures=path.join(root,'captures');fs.mkdirSync(captures);const file=path.join(captures,'unique - Sheet - M002.png');fs.writeFileSync(file,pixels);
  const native={path:file,bytes:pixels.length,sha256:createHash('sha256').update(pixels).digest('hex'),viewId:41,exportMode:'full_view',canonical_attempt_settlement:{method:'POST',path:'/revit/export-image',requested_effect:'read',effect_state:'none'}};
  return{root,captures,file,native,dispose:()=>fs.rmSync(root,{recursive:true,force:true})};}
 test('host-native capture reader returns hash-bound actual bytes only from capture roots',()=>{const f=fixture();try{const r=readNativeTargetReviewImage(f.native,[f.captures]);assert.equal(r.available,true);assert.equal(r.mime_type,'image/png');assert.equal(r.image_base64,pixels.toString('base64'));}finally{f.dispose();}});
+test('raw review capture budget prevents further exports without deleting user files',()=>{const f=fixture();try{
+ const file=path.join(f.captures,'Revit_41_20261102120000_'+'a'.repeat(32)+'.png');fs.writeFileSync(file,pixels);
+ assert.throws(()=>assertNativeReviewCaptureCapacity([f.captures],{maxBytes:10_000_000,maxFiles:1,minFreeBytes:0}),/budget_reached/);assert(fs.existsSync(file));assert(fs.existsSync(f.file));
+}finally{f.dispose();}});
+test('review renders are consumed only after exact durable retention; failed, pinned and user exports remain',()=>{
+ const f=fixture();try{
+  const generated=path.join(f.captures,'Revit_41_20261102120000_'+'a'.repeat(32)+'.png');fs.renameSync(f.file,generated);const native={...f.native,path:generated};
+  const ref={schema:'revit-operator.evidence-ref.v1',evidence_id:'ev1_'+'a'.repeat(32),content_hash:'sha256:'+native.sha256,byte_count:native.bytes,media_type:'image/png'};
+  assert.equal(consumeNativeTargetReviewImage(native,[f.captures],null).state,'retained');assert(fs.existsSync(generated));
+  fs.writeFileSync(generated+'.retain','qualification');assert.equal(consumeNativeTargetReviewImage(native,[f.captures],ref).reason,'qualification_pin');fs.unlinkSync(generated+'.retain');
+  assert.equal(consumeNativeTargetReviewImage(native,[f.captures],ref).state,'consumed_duplicate');assert(!fs.existsSync(generated));
+  fs.writeFileSync(f.file,pixels);assert.equal(consumeNativeTargetReviewImage(f.native,[f.captures],ref).state,'retained');assert(fs.existsSync(f.file));
+ }finally{f.dispose();}
+});
 test('foreign paths, symlink escapes, malformed receipts and changed files never become reviewer pixels',()=>{const f=fixture();try{
  const outside=path.join(f.root,'outside');fs.mkdirSync(outside);const external=path.join(outside,'image.png');fs.writeFileSync(external,pixels);
  const link=path.join(f.captures,'escape');fs.symlinkSync(outside,link,process.platform==='win32'?'junction':'dir');

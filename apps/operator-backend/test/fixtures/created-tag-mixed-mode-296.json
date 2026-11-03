@@ -1,0 +1,164 @@
+{
+  "notice": "Exact retained296 malformed mixed-mode creation. Negative admission/verification fixture only; never retrospectively certify its ignored repair arguments.",
+  "operation_id": "opv2_912638fa233c7749c9e259e4673cd2b24e510b82ea0b1bc2a21df92767543b71",
+  "input": {
+    "method": "POST",
+    "path": "/revit/tag-elements",
+    "body": {
+      "viewId": 1395555,
+      "elementIds": [
+        1430821
+      ],
+      "tagFamilyName": "Duct Size Tag",
+      "onlyUntagged": true,
+      "hasLeader": true,
+      "orientation": "horizontal",
+      "tagHeadPositionXyz": [
+        36.2,
+        37.4,
+        31.16666666667
+      ],
+      "leaderEndXyz": [
+        33.02513760583602,
+        38,
+        31.16666666667
+      ],
+      "dryRun": false
+    }
+  },
+  "applied": {
+    "status": "Success",
+    "success": true,
+    "viewId": 1395555,
+    "targetCount": 1,
+    "taggedCount": 1,
+    "attemptedCount": 1,
+    "deferredCount": 0,
+    "deferredElementIds": [],
+    "continuationRequired": false,
+    "continuationReason": null,
+    "skippedAlreadyTagged": 0,
+    "skippedNoLocation": 0,
+    "errorCount": 0,
+    "unresolvedCategories": [],
+    "mappingWarnings": [],
+    "tagFamily": null,
+    "tagVisibility": {
+      "Status": "not_requested",
+      "Requested": false,
+      "CategoryId": null,
+      "CategoryName": null,
+      "OwnerViewId": null,
+      "OwnerViewName": null,
+      "OwnerKind": null,
+      "WasHidden": false,
+      "IsHidden": false,
+      "Changed": false,
+      "Error": null
+    },
+    "placementMode": "offset",
+    "placementProfile": null,
+    "geometry": null,
+    "tagIds": [
+      1542953
+    ],
+    "tags": [
+      {
+        "tagId": 1542953,
+        "targetElementId": 1430821,
+        "viewId": 1395555,
+        "targetCategory": "Ducts",
+        "tagCategory": "Duct Tags",
+        "tagTypeId": 162121,
+        "tagTypeName": "Duct Size Tag",
+        "tagFamilyName": "Duct Size Tag",
+        "value": "4\"ø",
+        "tagHeadPosition": null,
+        "geometryPlacement": null
+      }
+    ],
+    "tagReadback": [
+      {
+        "tagId": 1542953,
+        "targetElementId": 1430821,
+        "viewId": 1395555,
+        "targetCategory": "Ducts",
+        "tagCategory": "Duct Tags",
+        "tagTypeId": 162121,
+        "tagTypeName": "Duct Size Tag",
+        "tagFamilyName": "Duct Size Tag",
+        "value": "4\"ø",
+        "tagHeadPosition": null,
+        "geometryPlacement": null
+      }
+    ],
+    "errors": [],
+    "transaction": {
+      "status": "committed",
+      "committed": true,
+      "modified_element_ids": [],
+      "affected_element_ids": [
+        1542953
+      ],
+      "added_element_ids": [
+        1542953
+      ],
+      "deleted_element_ids": []
+    },
+    "changeTracking": {
+      "documentChangedObserved": true,
+      "exhaustiveChangeInventory": true,
+      "eventCount": 1,
+      "matchingEventCount": 1,
+      "distinctWrapperMatchCount": 1,
+      "captureFailureCount": 0
+    },
+    "applied": true,
+    "transactionStages": [
+      {
+        "transaction": {
+          "status": "committed",
+          "committed": true,
+          "modified_element_ids": [],
+          "affected_element_ids": [
+            1542953
+          ],
+          "added_element_ids": [
+            1542953
+          ],
+          "deleted_element_ids": []
+        },
+        "success": true,
+        "error": null,
+        "changeTracking": {
+          "documentChangedObserved": true,
+          "exhaustiveChangeInventory": true,
+          "eventCount": 1,
+          "matchingEventCount": 1,
+          "distinctWrapperMatchCount": 1,
+          "captureFailureCount": 0
+        }
+      }
+    ]
+  },
+  "source_payload_provenance": {
+    "schema": "revit-operator.payload-provenance/v2",
+    "source": {
+      "algorithm": "sha256",
+      "representation": "utf8_json_bytes",
+      "canonicalization_version": null,
+      "digest": "45af263032e568abc01851a501cf2b26bebdf4aa4758114224d8ec353a6005c5",
+      "byte_count": 2557
+    },
+    "normalized": {
+      "algorithm": "sha256",
+      "representation": "canonical_json",
+      "canonicalization_version": "revit-operator.canonical-json.utf8-ordinal.v2",
+      "digest": "f8a0ad4b743b9e677b6c1b9920404ecf328be853d91cf9259bffbdce436bc726",
+      "byte_count": 1934
+    },
+    "transformation_id": "revit-operator.native-result-control-extraction",
+    "transformation_version": "1"
+  },
+  "canonical_payload_hash": "f8a0ad4b743b9e677b6c1b9920404ecf328be853d91cf9259bffbdce436bc726"
+}

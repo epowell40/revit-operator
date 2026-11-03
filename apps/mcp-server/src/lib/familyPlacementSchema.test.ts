@@ -43,6 +43,10 @@ test('direct room linked ceiling request retains exact native host, type and abs
 test('legacy placement and view-based stable type requests remain usable without inventing a level',()=>{
  const legacy={levelName:'L4',symbolName:'HRU',instances:[{x:1,y:2,z:8}]};
  assert.deepEqual(schema.parse(legacy).instances,legacy.instances);
+ assert.deepEqual(schema.parse(legacy).idempotency,{enabled:true,toleranceFt:0.01});
+ assert.deepEqual(schema.parse({...legacy,idempotency:{enabled:false}}).idempotency,{enabled:false,toleranceFt:0.01});
+ assert.deepEqual(schema.parse({...legacy,instances:[{x:1,y:2,z:8,parameters:{Comments:'Existing'}}]}).instances[0].parameters,{Comments:'Existing'});
+ assert.equal(schema.safeParse({...legacy,instances:[{x:1,y:2,z:8,parameters:{Comments:42}}]}).success,false);
  assert.equal(schema.parse({familySymbolId:42,viewId:24,instances:[{x:0,y:0,z:0}]}).viewId,24);
  assert.equal(schema.safeParse({familySymbolId:42,instances:[]}).success,false);
  assert.equal(schema.safeParse({...legacy,instances:[{x:NaN,y:0,z:0}]}).success,false);

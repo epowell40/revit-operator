@@ -34,6 +34,48 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
         public static string LauncherPackageHash() => ResolveHash(LauncherPinVariable, "supervisor");
         public static string WorkerPackageHash() => ResolveHash(WorkerPinVariable, "worker");
 
+        internal static string WorkerPackageHashForRegistration(string observed)
+        {
+            var baseHash = WorkerPackageHash();
+            if (string.Equals(observed, baseHash, StringComparison.Ordinal)) return baseHash;
+            // The only additional accepted image is the unchanged installed worker
+            // plus these four exact host-owned reference files. Request-supplied
+            // paths or reference hashes do not participate in this trust decision.
+            var packageDirectory = Path.Combine(Path.GetDirectoryName(typeof(DynamicRuntimeTrustBoundary).Assembly.Location)!, "dynamic-runtime", "worker");
+            return DynamicRuntimePackageDirectoryIdentity.ComputeWithNativeTarget(packageDirectory, baseHash, NativeTargetFiles());
+        }
+
+        internal static IReadOnlyDictionary<string, string> NativeTargetFiles()
+        {
+            var year = 2000 + (typeof(Document).Assembly.GetName().Version?.Major ?? 0);
+            var core = typeof(object).Assembly.GetName();
+            var major = DynamicNativeTargetProfile.FrameworkMajor(year);
+            if (core.Name != (major == 4 ? "mscorlib" : "System.Private.CoreLib") || core.Version?.Major != major)
+                throw new InvalidOperationException("Native compiler target differs from the installed Revit/CLR profile.");
+            if (major == 4) return new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["RevitAPI"] = typeof(Document).Assembly.Location,
+                ["mscorlib"] = typeof(object).Assembly.Location,
+                ["System"] = typeof(Uri).Assembly.Location,
+                ["System.Core"] = typeof(Enumerable).Assembly.Location
+            };
+            var directory = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
+            return DynamicNativeTargetProfile.ReferenceNames(year).ToDictionary(name => name,
+                name => name == "RevitAPI" ? typeof(Document).Assembly.Location : Path.Combine(directory, name + ".dll"), StringComparer.Ordinal);
+        }
+
+        internal static IReadOnlyList<DynamicNativeReferenceV1> NativeTargetReferences()
+            => NativeTargetFiles().Select(pair =>
+            {
+                var identity = System.Reflection.AssemblyName.GetAssemblyName(pair.Value);
+                if (identity.Name != pair.Key) throw new InvalidOperationException("Native compiler reference name does not match the loaded target.");
+                using var stream = new FileStream(pair.Value, FileMode.Open, FileAccess.Read, FileShare.Read);
+                if (stream.Length < 1 || stream.Length > 64L * 1024 * 1024) throw new InvalidOperationException("Native compiler reference exceeds the size bound.");
+                using var sha = SHA256.Create();
+                return new DynamicNativeReferenceV1 { Name = pair.Key, Version = identity.Version!.ToString(),
+                    Sha256 = "sha256:" + BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant() };
+            }).ToArray();
+
         public static void RequireInstalledOrConfigured()
         {
             _ = LauncherPackageHash();
@@ -62,7 +104,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
     internal static class DynamicRuntimeBootstrapRegistry
     {
         private sealed class BootstrapRequest { public string? challengeNonce { get; set; } public string? runtimeInstanceId { get; set; } public string? sessionKeyBase64 { get; set; } public string? launcherExecutableHash { get; set; } }
-        private sealed class Session { public byte[] Key = Array.Empty<byte>(); public DateTime ExpiresUtc; public int LauncherProcessId; public string LauncherHash = ""; }
+        private sealed class Session { public byte[] Key = Array.Empty<byte>(); public DateTime ExpiresUtc; public int LauncherProcessId; public string LauncherHash = ""; public DateTime LauncherStartUtc; }
         private static readonly ConcurrentDictionary<string, Session> Sessions = new ConcurrentDictionary<string, Session>(StringComparer.Ordinal);
         public static object Begin()
         {
@@ -96,7 +138,9 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                     var observedLauncherHash = PackageHashForProcess(checked((int)observedLauncherPid));
                     var pinnedLauncherHash = DynamicRuntimeTrustBoundary.LauncherPackageHash();
                     if (!FixedEquals(observedLauncherHash, request.launcherExecutableHash) || !FixedEquals(pinnedLauncherHash, request.launcherExecutableHash)) throw new InvalidOperationException("Dynamic bootstrap launcher package did not match the kernel-observed or laboratory-pinned package.");
-                    Sessions[request.runtimeInstanceId] = new Session { Key = key, ExpiresUtc = DateTime.UtcNow.AddMinutes(10), LauncherProcessId = checked((int)observedLauncherPid), LauncherHash = observedLauncherHash };
+                    using var launcher = Process.GetProcessById(checked((int)observedLauncherPid));
+                    if(launcher.HasExited)throw new InvalidOperationException("Dynamic launcher exited during bootstrap.");
+                    Sessions[request.runtimeInstanceId] = new Session { Key = key, ExpiresUtc = DateTime.UtcNow.AddMinutes(10), LauncherProcessId = checked((int)observedLauncherPid), LauncherHash = observedLauncherHash, LauncherStartUtc = launcher.StartTime.ToUniversalTime() };
                     foreach (var expired in Sessions.Where(pair => pair.Value.ExpiresUtc <= DateTime.UtcNow).Select(pair => pair.Key).ToArray()) Sessions.TryRemove(expired, out _);
                     var proofHash = DynamicWire.Sha256(request.runtimeInstanceId + "\n" + observedLauncherPid + "\n" + revitProcessId + "\n" + observedLauncherHash);
                     var proof = DynamicWire.SignSessionMessage(key, "bootstrap", request.runtimeInstanceId, challenge, expires, proofHash);
@@ -149,6 +193,19 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             using var document = JsonDocument.Parse(receiptJson);
             return new { schema = "dynamic-revit-authenticated-receipt/v0", runtime_instance_id = runtimeId, purpose, expires_unix_seconds = expires, receipt_hash = receiptHash, host_receipt_mac = mac, receipt = document.RootElement.Clone() };
         }
+
+        internal static void RequireLiveLauncher(string runtimeId)
+        {
+            if(!Sessions.TryGetValue(runtimeId,out var session) || session.ExpiresUtc<=DateTime.UtcNow)
+                throw new OperationCanceledException("Authenticated native-program launcher session expired.");
+            try
+            {
+                using var process=Process.GetProcessById(session.LauncherProcessId);
+                if(process.HasExited || process.StartTime.ToUniversalTime()!=session.LauncherStartUtc)
+                    throw new OperationCanceledException("Authenticated native-program launcher exited or was replaced.");
+            }
+            catch(ArgumentException){throw new OperationCanceledException("Authenticated native-program launcher is no longer running.");}
+        }
     }
 
     internal static class NativePipe
@@ -179,7 +236,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
         public static void Register(string runtimeId, string keyBase64, string launcherHash, string workerExecutableHash, string workerRuntimePackageHash, string compilerRuntimeHash, string sdkArtifactHash, string sandboxProfile, int workerProcessId, string startupNonceHash, string taskDirectoryIdentity, long expiresUnixSeconds)
         {
             var trustedLauncherHash = DynamicRuntimeTrustBoundary.LauncherPackageHash();
-            var trustedWorkerHash = DynamicRuntimeTrustBoundary.WorkerPackageHash();
+            var trustedWorkerHash = DynamicRuntimeTrustBoundary.WorkerPackageHashForRegistration(workerRuntimePackageHash);
             var runtimeValid = !string.IsNullOrWhiteSpace(runtimeId) && runtimeId.Length <= 128;
             var launcherFormatValid = DynamicRuntimePreviewHandler.IsHash(launcherHash);
             var workerExecutableFormatValid = DynamicRuntimePreviewHandler.IsHash(workerExecutableHash);
@@ -265,18 +322,22 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             public string[] ParameterNames { get; set; } = Array.Empty<string>();
             public string InputHash { get; set; } = "";
             public DateTime ExpiresUtc { get; set; }
+            public DynamicNativePreparedProgram? NativeProgram { get; set; }
         }
         private static readonly ConcurrentDictionary<string, SnapshotGrant> Grants = new ConcurrentDictionary<string, SnapshotGrant>(StringComparer.Ordinal);
-        private sealed class Request { public string? category { get; set; } public int? limit { get; set; } public string[]? parameters { get; set; } public int? operationBudget { get; set; } public string? runtimeInstanceId { get; set; } public string? correlationId { get; set; } public long authExpiresUnixSeconds { get; set; } public string? requestMac { get; set; } }
+        private sealed class Request { public string? category { get; set; } public int? limit { get; set; } public string[]? parameters { get; set; } public int? operationBudget { get; set; } public bool? readOnly { get; set; } public string? runtimeInstanceId { get; set; } public string? correlationId { get; set; } public long authExpiresUnixSeconds { get; set; } public string? requestMac { get; set; } }
         public Task<object> Handle(UIApplication app, string jsonData)
         {
             ValidateShape(jsonData);
             var request = string.IsNullOrWhiteSpace(jsonData) ? new Request() : JsonSerializer.Deserialize<Request>(jsonData) ?? new Request();
-            var core = JsonSerializer.Serialize(new { category = request.category, limit = request.limit, parameters = request.parameters, operationBudget = request.operationBudget });
+            var core = request.readOnly.HasValue
+                ? JsonSerializer.Serialize(new { category = request.category, limit = request.limit, parameters = request.parameters, operationBudget = request.operationBudget, readOnly = request.readOnly.Value })
+                : JsonSerializer.Serialize(new { category = request.category, limit = request.limit, parameters = request.parameters, operationBudget = request.operationBudget });
             DynamicRuntimeBootstrapRegistry.VerifyRequest(request.runtimeInstanceId ?? "", "snapshot", request.correlationId ?? "", request.authExpiresUnixSeconds, DynamicWire.Sha256(core), request.requestMac ?? "");
             var doc = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active document.");
             var limit = request.limit ?? 200;
-            if (limit < 1 || limit > 1000) throw new ArgumentException("limit must be 1 through 1000.");
+            var maximumRows = request.readOnly == true ? DynamicSnapshotCoverage.MaximumReadRows : DynamicSnapshotCoverage.MaximumWriteRows;
+            if (limit < 1 || limit > maximumRows) throw new ArgumentException("limit must be 1 through " + maximumRows + " for the requested snapshot mode.");
             var operationBudget = request.operationBudget ?? 32;
             if (operationBudget < 1 || operationBudget > 256) throw new ArgumentException("operationBudget must be 1 through 256.");
             var requestedParameters = (request.parameters ?? Array.Empty<string>()).Where(p => !string.IsNullOrWhiteSpace(p)).Select(p => p.Trim()).Distinct(StringComparer.Ordinal).Take(17).ToArray();
@@ -287,12 +348,17 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 if (!Enum.TryParse<BuiltInCategory>(request.category, true, out var category)) throw new ArgumentException("Snapshot category must be a BuiltInCategory token.");
                 collector.OfCategory(category);
             }
-            var elements = collector.Take(limit).Select(element => ToDto(doc, element, requestedParameters)).ToArray();
+            var boundedElements = collector.Take(limit + 1).ToArray();
+            var elements = boundedElements.Take(limit).Select(element => ToDto(doc, element, requestedParameters)).ToArray();
+            var coverage = request.readOnly.HasValue
+                ? DynamicSnapshotCoverage.Create(string.IsNullOrWhiteSpace(request.category) ? null : request.category, requestedParameters, limit, elements.Length, boundedElements.Length > limit)
+                : null;
             var document = new DynamicDocumentDto { ProjectFingerprint = Fingerprint(doc), SessionId = Session(doc), Title = doc.Title ?? "", ActiveViewId = ElementIdCompat.GetValue(app.ActiveUIDocument.ActiveView.Id), ActiveViewName = app.ActiveUIDocument.ActiveView.Name ?? "" };
-            var input = new DynamicTaskInput { Document = document, Elements = elements, OperationBudget = operationBudget };
+            var input = new DynamicTaskInput { Document = document, Elements = elements, OperationBudget = operationBudget, Coverage = coverage };
             var inputHash = DynamicWire.InputHash(input);
             var token = "experimental:" + Guid.NewGuid().ToString("N");
-            Grants[token] = new SnapshotGrant
+            // Read snapshots never issue a mutation capability, even if a caller later switches modes.
+            if (request.readOnly != true) Grants[token] = new SnapshotGrant
             {
                 DocumentFingerprint = document.ProjectFingerprint,
                 DocumentSessionId = document.SessionId,
@@ -303,22 +369,25 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 ExpiresUtc = DateTime.UtcNow.AddMinutes(2)
             };
             foreach (var expired in Grants.Where(pair => pair.Value.ExpiresUtc <= DateTime.UtcNow).Select(pair => pair.Key).ToArray()) Grants.TryRemove(expired, out _);
-            var receipt = new { schema = "dynamic-revit-snapshot/v0", sdk = DynamicRevitSdkVersion.Value, input_hash = inputHash, document, snapshot_token = token, elements };
+            var receipt = new { schema = "dynamic-revit-snapshot/v0", sdk = DynamicRevitSdkVersion.Value, input_hash = inputHash, document, snapshot_token = token, elements, coverage };
             return Task.FromResult(DynamicRuntimeBootstrapRegistry.AuthenticateReceipt(request.runtimeInstanceId ?? "", "snapshot-receipt", receipt));
         }
 
         private static void ValidateShape(string json)
         {
             using var document = JsonDocument.Parse(json);
-            var fields = new HashSet<string>(new[] { "category", "limit", "parameters", "operationBudget", "runtimeInstanceId", "correlationId", "authExpiresUnixSeconds", "requestMac" }, StringComparer.Ordinal);
+            var fields = new HashSet<string>(new[] { "category", "limit", "parameters", "operationBudget", "readOnly", "runtimeInstanceId", "correlationId", "authExpiresUnixSeconds", "requestMac" }, StringComparer.Ordinal);
             var names = document.RootElement.ValueKind == JsonValueKind.Object ? document.RootElement.EnumerateObject().Select(property => property.Name).ToArray() : Array.Empty<string>();
+            if (!names.Contains("readOnly")) fields.Remove("readOnly");
+            else if (document.RootElement.GetProperty("readOnly").ValueKind != JsonValueKind.True && document.RootElement.GetProperty("readOnly").ValueKind != JsonValueKind.False)
+                throw new ArgumentException("Snapshot readOnly must be a boolean when supplied.");
             if (names.Length != fields.Count || names.Distinct(StringComparer.Ordinal).Count() != names.Length || names.Any(name => !fields.Contains(name))) throw new ArgumentException("Dynamic snapshot request has an invalid field set.");
         }
 
         internal static bool ConsumeGrant(Document document, string? token, string fingerprint, string session, string inputHash, IEnumerable<string> targetIds)
         {
             if (string.IsNullOrWhiteSpace(token) || !Grants.TryRemove(token, out var grant)) return false;
-            if (document == null || grant.ExpiresUtc <= DateTime.UtcNow || !Equal(grant.DocumentFingerprint, fingerprint) ||
+            if (document == null || grant.NativeProgram != null || grant.ExpiresUtc <= DateTime.UtcNow || !Equal(grant.DocumentFingerprint, fingerprint) ||
                 !Equal(grant.DocumentSessionId, session) || !Equal(grant.InputHash, inputHash)) return false;
             foreach (var id in targetIds.Distinct(StringComparer.Ordinal))
             {
@@ -327,6 +396,51 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 if (element == null || !Equal(expected, ElementStateHash(ToDto(document, element, grant.ParameterNames)))) return false;
             }
             return true;
+        }
+
+        internal static DynamicNativeProgramPreparationV1 PrepareNativeProgram(UIApplication app,string runtimeId,
+            string sourceHash,DynamicNativeProgramRequestV1 request,Func<string,OperatorDocumentChangeVersion> currentVersion)
+        {
+            request.Validate();
+            if(!DynamicRuntimePreviewHandler.IsHash(sourceHash))throw new ArgumentException("Native program source hash is invalid.");
+            var document=app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("Native program requires an active document.");
+            if(document.IsModifiable || request.Mode=="write" && document.IsReadOnly)throw new InvalidOperationException("Native program requires an idle, appropriately writable document.");
+            var fingerprint=Fingerprint(document);var session=Session(document);var version=currentVersion(session);
+            var elements=request.AllowedExistingUniqueIds.Select(id=>document.GetElement(id) ?? throw new InvalidOperationException("Native program target no longer exists: "+id)).ToArray();
+            if(elements.Any(e=>e.Pinned || e.GroupId!=ElementId.InvalidElementId))throw new InvalidOperationException("Native program cannot modify pinned or grouped targets.");
+            var preparationId="nativeprogram_"+Guid.NewGuid().ToString("N");
+            var scope=new DynamicNativeProgramScopeV1 {EffectScope=request.EffectScope,DocumentFingerprint=fingerprint,DocumentSessionId=session,DocumentRevision=version.Sequence,
+                NativeScopeHash=DynamicWire.Sha256("native-program-scope/v1\n"+runtimeId+"\n"+preparationId+"\n"+sourceHash+"\n"+version.Epoch+"\n"+version.ProcessId),
+                AllowedExistingElementIds=elements.Select(e=>ElementIdCompat.GetValue(e.Id)).ToArray(),AllowCreate=request.AllowCreate,
+                MaxAffectedElements=request.MaxAffectedElements,DeadlineMs=request.DeadlineMs};
+            var prepared=new DynamicNativePreparedProgram {RuntimeId=runtimeId,SourceHash=sourceHash,EntryType=request.EntryType,Mode=request.Mode,
+                Scope=scope,Version=version,ActiveViewId=ElementIdCompat.GetValue(app.ActiveUIDocument.ActiveView.Id)};
+            var references=DynamicRuntimeTrustBoundary.NativeTargetReferences();
+            var paths=DynamicRuntimeTrustBoundary.NativeTargetFiles();
+            var packageHash=DynamicRuntimeTrustBoundary.WorkerPackageHashForRegistration("");
+            version.RequireUnchanged(currentVersion(session));
+            foreach(var expired in Grants.Where(p=>p.Value.ExpiresUtc<=DateTime.UtcNow).Select(p=>p.Key).ToArray())Grants.TryRemove(expired,out _);
+            if(Grants.Count>=128)throw new InvalidOperationException("Too many pending native snapshot preparations.");
+            if(!Grants.TryAdd(preparationId,new SnapshotGrant{DocumentFingerprint=fingerprint,DocumentSessionId=session,InputHash=sourceHash,
+                ExpiresUtc=DateTime.UtcNow.AddMinutes(2),NativeProgram=prepared}))throw new InvalidOperationException("Native preparation identity collision.");
+            return new DynamicNativeProgramPreparationV1 {PreparationId=preparationId,SourceHash=sourceHash,Scope=scope,References=references,
+                ReferencePaths=paths.ToDictionary(p=>p.Key,p=>p.Value,StringComparer.Ordinal),WorkerRuntimePackageHash=packageHash,
+                Document=new DynamicDocumentDto {ProjectFingerprint=fingerprint,SessionId=session,Title=document.Title??"",ActiveViewId=prepared.ActiveViewId,ActiveViewName=app.ActiveUIDocument.ActiveView.Name??""}};
+        }
+
+        internal static DynamicNativePreparedProgram ConsumeNativeProgram(UIApplication app,string runtimeId,string preparationId,
+            DynamicNativeProgramArtifactV1 artifact,Func<string,OperatorDocumentChangeVersion> currentVersion)
+        {
+            if(!Grants.TryRemove(preparationId,out var grant) || grant.NativeProgram==null || grant.ExpiresUtc<=DateTime.UtcNow)
+                throw new InvalidOperationException("Native program preparation is missing, consumed or expired.");
+            var prepared=grant.NativeProgram;
+            var document=app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active native document.");
+            if(prepared.RuntimeId!=runtimeId || prepared.SourceHash!=artifact.SourceHash || prepared.EntryType!=artifact.EntryType || prepared.Mode!=artifact.Mode ||
+                grant.DocumentFingerprint!=Fingerprint(document) || grant.DocumentSessionId!=Session(document) ||
+                prepared.ActiveViewId!=ElementIdCompat.GetValue(app.ActiveUIDocument.ActiveView.Id))
+                throw new InvalidOperationException("Native program preparation source, target, document or active view changed.");
+            prepared.Version.RequireUnchanged(currentVersion(grant.DocumentSessionId));
+            return prepared;
         }
 
         internal static string Fingerprint(Document doc)

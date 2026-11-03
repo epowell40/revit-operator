@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { checkpointDirectionContext, checkpointResumeReady } from "./checkpoint_followup.mjs";
+import * as checkpointTools from './checkpoint_followup.mjs';
 
 function fixture() {
   const binding = { assignment_id: "task", session_id: "conversation", run_id: "run", generation: 1, document_fingerprint: "document" };
@@ -13,6 +14,21 @@ function fixture() {
   const goal = { _bindingV2: binding, _assignmentVersion: 7, _projection: { target: { document_fingerprint: "document" } } };
   return { publication, goal };
 }
+
+test('explicit resource-renewal button uses the existing exact checkpoint fences and bounded window',()=>{
+  assert.equal(typeof checkpointTools.checkpointResourceRenewalContext,'function');
+  const {publication,goal}=fixture();publication.snapshot.spec.requested_effect='apply';
+  publication.snapshot.spec.execution_policy.progress_allowance={mode:'observed_native_work_v1'};
+  const context=checkpointTools.checkpointResourceRenewalContext(publication,goal);
+  assert.equal(context.review_id,'review');assert.equal(context.document_fingerprint,'document');
+  assert.deepEqual(context.resource_renewal,{provider_calls:64,total_tokens:16_000_000});
+  for(const change of [s=>s.execution_control={state:'paused'},s=>s.provider_usage_hold={hold_id:'usage'},
+    s=>s.quiescent=false,s=>s.unresolved_unknown_operation_ids=['unknown'],s=>s.pending_input_variable_ids=['answer'],
+    s=>s.spec.requested_effect='read',s=>delete s.spec.execution_policy.progress_allowance]){
+    const p=structuredClone(publication);change(p.snapshot);
+    assert.throws(()=>checkpointTools.checkpointResourceRenewalContext(p,{...goal,_executionControl:p.snapshot.execution_control,_providerUsageHold:p.snapshot.provider_usage_hold}));
+  }
+});
 
 test("advisory follow-up uses exact canonical review, document and execution control fences", () => {
   const { publication, goal } = fixture();

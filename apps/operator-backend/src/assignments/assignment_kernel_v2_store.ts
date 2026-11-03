@@ -293,6 +293,7 @@ export function appendAssignmentKernelObservationSettlementV2(input: Readonly<{
 function appendCurrentEventsUnderGoalLock(inputs: readonly AssignmentKernelCurrentEventInputV2[]): AssignmentKernelAppendResultV2 {
   let accepted = true;
   let quarantinedReasonCode: string | null = null;
+  let quarantinedDomainError: AssignmentKernelErrorV2 | undefined;
   let acceptedSnapshot: AssignmentSnapshotV2 | null = null;
   let appended = false;
   const goal = mutateGoalRecord(inputs[0]!.goal_id, current => {
@@ -335,6 +336,7 @@ function appendCurrentEventsUnderGoalLock(inputs: readonly AssignmentKernelCurre
       } catch (error) {
         const reasonCode = error instanceof AssignmentKernelErrorV2 ? error.code : "assignment_kernel_event_invalid";
         quarantinedReasonCode = reasonCode;
+        quarantinedDomainError = error instanceof AssignmentKernelErrorV2 ? error : undefined;
         accepted = false;
         record.quarantined_events.push({
           event: structuredClone(candidate), reason_code: reasonCode,
@@ -349,6 +351,10 @@ function appendCurrentEventsUnderGoalLock(inputs: readonly AssignmentKernelCurre
   });
   if (!acceptedSnapshot) throw new Error("assignment_kernel_v2_not_created");
   if (accepted || appended) observeAssignmentKernelIndexV2(acceptedSnapshot);
-  if (!accepted) throw new Error(quarantinedReasonCode ?? "assignment_kernel_v2_event_rejected");
+  // Keep the historical code-only message for existing consumers. A trusted
+  // application boundary can expose selected domain recovery guidance from
+  // the cause without publishing arbitrary exception text or quarantine data.
+  if (!accepted) throw new Error(quarantinedReasonCode ?? "assignment_kernel_v2_event_rejected",
+    quarantinedDomainError ? { cause: quarantinedDomainError } : undefined);
   return { goal, snapshot: acceptedSnapshot, accepted, quarantined_reason_code: quarantinedReasonCode };
 }

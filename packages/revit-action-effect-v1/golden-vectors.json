@@ -1,6 +1,13 @@
 {
   "schema": "revit_action_effect_v1_golden_vectors",
   "vectors": [
+    {"id":"family_label_style_inspection_read","method":"POST","path":"/revit/inspect-family-label-styles","body":{"familyDocumentId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"expected_effect":"read"},
+    {"id":"family_label_style_exact_read","method":"POST","path":"/revit/inspect-family-label-styles","body":{"familyDocumentId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","labelTypeId":100,"maxStyles":1},"expected_effect":"read"},
+    {"id":"family_label_style_serialized_read","method":"POST","path":"/revit/inspect-family-label-styles","body":"{\"familyDocumentId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"maxStyles\":1}","expected_effect":"read"},
+    {"id":"family_label_inspection_incidental_flags_do_not_enable_writes","method":"POST","path":"/revit/inspect-family-label-styles","body":{"familyDocumentId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","apply":true,"style":{"underline":true}},"expected_effect":"read"},
+    {"id":"family_label_style_lookalike_not_read","method":"POST","path":"/revit/inspect-family-label-styles-apply","body":{"familyDocumentId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"expected_effect":"apply"},
+    {"id":"family_label_style_mutation_is_apply","method":"POST","path":"/revit/set-family-label-style","body":{"familyDocumentId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","labelTypeId":100,"expectedTypeUniqueId":"child-type","style":{"underline":true},"expectedStyle":{"underline":false}},"expected_effect":"apply"},
+    {"id":"family_label_style_preview_stays_preview","method":"POST","path":"/revit/set-family-label-style","body":{"familyDocumentId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","labelTypeId":100,"style":{"underline":true},"expectedStyle":{"underline":false},"dryRun":true},"expected_effect":"preview"},
     {"id":"xlsx_original_source_read","method":"POST","path":"/revit/inspect-excel-source","body":{"sourcePath":"artifacts/uploads/ventilation.xlsx","section":"worksheets","expectedSourceSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"expected_effect":"read"},
     {"id":"xlsx_original_source_serialized_read","method":"POST","path":"/revit/inspect-excel-source","body":"{\"sourcePath\":\"artifacts/uploads/ventilation.xlsx\",\"section\":\"worksheets\",\"expectedSourceSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}","expected_effect":"read"},
     {"id":"xlsx_source_lookalike_stays_apply","method":"POST","path":"/revit/inspect-excel-source-apply","body":{"sourcePath":"artifacts/uploads/ventilation.xlsx","section":"worksheets","expectedSourceSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"expected_effect":"apply"},

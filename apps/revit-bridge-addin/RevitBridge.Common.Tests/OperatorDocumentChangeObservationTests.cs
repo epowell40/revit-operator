@@ -64,5 +64,31 @@ namespace RevitBridge.Common.Tests
             var store=new OperatorDocumentChangeObservationStore(17);
             Parallel.For(0,100,i=>{if(i%2==0)Add(store,id:i+1);using var json=JsonDocument.Parse(store.ReadJson("document-a"));Assert.True(json.RootElement.GetProperty("events").GetArrayLength()<=16);});
         }
+
+        [Fact] public void NativeFreshnessStampAcceptsUnchangedSessionWithoutPromotingObservationToProof()
+        {
+            var store=new OperatorDocumentChangeObservationStore(17);var before=store.CaptureVersion("a");
+            before.RequireUnchanged(store.CaptureVersion("a"));Assert.Equal(0,before.Sequence);
+            Assert.Equal("observed_changes_only",JsonDocument.Parse(store.ReadJson("a")).RootElement.GetProperty("authority").GetString());
+        }
+        [Theory][InlineData("same")][InlineData("foreign")][InlineData("captureFailure")][InlineData("truncated")][InlineData("evicted")]
+        public void AnyInterveningNativeEventInvalidatesPreparedVersionEvenWithoutCompleteRetainedDetails(string kind)
+        {
+            var store=new OperatorDocumentChangeObservationStore(17);var before=store.CaptureVersion("a");
+            if(kind=="captureFailure")store.RecordCaptureFailure(Now);
+            else if(kind=="truncated")store.Record("a","Commit",Array.Empty<string>(),Enumerable.Range(1,100).Select(i=>(long)i),Array.Empty<long>(),Array.Empty<long>(),Now);
+            else if(kind=="evicted")for(int i=0;i<30;i++)Add(store,"a",i+1);
+            else Add(store,kind=="foreign"?"b":"a");
+            Assert.Throws<InvalidOperationException>(()=>before.RequireUnchanged(store.CaptureVersion("a")));
+            Assert.Equal(0,before.Sequence);
+        }
+        [Fact] public void ReopenRestartAndProcessReplacementCannotReusePreparedVersion()
+        {
+            var store=new OperatorDocumentChangeObservationStore(17);var before=store.CaptureVersion("a");
+            Assert.Throws<InvalidOperationException>(()=>before.RequireUnchanged(store.CaptureVersion("reopened")));
+            Assert.Throws<InvalidOperationException>(()=>before.RequireUnchanged(new OperatorDocumentChangeObservationStore(17).CaptureVersion("a")));
+            Assert.Throws<InvalidOperationException>(()=>before.RequireUnchanged(new OperatorDocumentChangeObservationStore(18).CaptureVersion("a")));
+            Assert.Throws<InvalidOperationException>(()=>before.RequireUnchanged(null!));
+        }
     }
 }

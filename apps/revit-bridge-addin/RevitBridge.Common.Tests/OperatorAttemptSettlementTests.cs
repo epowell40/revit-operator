@@ -5,12 +5,29 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.IO;
 using RevitBridge.Common;
+using RevitBridge.Operator;
 using Xunit;
 
 namespace RevitBridge.Common.Tests
 {
     public sealed class OperatorAttemptSettlementTests
     {
+        [Fact]
+        public void FamilyInspectionUsesTheProductionEffectPolicyBeforeNativeSettlement()
+        {
+            const string path = "/revit/inspect-family-label-styles";
+            const string body = "{\"familyDocumentId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}";
+            var payload = new { ok = true, observational = true, mutated = false, scope = "family_session", loadedProjectStyleVerified = false };
+            var effect = OperatorApprovalPolicy.GetEffectWireValue("POST", path, body);
+            var settlement = OperatorAttemptSuccessfulSettlement.Classify(payload, effect, "POST", path);
+            Assert.Equal("read", effect);
+            Assert.Equal("none", settlement.EffectState);
+            Assert.Equal("read_has_no_persistent_effect", settlement.EffectReason);
+            // A new classifier must not reinterpret a saved apply/unknown result.
+            var original = OperatorAttemptSuccessfulSettlement.Classify(payload, "apply", "POST", path);
+            Assert.Equal("unknown", original.EffectState);
+        }
+
         [Fact]
         public void CadCapabilityProbeNeedsAnAuthoritativeNotStartedReceipt()
         {

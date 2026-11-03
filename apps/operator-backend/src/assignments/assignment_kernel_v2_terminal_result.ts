@@ -7,6 +7,7 @@ import type {
 } from "../domain/assignment-kernel/index.js";
 import { renderResultDeliveryV2 } from "../domain/assignment-kernel/result_delivery.js";
 import { nativeResultPresentationV2 } from "./assignment_kernel_v2_native_presentation.js";
+import {nativeProgramResultPresentationV2} from './native_program_result_presentation_v2.js';
 
 export const TERMINAL_RESULT_V2_SCHEMA = "revit-operator.terminal-result/v2" as const;
 
@@ -118,7 +119,8 @@ export function deriveTerminalResultV2(snapshot: AssignmentSnapshotV2): Terminal
     throw new Error("assignment_terminal_result_not_available");
   }
   const supportingObservationIds = [...new Set(Object.values(snapshot.criteria)
-    .filter(criterion => criterion.status === "pass" || criterion.status === "not_applicable")
+    .filter(criterion => criterion.status === "pass" || criterion.status === "not_applicable"
+      || (snapshot.outcome === "complete_with_issues" && criterion.status === "partial"))
     .flatMap(criterion => criterion.supporting_facts.map(fact => fact.observation_id))
     .concat(snapshot.spec.requested_effect === "apply"
       ? Object.values(snapshot.operations)
@@ -133,12 +135,14 @@ export function deriveTerminalResultV2(snapshot: AssignmentSnapshotV2): Terminal
     .concat(snapshot.result_delivery?.items.map(item => item.observation_id) ?? []))]
     .filter(observationId => Boolean(snapshot.observations[observationId]))
     .sort();
+  const programPresentation = nativeProgramResultPresentationV2(snapshot);
+  for(const id of programPresentation?.observation_ids??[])if(!supportingObservationIds.includes(id))supportingObservationIds.push(id);
   const facts = domainFacts(snapshot, supportingObservationIds);
   const successfulSummary = (snapshot.result_delivery ? renderResultDeliveryV2(snapshot.result_delivery) : null)
     ?? inventorySummary(facts)
     ?? textNoteSummary(facts, snapshot.spec.requested_effect)
     ?? nativeResultPresentationV2(snapshot, supportingObservationIds)
-    ?? generalDomainSummary(facts);
+    ?? programPresentation?.summary ?? generalDomainSummary(facts);
   const complete = snapshot.outcome === "complete" || snapshot.outcome === "verified_noop" || snapshot.outcome === "complete_with_issues";
   const effects = Object.values(snapshot.operations).map(operation => operation.result?.persistent_effect);
   const incompleteEffectSummary = effects.includes("unknown")
@@ -151,8 +155,13 @@ export function deriveTerminalResultV2(snapshot: AssignmentSnapshotV2): Terminal
   const deliveryObservationIds=[...new Set([...supportingObservationIds,...(savedCopy?.observation_ids??[])])].sort();
   const remainingSummary = remainingWorkPresentationV2(snapshot);
   const registrationFailure = !complete ? rejectedRegistrationSummary(snapshot) : null;
+  const verifiedChanges = complete ? verifiedChangePresentationV2(snapshot) : null;
+  const completeSummary = verifiedChanges && successfulSummary
+    ? `${verifiedChanges}\n${successfulSummary}` : verifiedChanges ?? successfulSummary;
   const resultSummary = complete
-    ? successfulSummary ?? verifiedChangePresentationV2(snapshot) ?? "The requested work completed from authoritative Revit evidence."
+    ? snapshot.outcome === "complete_with_issues"
+      ? [remainingSummary ? "Completed work is retained; some requested scope remains unfinished." : "The task completed with issues.",completeSummary,remainingSummary].filter(Boolean).join("\n\n")
+      : completeSummary ?? "The requested work completed from authoritative Revit evidence."
     : `The requested work did not complete: ${(snapshot.progress_blocker?.code ?? snapshot.terminal_reason ?? snapshot.outcome).replace(/_/g, " ").replace(/[.]+$/, "")}.` + incompleteEffectSummary
       + (registrationFailure ? `\n\n${registrationFailure}` : "")
       + (partialSummary ? `\n\n${partialSummary}` : "")

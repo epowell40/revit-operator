@@ -7,6 +7,9 @@ namespace RevitBridge.Common
 {
     public static class ParameterValueUtil
     {
+        public static bool IsNativeViewNameParameter(Parameter param) => param != null
+            && param.Element is View && ElementIdCompat.GetValue(param.Id) == (long)BuiltInParameter.VIEW_NAME;
+
         public static object SnapshotForWire(Parameter param)
         {
             if (param == null) return new { storageType = "Unknown", value = (object?)null, valueString = (string?)null };
@@ -86,6 +89,17 @@ namespace RevitBridge.Common
                         if (string.Equals(current, next, StringComparison.Ordinal))
                         {
                             changed = false;
+                            return true;
+                        }
+                        // The generic parameter setter invokes Revit's UI-level
+                        // "rename corresponding level and views" question.
+                        // A VIEW_NAME write targets this View alone, using the
+                        // same property as the existing dedicated rename route.
+                        // Other parameters and ordinary Revit UI are unchanged.
+                        if (IsNativeViewNameParameter(param) && param.Element is View view)
+                        {
+                            view.Name = next;
+                            changed = true;
                             return true;
                         }
                         changed = param.Set(next);

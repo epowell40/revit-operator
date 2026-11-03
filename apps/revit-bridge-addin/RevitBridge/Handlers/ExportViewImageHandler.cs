@@ -71,13 +71,20 @@ namespace RevitBridge.Handlers
             };
             if (!visibleRegion) options.SetViewsAndSheets(new List<ElementId> { view.Id });
 
+            var renderStateBefore = RevitBridge.Services.SheetRenderStateObservation.Read(uidoc, view);
             doc.ExportImage(options);
             if (viewport != null) OperatorViewImageContract.RequireUnchanged(viewport, ObserveViewport());
+            var renderStateAfter = RevitBridge.Services.SheetRenderStateObservation.Read(uidoc, view);
+            // Export itself can trigger view changes. Only an exact before/after
+            // observation is offered for immutable-artifact review; otherwise
+            // the host retains its ordinary capture/currentness checks.
+            var stableRenderState = JsonSerializer.Serialize(renderStateBefore) == JsonSerializer.Serialize(renderStateAfter)
+                ? renderStateAfter : null;
 
             var artifact = ExportedImagePathResolver.ReadRequired(filePath);
             var actualFile = artifact.Path;
             int widthPx, heightPx;
-            using (var image = System.Drawing.Image.FromFile(actualFile)) { widthPx = image.Width; heightPx = image.Height; }
+            (widthPx, heightPx) = RevitBridge.Logic.ExportedImageMetadata.ReadDimensions(actualFile);
 
             return Task.FromResult<object>(new
             {
@@ -94,6 +101,7 @@ namespace RevitBridge.Handlers
                 exportMode,
                 activeViewId = uidoc.ActiveView == null ? (long?)null : ElementIdCompat.GetValue(uidoc.ActiveView.Id),
                 widthPx, heightPx,
+                sheetRenderState = stableRenderState,
                 viewport = viewport == null ? null : new { source = "UIDocument.ActiveView/UIView.GetZoomCorners",
                     viewId = viewport.ViewId, viewType = view.ViewType.ToString(), zoomCornersXyz = viewport.ZoomCornersXyz,
                     coordinateUnits = "feet", displayPlaneOnly = true, placementMappingAvailable = false },

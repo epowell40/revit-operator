@@ -1,5 +1,17 @@
 const bindingKeys = ["assignment_id", "session_id", "run_id", "generation"];
 
+/** User-facing preparation only; the authenticated backend rechecks custody,
+ * resource bounds and all execution fences before journaling an authorization. */
+export function checkpointResourceRenewalContext(publication,goal) {
+  const context=checkpointDirectionContext(publication,goal),s=publication.snapshot;
+  if(!context.checkpoint||context.paused||s.terminal||!s.quiescent||s.provider_usage_hold
+    ||s.spec.requested_effect!=='apply'||!s.spec.execution_policy.progress_allowance
+    ||s.unresolved_unknown_operation_ids?.length||s.pending_input_variable_ids?.length
+    ||s.in_flight_operation_ids?.length||s.in_flight_provider_call_ids?.length)
+    throw new Error('Settle the current apply checkpoint before explicitly renewing its allowance.');
+  return {...context.checkpoint,resource_renewal:{provider_calls:64,total_tokens:16_000_000}};
+}
+
 /** Read fences from the authenticated canonical publication, never a display badge.
  * This is a UI consistency check; the steering endpoint owns release eligibility. */
 export function checkpointDirectionContext(publication, goal) {

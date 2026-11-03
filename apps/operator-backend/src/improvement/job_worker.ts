@@ -70,18 +70,24 @@ function ratingSeverity(rating: string): number {
 }
 
 export function fingerprintFeedbackImprovementJob(args: {
+  session_id?: string;
   rating: string;
   note?: string | null;
   latest_user_request?: string | null;
   issue_keys?: string[] | null;
 }): string {
+  const note=clip(args.note,800).toLowerCase(),request=clip(args.latest_user_request,800).toLowerCase();
+  const keys=dedupe(args.issue_keys??[],24,200).map(x=>x.toLowerCase()).sort();
+  const empty=!note&&!request&&!keys.length;
+  if(empty&&!clip(args.session_id,240))throw Error('Empty feedback requires its session identity.');
   return fingerprintFor({
     version: 1,
     source: "feedback",
     rating: clip(args.rating, 32).toLowerCase(),
-    note: clip(args.note, 800).toLowerCase(),
-    latest_user_request: clip(args.latest_user_request, 800).toLowerCase(),
-    issue_keys: dedupe(args.issue_keys ?? [], 24, 200).map(x => x.toLowerCase()).sort()
+    note,
+    latest_user_request:request,
+    issue_keys:keys,
+    ...(empty?{empty_context_session:clip(args.session_id,240)}:{})
   });
 }
 
@@ -108,6 +114,7 @@ export function enqueueFeedbackImprovementJob(args: {
   const severity = ratingSeverity(rating);
   const confidence = issueKeys.length > 0 ? 0.72 : note ? 0.58 : 0.45;
   const fingerprint = fingerprintFeedbackImprovementJob({
+    session_id:args.session_id,
     rating,
     note,
     latest_user_request: latestUserRequest,

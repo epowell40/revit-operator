@@ -16,17 +16,32 @@ const implemented = [...nativeSource.matchAll(/new OperatorToolInfo\("[^"\r\n]+"
   .map(match => ({ method: match[1]!, path: match[2]! }));
 const excluded = implemented.filter(route => !isSupportedNativeTool(route.method, route.path));
 
+test('quantify generic read is discoverable while visualization and legacy shortcut stay excluded',()=>{
+  assert.equal(isSupportedNativeTool('POST','/revit/quantify'),true);
+  assert(SUPPORTED_MCP_ALIASES.includes('revit_call_tool'));
+  assert.equal(SUPPORTED_MCP_ALIASES.includes('revit_quantify'),false);
+  for(const mode of ['development','hosted','production']){
+    const env={REVIT_OPERATOR_MODE:mode,OPERATOR_TOOL_EXPOSURE_PROFILE:'laboratory'};
+    assert.equal(isToolRouteExposedForSearch('POST','/revit/quantify',env),true);
+    for(const [method,route] of [['GET','/revit/quantify'],['POST','/revit/quantify-visualize'],['POST','/revit/quantify-other']])
+      assert.equal(isToolRouteExposedForSearch(method!,route!,env),false);
+  }
+});
+
 test("fixed supported inventory narrows search before all laboratory and hosted overrides", () => {
   assert.equal(isSupportedNativeTool("POST", "/revit/project-parameters"), true);
   assert.equal(isSupportedNativeTool("POST", "/revit/existing-conditions-mep-draft-workflow"), true);
   assert.equal(isSupportedNativeTool('POST','/revit/import-vector-detail'),false);
-  assert.equal(implemented.length, 223);
-  assert.equal(excluded.length, 106);
+  assert.equal(implemented.length, 227);
+  assert.equal(excluded.length, 104);
   assert.equal(isSupportedNativeTool("POST", "/revit/connect-existing-mep-branch"), true);
   for (const mode of ["development", "hosted", "production"]) {
     const env = { REVIT_OPERATOR_MODE: mode, OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" };
-    assert.equal(filterRegistryEntriesForSearch(implemented, env).length, 117);
-    for(const path of ['/revit/import-excel-output','/revit/inspect-excel-import','/revit/inspect-vector-detail']){
+    assert.equal(filterRegistryEntriesForSearch(implemented, env).length, 123);
+    assert.equal(isToolRouteExposedForSearch('POST', '/revit/create-family-from-template', env), true);
+    assert.equal(isToolRouteExposedForSearch('GET', '/revit/create-family-from-template', env), false);
+    assert.equal(isToolRouteExposedForSearch('POST', '/revit/create-family-from-template-other', env), false);
+    for(const path of ['/revit/import-excel-output','/revit/inspect-excel-import','/revit/inspect-vector-detail','/revit/import-vector-annotations']){
       assert.equal(isToolRouteExposedForSearch('POST',path,env),true);assert.equal(isToolRouteExposedForSearch('GET',path,env),false);
       assert.equal(isToolRouteExposedForSearch('POST',path+'-other',env),false);
     }
@@ -48,10 +63,14 @@ test("fixed supported inventory narrows search before all laboratory and hosted 
   }
 });
 
-for (const documentedRoute of ['/revit/project-parameters', '/revit/import-drawing-spec', '/revit/inspect-drawing-spec', '/revit/inspect-excel-source'])
+for (const documentedRoute of ['/revit/project-parameters', '/revit/import-drawing-spec', '/revit/inspect-drawing-spec', '/revit/inspect-excel-source','/revit/import-vector-annotations','/revit/create-family-from-template','/revit/quantify'])
 test(`actual MCP documentation discovers ${documentedRoute} without executing its mutation`,async()=>{
  const requests:string[]=[];
- const schema=JSON.parse(fs.readFileSync(new URL('../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-requests.v1.json',import.meta.url),'utf8'))[documentedRoute];
+ const schema=documentedRoute==='/revit/quantify'
+   ? {type:'object',properties:{intent:{type:'string',enum:['count','list','count_and_list']},scope:{type:'string',enum:['host','links','both']},categories:{type:'array',items:{type:'string'}}},required:['intent','categories']}
+   : documentedRoute==='/revit/create-family-from-template'
+   ? {type:'object',properties:{templatePath:{type:'string'},savePath:{type:'string'},geometry:{type:'object'}},required:['templatePath','savePath']}
+   : JSON.parse(fs.readFileSync(new URL('../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-requests.v1.json',import.meta.url),'utf8'))[documentedRoute];
  const token='p'.repeat(32),epoch=Buffer.alloc(32,7).toString('base64url');
  const backend=http.createServer(async(request,response)=>{const chunks:Buffer[]=[];for await(const chunk of request)chunks.push(Buffer.from(chunk));
   assert.equal(request.url,NATIVE_TRANSPORT_PATH);response.setHeader('content-type',NATIVE_TRANSPORT_CONTENT_TYPE);
@@ -73,8 +92,26 @@ test(`actual MCP documentation discovers ${documentedRoute} without executing it
   assert.notEqual(doc.isError,true,JSON.stringify(doc.content));
   const value=JSON.parse((doc.content as Array<{type:string,text?:string}>).find(c=>c.type==='text')!.text!);
   assert.equal(value.path,documentedRoute);
-  if(documentedRoute==='/revit/project-parameters') assert(value.request_schema.oneOf.some((m:any)=>m.properties.action.enum.includes('detail')));
+  if(documentedRoute==='/revit/quantify') {
+    assert.deepEqual(value.request_schema.required,['intent','categories']);
+    assert.deepEqual(value.request_schema.properties.scope.enum,['host','links','both']);
+    const listed=await client.listTools();assert(listed.tools.some(t=>t.name==='revit_call_tool'));
+    assert(!listed.tools.some(t=>t.name==='revit_quantify'));
+  }
+  else if(documentedRoute==='/revit/project-parameters') assert(value.request_schema.oneOf.some((m:any)=>m.properties.action.enum.includes('detail')));
   else if(documentedRoute==='/revit/inspect-drawing-spec')assert(value.request_schema.oneOf.some((m:any)=>m.required.includes('manifestElementId')&&m.required.includes('sourcePath')));
+  else if(documentedRoute==='/revit/import-vector-annotations'){
+    assert(value.request_schema.oneOf.every((m:any)=>m.required.includes('sourcePath')&&m.required.includes('viewId')&&m.required.includes('expectedViewUniqueId')&&m.additionalProperties===false));
+    assert(value.request_schema.oneOf.some((m:any)=>m.required.includes('manifestElementId')&&m.required.includes('expectedImportSnapshotSha256')));
+  }
+  else if(documentedRoute==='/revit/create-family-from-template') {
+    assert.deepEqual(value.request_schema.required,['templatePath','savePath']);
+    assert.equal(value.request_schema.properties.geometry.type,'object');
+    const listed=await client.listTools();const authored=listed.tools.find(t=>t.name==='revit_create_family_from_template');assert(authored);
+    const origin=(authored.inputSchema as any).properties.geometry.properties.shapes.items.properties.originFeet;
+    assert.equal(Array.isArray(origin.items),false,'312 rejected tuple schema must not leak through real MCP listing.');
+    assert.equal(origin.items.type,'number');assert.equal(origin.minItems,3);assert.equal(origin.maxItems,3);
+  }
   else assert.deepEqual(value.request_schema.required,['sourcePath']);
   if(documentedRoute==='/revit/import-drawing-spec')assert(value.request_schema.oneOf.some((m:any)=>m.properties.action.enum.includes('update')&&m.required.includes('expectedNativeSnapshotSha256')));
   assert(requests.length>0);assert(requests.every(p=>p.endsWith('/revit/tool-doc')),'Discovery must never execute the parameter mutation.');

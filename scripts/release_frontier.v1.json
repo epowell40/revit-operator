@@ -1,7 +1,18 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
-    "cold_workspace_runtime.test.ts",
+    "postedit_preservation_progress.test.ts",
+    "pending_inspection_requirements.test.ts",
+    "postsave_note_inspection.test.ts",
+    "desktop_helper_inspection_handoff.test.ts",
+    "family_label_binding_observation.test.ts",
+    "mixed_followup_scope_guidance.test.ts",
+    "external_file_intake_scope.test.ts",
+    "native_inspection_coverage.test.ts",
+    "desktop_helper_finalization.test.ts",
+    "codex_turn_handoff.test.ts",
+    "codex_conversation_turn.test.ts",
+    "operator_backend_auth_lease.test.ts",
     "attachment_upload_store.test.ts",
     "attachments_extract.test.ts",
     "native_inventory_work_budget_v2.test.ts",
@@ -322,8 +333,35 @@
     "drawing_spec_import_v2.test.ts",
     "drafting_vector_source.test.ts",
     "drafting_vector_native_plan.test.ts",
+    "drafting_curve_cad.test.ts",
     "read_vector_attachment.test.ts",
-    "vector_detail_import_v2.test.ts"
+    "vector_detail_import_v2.test.ts",
+    "mcp_completion_delivery.test.ts",
+    "desktop_provider_turn.test.ts",
+    "desktop_provider_turn_http.test.ts",
+    "cold_workspace_runtime.test.ts",
+    "committed_read_refresh_v2.test.ts",
+    "model_redline_handoff_claims.test.ts",
+    "parameter_alias_verification_319.test.ts",
+    "deferred_work_checkpoint_v2.test.ts",
+    "family_file_load_verification_v2.test.ts",
+    "committed_family_file_load_readback_v2.test.ts",
+    "work_plan_artifact_inspection.test.ts",
+    "verified_annotation_presentation.test.ts",
+    "teammate_verification_stage_budget.test.ts",
+    "vector_stroke_cad_import_v2.test.ts",
+    "drafting_stroke_cad_geometry.test.ts",
+    "vector_annotation_continuation_v2.test.ts",
+    "sidecar_work_plan_routing_http.test.ts",
+    "work_plan_dependency_diagnostics.test.ts",
+    "native_api_discovery_guidance.test.ts",
+    "native_detail_line_graph_v2.test.ts",
+    "native_detail_line_handler_v2.test.ts",
+    "drafting_identity_readback_v2.test.ts",
+    "drafting_identity_handler_v2.test.ts",
+    "native_change_feedback_budget.test.ts",
+    "desktop_native_tools.test.ts",
+    "sidecar_agent_profile.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -365,7 +403,12 @@
     "lib/category_visibility_scope_schema.test.ts",
     "lib/family_static_text_scope_schema.test.ts",
     "lib/excelOutputContracts.test.ts",
-    "lib/vectorDetailContracts.test.ts"
+    "lib/vectorDetailContracts.test.ts",
+    "lib/externalWriteGrant.test.ts",
+    "lib/workPlanDiagnosticsStdio.test.ts",
+    "lib/toolSearchCompleteness.test.ts",
+    "lib/dynamicNativeProgram.test.ts",
+    "lib/dynamicNativeCourier.test.ts"
   ],
   "desktop_tests": [
     "test/saved_computer_owner.test.js",
@@ -394,6 +437,9 @@
     "test/work_report.test.js"
   ],
   "dotnet_test_classes": [
+    "FamilyLabelBindingObservationTests",
+    "OperatorOpenModelNoEffectTests",
+    "CadGeometryReadBudgetTests",
     "CadLinkOptionPolicyTests",
     "CadLinkNativeContractTests",
     "CadLinkPreflightCapabilityTests",
@@ -467,6 +513,8 @@
     "OperatorUnifiedAgentSettingsContractTests",
     "ActivateViewRecoveryContractTests",
     "AnnotationTransactionTests",
+    "TagElementModeContractTests",
+    "TagTargetCategoryPolicyTests",
     "BranchNetworkPreviewSettlementTests",
     "ConnectMepElementsTransactionTests",
     "FamilyPlacementWorkPlaneContractTests",
@@ -476,10 +524,13 @@
     "ChangeTypeFailureHandlingTests",
     "SetParameterFailureHandlingTests",
     "NativeGeometryGraphTests",
+    "NativeApiMutationNamesTests",
+    "NativeDocumentIdBaselineTests",
     "OperatorViewImageContractTests",
     "OrdinaryMutationTransactionTests",
     "SaveAsArtifactReceiptTests",
     "TakeoffConnectorIdentityTests",
+    "TeeTakeoffReplacementGeometryTests",
     "TextNoteTypeLookupTests",
     "OperatorFamilySessionReceiptTests",
     "OperatorFamilySaveReceiptTests",
@@ -526,15 +577,98 @@
     "RevisionCloudSettlementTests",
     "DraftingCubicBezierTests",
     "VectorDraftingNativePlanTests",
-    "VectorDraftingSourceCommitTests"
+    "VectorDraftingSourceCommitTests",
+    "WorkspacePathsTests",
+    "LoadedFamilySymbolLookupTests",
+    "TagFamilyDiscoveryContractTests",
+    "FamilyLabelInspectionPolicyTests",
+    "ExportedImageMetadataTests",
+    "ExportedImagePathResolverTests",
+    "OperatorFamilyCreationReceiptTests",
+    "InstalledFamilyTemplateTests",
+    "FamilyInspectionSourceTests",
+    "OperatorNativeProgramExecutionTests",
+    "OperatorNativeProgramCourierRequestTests",
+    "OperatorCourierRuntimeProfileTests"
   ],
   "failure_families": [
+    {
+      "id": "linked_spatial_inventory_discovery391",
+      "coverage": [
+        "dotnet:OperatorToolSearchRankingTests",
+        "mcp:lib/toolSearchRanking.test.ts"
+      ]
+    },
+    {
+      "id": "native_enum_orientation_case_prevents_created_tag_read_plan_305",
+      "coverage": [
+        "backend:created_tag_postcondition_v2.test.ts",
+        "backend:verification_capability_admission_v2.test.ts"
+      ]
+    },
+    {
+      "id": "known_native_open_refusal_marked_unknown_and_successful",
+      "coverage": [
+        "dotnet:OperatorOpenModelNoEffectTests",
+        "dotnet:OperatorNativeTransportTests",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "authentic_scoped_helper_partial_report_erased_by_legacy_completion_guard",
+      "coverage": [
+        "backend:desktop_helper_finalization.test.ts",
+        "backend:desktop_scoped_handoff.test.ts",
+        "backend:model_redline_handoff_claims.test.ts"
+      ]
+    },
+    {
+      "id": "followup_provider_turn_overlaps_predecessor_auth_lease_during_steering_closeout",
+      "coverage": [
+        "backend:codex_turn_handoff.test.ts",
+        "backend:codex_conversation_turn.test.ts",
+        "backend:operator_backend_auth_lease.test.ts"
+      ]
+    },
+    {
+      "id": "exported_image_dimensions_preserve_long_artifact_paths_in_legacy_revit_host",
+      "coverage": [
+        "dotnet:ExportedImageMetadataTests",
+        "dotnet:ExportedImagePathResolverTests"
+      ]
+    },
+    {
+      "id": "native_configured_workspace_matches_mcp_signed_grant_and_artifact_boundary",
+      "coverage": [
+        "dotnet:WorkspacePathsTests",
+        "dotnet:OperatorWriteGrantAdmissionTests",
+        "mcp:lib/externalWriteGrant.test.ts"
+      ]
+    },
     {
       "id": "cold_workspace_runtime_initialization_before_delegated_provider_start",
       "coverage": [
         "backend:cold_workspace_runtime.test.ts",
         "backend:chat_execution_failure_diagnostic.test.ts",
         "backend:external_provider_lifecycle.test.ts"
+      ]
+    },
+    {
+      "id": "source-bound-cad-curves-no-faceting-omission-or-unverified-authority",
+      "coverage": [
+        "backend:drafting_curve_cad.test.ts",
+        "backend:drafting_vector_native_plan.test.ts",
+        "dotnet:CadLinkNativeContractTests",
+        "dotnet:CadGeometryReadBudgetTests"
+      ]
+    },
+    {
+      "id": "cad-dxf-source-directions-and-bounded-transformed-readback",
+      "coverage": [
+        "dotnet:CadLinkOptionPolicyTests",
+        "dotnet:CadGeometryReadBudgetTests",
+        "dotnet:CadLinkNativeContractTests",
+        "dotnet:ViewOwnedDetailingInventoryContractTests"
       ]
     },
     {
@@ -1131,6 +1265,14 @@
       "coverage": [
         "dotnet:OperatorApprovalPolicyTests",
         "dotnet:OperatorNativeMutationScopePolicyTests"
+      ]
+    },
+    {
+      "id": "family-native-zero-id-baseline-and-observed-effect-completeness",
+      "coverage": [
+        "dotnet:NativeDocumentIdBaselineTests",
+        "dotnet:OperatorNativeMutationScopePolicyTests",
+        "dotnet:NativeGeometryGraphTests"
       ]
     },
     {
@@ -2728,6 +2870,13 @@
       ]
     },
     {
+      "id": "intake-protected-source-quotation-invented-on-initial-and-correction",
+      "coverage": [
+        "backend:conversation_intake.test.ts",
+        "backend:conversation_intake_recovery.test.ts"
+      ]
+    },
+    {
       "id": "capture-c49-native-export-bytes-not-delivered-to-agent",
       "coverage": [
         "mcp:viewFrameImage.test.ts",
@@ -3648,6 +3797,7 @@
       "id": "native-geometry-graph-references-lose-typed-collection-or-owner-provenance",
       "coverage": [
         "dotnet:NativeGeometryGraphTests",
+        "dotnet:NativeApiMutationNamesTests",
         "dotnet:NativeApiArgumentDocumentationTests",
         "dotnet:NativeApiPolicyMethodBoundaryContractTests"
       ]
@@ -4636,6 +4786,7 @@
     {
       "id": "scoped_helper_preserves_parent_call_allowance_and_returns_without_parent_completion_or_native_retry",
       "coverage": [
+        "backend:desktop_helper_inspection_handoff.test.ts",
         "backend:desktop_helper_budget.test.ts",
         "backend:desktop_scoped_handoff.test.ts"
       ]
@@ -4806,6 +4957,408 @@
         "backend:supported_tool_inventory.test.ts",
         "mcp:lib/supportedToolInventory.test.ts"
       ]
+    },
+    {
+      "id": "duct_tag_visibility_and_content_category_omitted_then_discarded_leader326",
+      "coverage": [
+        "dotnet:TagTargetCategoryPolicyTests",
+        "backend:tag_property_readback_v2.test.ts"
+      ]
+    },
+    {
+      "id": "loaded_family_type_preplacement_inspection_refuses_without_instance_323",
+      "coverage": [
+        "dotnet:LoadedFamilySymbolLookupTests",
+        "dotnet:TemporaryDocumentInspectionTests",
+        "dotnet:TagFamilyDiscoveryContractTests",
+        "backend:native_inspection_coverage.test.ts"
+      ]
+    },
+    {
+      "id": "independent_tag_family_discovery_uses_annotation_symbol_and_exposes_label_typography_for_scoped_variants",
+      "coverage": [
+        "dotnet:LoadedFamilySymbolLookupTests",
+        "dotnet:TagFamilyDiscoveryContractTests",
+        "dotnet:FamilyLabelInspectionPolicyTests"
+      ]
+    },
+    {
+      "id": "large_native_observation_and_image_exceed_stdio_frame_without_authenticated_bounded_delivery",
+      "coverage": [
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "backend:mcp_completion_delivery.test.ts",
+        "backend:native_completion_delivery_recovery.test.ts"
+      ]
+    },
+    {
+      "id": "projected_retained_inventory_columns_falsely_exhaust_no_progress_budget",
+      "coverage": [
+        "javascript:package/assignment-kernel-v2-contracts/projected-evidence-progress.test.mjs",
+        "backend:assignment_kernel_v2_progress_controller.test.ts"
+      ]
+    },
+    {
+      "id": "outer_desktop_steering_successor_races_live_provider_and_loses_canonical_admission_reason",
+      "coverage": [
+        "backend:desktop_provider_turn.test.ts",
+        "backend:desktop_provider_turn_http.test.ts",
+        "backend:external_provider_lifecycle.test.ts",
+        "backend:desktop_response_store.test.ts",
+        "backend:codex_conversation_turn.test.ts"
+      ]
+    },
+    {
+      "id": "tag_creation_ignored_repair_fields_and_unrecognized_leader_default_296",
+      "coverage": [
+        "dotnet:TagElementModeContractTests",
+        "dotnet:AnnotationTransactionTests",
+        "backend:created_tag_postcondition_v2.test.ts"
+      ]
+    },
+    {
+      "id": "host_budget_admission_denial_overwritten_by_outer_runtime_catch_294",
+      "coverage": [
+        "backend:external_provider_lifecycle.test.ts",
+        "backend:sidecar_execution_failure.test.ts"
+      ]
+    },
+    {
+      "id": "outer_failure_discards_scoped_followup_work_return_305",
+      "coverage": [
+        "backend:work_review_handoff.test.ts",
+        "javascript:package/operator-assistant-ui/stopped_work_return.test.mjs"
+      ]
+    },
+    {
+      "id": "recognized_engineering_gap_not_deferred_and_lost_from_refreshed_work_order_301",
+      "coverage": [
+        "backend:advisory_verification_policy.test.ts",
+        "backend:work_plan_projection.test.ts",
+        "backend:work_review_handoff.test.ts"
+      ]
+    },
+    {
+      "id": "native_read_refresh_application_route_leaked_into_generic_kernel_300",
+      "coverage": [
+        "backend:committed_read_refresh_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "family_authoring_template_preflight_poisoned_unknown_and_success_unsettled_314",
+      "coverage": [
+        "dotnet:OperatorFamilyCreationReceiptTests",
+        "dotnet:InstalledFamilyTemplateTests",
+        "backend:assignment_typed_native_settlement.test.ts"
+      ]
+    },
+    {
+      "id": "typed_parameter_alias_compatibility_guard_ignores_verified_native_child_318",
+      "coverage": [
+        "backend:parameter_alias_verification_319.test.ts",
+        "backend:c111_registered_stage_compat_verification.test.ts",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "strict_all_deferred_checklist_reenters_reporting_without_incomplete_outcome329",
+      "coverage": [
+        "backend:deferred_work_checkpoint_v2.test.ts",
+        "javascript:package/operator-assistant-ui/deferred_work_handoff.test.mjs"
+      ]
+    },
+    {
+      "id": "tee_replacement_collateral_deletion_error_omits_candidate_identities333",
+      "coverage": [
+        "dotnet:TeeTakeoffReplacementGeometryTests",
+        "dotnet:OperatorNativeTransactionExecutionTests",
+        "backend:assignment_typed_native_settlement.test.ts"
+      ]
+    },
+    {
+      "id": "missing_associative_tag_content_repeats_native_discovery_without_desktop_content_path336",
+      "coverage": [
+        "backend:artifact_delivery_profile.test.ts",
+        "javascript:package/operator-assistant-ui/native_task_routing.test.mjs"
+      ]
+    },
+    {
+      "id": "committed_file_family_load_has_no_target_bound_identity_readback340",
+      "coverage": [
+        "backend:family_file_load_verification_v2.test.ts",
+        "backend:committed_family_file_load_readback_v2.test.ts"
+      ]
+    },
+    {
+      "id": "accepted_native_saved_artifact_rejected_by_work_plan_inspection342",
+      "coverage": [
+        "backend:work_plan_artifact_inspection.test.ts",
+        "backend:committed_saved_document_readback_plan_v2.test.ts",
+        "mcp:lib/workPlanStdio.test.ts"
+      ]
+    },
+    {
+      "id": "family_symbol_misreported_as_placed_annotation_tag342",
+      "coverage": [
+        "backend:verified_annotation_presentation.test.ts",
+        "backend:committed_family_file_load_readback_v2.test.ts"
+      ]
+    },
+    {
+      "id": "all_deferred_unverified_edit_repeats_reporting_after_retained_native_attempt348",
+      "coverage": [
+        "backend:deferred_work_checkpoint_v2.test.ts",
+        "backend:project_parameter_binding_v2.test.ts",
+        "javascript:package/operator-assistant-ui/deferred_work_handoff.test.mjs"
+      ]
+    },
+    {
+      "id": "prior_stage_verification_reads_exhaust_later_edit_first_read346",
+      "coverage": [
+        "backend:teammate_verification_stage_budget.test.ts",
+        "backend:committed_saved_document_readback_plan_v2.test.ts"
+      ]
+    },
+    {
+      "id": "visual_review_identity_ping_rejection_discards_status_and_code353",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/visual_work_review.test.mjs",
+        "javascript:package/operator-assistant-ui/visual_work_review_target.test.mjs"
+      ]
+    },
+    {
+      "id": "provider_drag_path_silently_becomes_zero_origin_input355",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/computer_drag.test.mjs",
+        "javascript:package/operator-assistant-ui/computer_drag_host.test.mjs"
+      ]
+    },
+    {
+      "id": "registered_source_cad_missing_canonical_complete_native_verification237",
+      "coverage": [
+        "backend:vector_stroke_cad_import_v2.test.ts",
+        "backend:drafting_stroke_cad_geometry.test.ts"
+      ]
+    },
+    {
+      "id": "vector_annotation_old_part_recheck_after_canonical_continuations358",
+      "coverage": [
+        "backend:vector_annotation_continuation_v2.test.ts",
+        "backend:vector_detail_import_v2.test.ts"
+      ]
+    },
+    {
+      "id": "vector_final_geometry_read_cohort_and_stale_pass358",
+      "coverage": [
+        "backend:vector_annotation_continuation_v2.test.ts",
+        "backend:assignment_native_work_progress.test.ts",
+        "backend:committed_readback_reservations_v2.test.ts"
+      ]
+    },
+    {
+      "id": "vector_native_only_scope_obscures_backend_source_proof359",
+      "coverage": [
+        "backend:vector_annotation_continuation_v2.test.ts",
+        "backend:vector_detail_import_v2.test.ts"
+      ]
+    },
+    {
+      "id": "vector_cad_pages_counted_as_six_legacy_verification_attempts361",
+      "coverage": [
+        "backend:vector_stroke_cad_import_v2.test.ts",
+        "backend:committed_readback_reservations_v2.test.ts",
+        "backend:teammate_loop_runtime.test.ts"
+      ]
+    },
+    {
+      "id": "vector_dense_contour_discovery_obscures_complete_explicit_revision_omissions363",
+      "coverage": [
+        "backend:drafting_vector_source.test.ts",
+        "backend:read_vector_attachment.test.ts"
+      ]
+    },
+    {
+      "id": "checked_drafting_identity_not_refreshed_during_final_vector_save363",
+      "coverage": [
+        "backend:vector_annotation_continuation_v2.test.ts",
+        "backend:postcondition_verification_v2.test.ts",
+        "backend:native_annotation_postcondition_v2.test.ts"
+      ]
+    },
+    {
+      "id": "native_detail_line_graph_lacks_checked_geometry367",
+      "coverage": [
+        "backend:native_detail_line_graph_v2.test.ts",
+        "backend:native_detail_line_handler_v2.test.ts",
+        "backend:native_annotation_postcondition_v2.test.ts"
+      ]
+    },
+    {
+      "id": "new_drafting_view_missing_initial_identity369",
+      "coverage": [
+        "backend:drafting_identity_readback_v2.test.ts",
+        "backend:drafting_identity_handler_v2.test.ts",
+        "backend:vector_annotation_continuation_v2.test.ts"
+      ]
+    },
+    {
+      "id": "native_change_feedback_breaks_model_envelope371",
+      "coverage": [
+        "backend:native_change_feedback_budget.test.ts",
+        "javascript:package/operator-assistant-ui/native_change_observations.test.mjs",
+        "desktop:test/native_change_feedback.test.js"
+      ]
+    },
+    {
+      "id": "pdf_curve_withholding_misread_as_all_vector_route_gate371",
+      "coverage": [
+        "backend:read_vector_attachment.test.ts",
+        "backend:vector_stroke_cad_import_v2.test.ts"
+      ]
+    },
+    {
+      "id": "mixed_read_edit_work_plan_closeout373",
+      "coverage": [
+        "backend:work_plan_inspection.test.ts",
+        "backend:sidecar_work_plan_routing_http.test.ts"
+      ]
+    },
+    {
+      "id": "vector_cad_style_source_and_native_discovery375",
+      "coverage": [
+        "backend:read_vector_attachment.test.ts",
+        "backend:vector_stroke_cad_import_v2.test.ts"
+      ]
+    },
+    {
+      "id": "imported_category_numeric_identity_verification377",
+      "coverage": [
+        "backend:visibility_category_readback_v2.test.ts",
+        "backend:committed_visibility_readback_v2.test.ts"
+      ]
+    },
+    {
+      "id": "explicit_multiline_document_copy_intent380",
+      "coverage": [
+        "backend:workbook_export_intent.test.ts",
+        "backend:semantic_operation_scope.test.ts"
+      ]
+    },
+    {
+      "id": "saved_technical_followup_and_source_hint_presentation355",
+      "coverage": [
+        "backend:work_review_handoff.test.ts",
+        "javascript:package/operator-assistant-ui/stopped_work_return.test.mjs"
+      ]
+    },
+    {
+      "id": "work_plan_dependency_diagnostic_loss397",
+      "coverage": [
+        "backend:work_plan_dependency_diagnostics.test.ts",
+        "mcp:lib/workPlanDiagnosticsStdio.test.ts"
+      ]
+    },
+    {
+      "id": "read-only-native-instance-discovery-guidance-requires-mutation",
+      "coverage": [
+        "dotnet:NativeApiArgumentDocumentationTests",
+        "backend:native_api_discovery_guidance.test.ts",
+        "dotnet:NativeApiPolicyMethodBoundaryContractTests"
+      ]
+    },
+    {
+      "id": "external_family_inspection_preserves_readonly_authority_workspace_source_and_loaded_project_evidence_separation",
+      "coverage": [
+        "dotnet:FamilyInspectionSourceTests",
+        "dotnet:TemporaryDocumentInspectionTests",
+        "backend:native_inspection_coverage.test.ts",
+        "backend:teammate_loop_runtime.test.ts"
+      ]
+    },
+    {
+      "id": "native_read_graph_active_element_receipts_must_produce_scope_bound_model_observation",
+      "coverage": [
+        "mcp:lib/nativeReadEvidence.test.ts",
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "backend:conversation_evidence_contract.test.ts"
+      ]
+    },
+    {
+      "id": "native_collector_graph_current_document_receipts_must_produce_positive_model_observation",
+      "coverage": [
+        "mcp:lib/nativeReadEvidence.test.ts",
+        "mcp:lib/assignmentKernelV2.test.ts",
+        "backend:conversation_evidence_contract.test.ts"
+      ]
+    },
+    {
+      "id": "external_reference_inspection_must_not_require_loaded_project_content",
+      "coverage": [
+        "backend:external_file_intake_scope.test.ts",
+        "backend:conversation_intake.test.ts",
+        "backend:semantic_operation_scope.test.ts"
+      ]
+    },
+    {
+      "id": "schedule_cell_plural_native_parameter_read_must_verify_exact_affected_instance",
+      "coverage": [
+        "backend:schedule_cell_postcondition_v2.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts"
+      ]
+    },
+    {
+      "id": "written_engineering_followup_is_misdeclared_as_pending_native_edit465",
+      "coverage": [
+        "backend:mixed_followup_scope_guidance.test.ts",
+        "javascript:package/operator-assistant-ui/mixed_followup_scope_guidance.test.mjs",
+        "backend:deferred_work_checkpoint_v2.test.ts"
+      ]
+    },
+    {
+      "id": "bounded_tool_discovery_must_not_hide_omitted_supported_save_routes468",
+      "coverage": [
+        "mcp:lib/toolSearchCompleteness.test.ts",
+        "mcp:lib/mcp_stdio_smoke.test.ts"
+      ]
+    },
+    {
+      "id": "postedit_preservation_reads_must_not_collide_with_preedit_baseline",
+      "coverage": [
+        "backend:postedit_preservation_progress.test.ts",
+        "backend:assignment_kernel_v2_progress_controller.test.ts",
+        "backend:assignment_native_work_progress.test.ts"
+      ]
+    },
+    {
+      "id": "empty_family_label_driver_observation_must_not_claim_unbound438_504",
+      "coverage": [
+        "dotnet:FamilyLabelBindingObservationTests",
+        "backend:family_label_binding_observation.test.ts",
+        "backend:native_inspection_coverage.test.ts"
+      ]
+    },
+    {
+      "id": "explicit_final_inspection_focus_composes_navigation_review_and_existing_closeout_without_weakening_currentness",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/visual_work_review_preparation.test.mjs",
+        "javascript:package/operator-assistant-ui/reviewed_inspection_closeout.test.mjs",
+        "javascript:package/operator-assistant-ui/native_view_activation.test.mjs"
+      ]
+    },
+    {
+      "id": "first_class_native_csharp_hosted_version_binding",
+      "coverage": [
+        "backend:desktop_native_tools.test.ts",
+        "backend:sidecar_agent_profile.test.ts",
+        "mcp:lib/dynamicNativeProgram.test.ts",
+        "mcp:lib/dynamicNativeCourier.test.ts",
+        "dotnet:OperatorNativeProgramExecutionTests",
+        "dotnet:OperatorNativeProgramCourierRequestTests",
+        "dotnet:OperatorCourierRuntimeProfileTests",
+        "dynamic:NativeProgramVersionTests",
+        "dynamic:NativeProgramCompilerTests",
+        "dynamic:NativeCompileTransportTests"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
@@ -4814,9 +5367,13 @@
     "ReadOnlyGeneratedProgramTests",
     "WorkerInputChannelTests",
     "RuntimeFailureDiagnosticTests",
-    "BootstrapReadRetryTests"
+    "BootstrapReadRetryTests",
+    "NativeProgramVersionTests",
+    "NativeProgramCompilerTests",
+    "NativeCompileTransportTests"
   ],
   "javascript_tests": [
+    "package/operator-assistant-ui/stopped_work_return.test.mjs",
     "package/operator-assistant-ui/task_navigation_review.test.mjs",
     "package/operator-assistant-ui/saved_computer_assignment.test.mjs",
     "package/assignment-kernel-v2-contracts/native-affected-targets.test.mjs",
@@ -4838,6 +5395,15 @@
     "package/operator-assistant-ui/native_target_review_image.test.mjs",
     "package/operator-assistant-ui/visual_work_review_recheck.test.mjs",
     "package/operator-assistant-ui/visual_work_review_region.test.mjs",
-    "package/operator-assistant-ui/work_report.test.mjs"
+    "package/operator-assistant-ui/work_report.test.mjs",
+    "package/assignment-kernel-v2-contracts/projected-evidence-progress.test.mjs",
+    "package/operator-assistant-ui/deferred_work_handoff.test.mjs",
+    "package/operator-assistant-ui/native_task_routing.test.mjs",
+    "package/operator-assistant-ui/computer_drag.test.mjs",
+    "package/operator-assistant-ui/computer_drag_host.test.mjs",
+    "package/operator-assistant-ui/mixed_followup_scope_guidance.test.mjs",
+    "package/operator-assistant-ui/visual_work_review_preparation.test.mjs",
+    "package/operator-assistant-ui/reviewed_inspection_closeout.test.mjs",
+    "package/operator-assistant-ui/native_view_activation.test.mjs"
   ]
 }

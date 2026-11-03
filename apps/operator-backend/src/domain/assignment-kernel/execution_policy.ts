@@ -29,14 +29,14 @@ export interface LocalAdvisoryExecutionPolicyV1 {
   };
   /** Frozen at creation; credit never changes write authority or completion truth. */
   progress_allowance?: {
-    mode: "verified_native_changes_v1";
+    mode: "verified_native_changes_v1" | "observed_native_work_v1";
     max_provider_calls: number;
     max_operations: number;
     max_total_tokens: number;
     /** Optional creation-time ceiling; absent in historical fixed-clock policies. */
     max_wall_clock_ms?: number;
     /** Absent means historical operation-batch credits. Frozen for new tasks only. */
-    credit_unit?: 'distinct_verified_targets_v1';
+    credit_unit?: 'distinct_verified_targets_v1' | 'distinct_observed_physical_targets_v1';
   };
 }
 
@@ -44,6 +44,8 @@ export interface AdvisoryCompletionProposalV1 {
   claimed_completed: readonly string[];
   remaining_work: readonly string[];
   uncertainties: readonly string[];
+  /** Optional unverified presentation only; never a completion or native fact. */
+  user_facing_text?: string;
 }
 
 export function advisoryVerificationV2(snapshot: Pick<AssignmentSnapshotV2, "spec">): boolean {
@@ -73,7 +75,11 @@ export function validLocalAdvisoryPolicyV1(spec: AssignmentSpecV2): boolean {
     && (policy.native_scope_planning===undefined||validNativeScopePlanningPolicyV1(spec))
     && bounded(policy.max_operations, operationCeiling) && bounded(policy.max_total_tokens, tokenCeiling)
     && bounded(policy.max_wall_clock_ms, 120 * 60_000)
-    && (!policy.progress_allowance || (policy.progress_allowance.mode === "verified_native_changes_v1"
+    && (!policy.progress_allowance || ((policy.progress_allowance.mode === "verified_native_changes_v1"
+      && (policy.progress_allowance.credit_unit === undefined || policy.progress_allowance.credit_unit === 'distinct_verified_targets_v1')
+      || policy.progress_allowance.mode === 'observed_native_work_v1'
+        && policy.progress_allowance.credit_unit === 'distinct_observed_physical_targets_v1'
+        && policy.ready_work_handoff === 'continue_ready_work_v1')
       && spec.requested_effect === "apply"
       && bounded(policy.progress_allowance.max_provider_calls, callCeiling)
       && policy.progress_allowance.max_provider_calls >= policy.max_provider_calls
@@ -81,8 +87,6 @@ export function validLocalAdvisoryPolicyV1(spec: AssignmentSpecV2): boolean {
       && policy.progress_allowance.max_operations >= policy.max_operations
       && bounded(policy.progress_allowance.max_total_tokens, tokenCeiling)
       && policy.progress_allowance.max_total_tokens >= policy.max_total_tokens
-      && (policy.progress_allowance.credit_unit === undefined
-        || policy.progress_allowance.credit_unit === 'distinct_verified_targets_v1')
       && (policy.progress_allowance.max_wall_clock_ms === undefined
         || (bounded(policy.progress_allowance.max_wall_clock_ms,120*60_000)
           && policy.progress_allowance.max_wall_clock_ms >= policy.max_wall_clock_ms))));
@@ -101,5 +105,7 @@ export function validAdvisoryProposalV1(proposal: AdvisoryCompletionProposalV1):
   const fields = [proposal?.claimed_completed, proposal?.remaining_work, proposal?.uncertainties];
   return fields.every(items => Array.isArray(items) && items.length <= 24
     && items.every(item => typeof item === "string" && item.trim().length > 0 && item.length <= 1000))
-    && fields.some(items => items.length > 0);
+    && fields.some(items => items.length > 0)
+    && (proposal.user_facing_text === undefined || typeof proposal.user_facing_text === 'string'
+      && proposal.user_facing_text.trim().length > 0 && proposal.user_facing_text.length <= 8000);
 }

@@ -5,6 +5,7 @@ import { atomicAppendJsonlLine } from "../persistence/jsonl.js";
 import { appendDailyMemory, appendLongtermMemory } from "../memory/jsonl_memory_store.js";
 import { queueRunBundleForUpload } from "./upload_queue.js";
 import { buildDevHandoff, type DevHandoff } from "./dev_handoff.js";
+import type {FeedbackRuntimeDiagnostic} from './runtime_diagnostic.js';
 
 export type FeedbackRating = "worked" | "partial" | "failed";
 
@@ -17,6 +18,7 @@ export type FeedbackEvent = {
   queue_upload: boolean;
   created_at: string;
   dev_handoff?: DevHandoff;
+  runtime_diagnostic?: FeedbackRuntimeDiagnostic;
 };
 
 export type FeedbackPersistResult = {
@@ -46,6 +48,7 @@ export function appendFeedbackAndMaybePromote(args: {
   remember_preference?: boolean;
   queue_upload?: boolean;
   created_at?: string;
+  runtime_diagnostic?: unknown;
 }): FeedbackPersistResult {
   const layout = ensureWorkspaceLayout();
 
@@ -64,7 +67,8 @@ export function appendFeedbackAndMaybePromote(args: {
     session_id,
     chat_id: chat_id || null,
     rating: ratingRaw,
-    note: note || null
+    note: note || null,
+    runtime_diagnostic:args.runtime_diagnostic
   });
 
   const evt: FeedbackEvent = {
@@ -75,7 +79,8 @@ export function appendFeedbackAndMaybePromote(args: {
     remember_preference,
     queue_upload,
     created_at,
-    dev_handoff
+    dev_handoff,
+    ...(dev_handoff.runtime_diagnostic?{runtime_diagnostic:dev_handoff.runtime_diagnostic}:{})
   };
 
   const eventsPath = path.join(layout.feedback, "events.jsonl");

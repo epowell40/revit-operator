@@ -1,3 +1,4 @@
+export * from "./native-parameter-checks.js";
 export * from "./provider-usage-hold.js";
 export * from "./native-artifact.js";
 export * from "./native-completion.js";
@@ -107,9 +108,13 @@ export function assignmentKernelControlEvidenceFactsV2(
 
 export const EVIDENCE_RETRIEVAL_SELECTOR_CONTRACT_V1_SCHEMA: "revit-operator.evidence-retrieval-selector-contract/v1";
 
+export type EvidenceScalarFilterV1 = Readonly<{field:string;op:"eq"|"ne"|"lt"|"lte"|"gt"|"gte";value:string|number|boolean|null}>;
+export type EvidenceNumericOrderV1 = Readonly<{field:string;direction:"asc"|"desc"}>;
+export type EvidenceItemRangeV1 = Readonly<{path:string;start:number;count:number;fields?:readonly string[];filters?:readonly EvidenceScalarFilterV1[];orderBy?:EvidenceNumericOrderV1}>;
+
 export type EvidenceRetrievalSelectorV1 =
   | Readonly<{ kind: "fields"; fields: readonly string[] }>
-  | Readonly<{ kind: "item_range"; item_range: Readonly<{ path: string; start: number; count: number; fields?: readonly string[] }> }>
+  | Readonly<{ kind: "item_range"; item_range: EvidenceItemRangeV1 }>
   | Readonly<{ kind: "text_range"; text_range: Readonly<{ start: number; length: number }> }>
   | Readonly<{ kind: "target_subset"; target_subset: readonly string[] }>
   | Readonly<{ kind: "image"; image: true }>;
@@ -122,6 +127,7 @@ export interface ExactEvidenceTargetSelectionV1 {
 }
 
 export function parseEvidenceRetrievalSelectorV1(value: unknown): EvidenceRetrievalSelectorV1;
+export function assertScalarEvidencePageV1(request:unknown,envelope:unknown):void;
 export function isEvidenceTargetIdentityFieldV1(value: unknown): boolean;
 export function evidenceTargetIdentityValuesV1(value: unknown): readonly string[];
 export function selectExactEvidenceTargetsV1(payload: unknown, targetSubset: unknown): ExactEvidenceTargetSelectionV1;
@@ -132,3 +138,5 @@ export function nativeFailureDependencyLinksV1(value: unknown, declaredTargetIde
 
 export * from "./native-continuation.js";
 export * from "./schedule-filter-state.js";
+
+export function isDetachedFamilyLabelEditV2(method: unknown, path: unknown): boolean;

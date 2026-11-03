@@ -113,9 +113,10 @@ function oneLine(text: string | undefined | null, max: number): string {
   return t.slice(0, Math.max(0, max - 1)) + "…";
 }
 
-function fingerprintFor(args: { rating: string; note: string; latest_user_request: string; issue_keys: string[] }): string {
+function fingerprintFor(args: { session_id:string;rating: string; note: string; latest_user_request: string; issue_keys: string[] }): string {
   return fingerprintFeedbackImprovementJob({
     rating: args.rating,
+    session_id:args.session_id,
     note: oneLine(args.note, 800),
     latest_user_request: oneLine(args.latest_user_request, 800),
     issue_keys: args.issue_keys
@@ -126,9 +127,9 @@ function issueIndexPath(): string {
   return path.join(ensureWorkspaceLayout().feedback, "github_issues.jsonl");
 }
 
-function hasFingerprint(indexPath: string, fingerprint: string): boolean {
+function findFingerprint(indexPath: string, fingerprint: string,repo:string):{issue_number:number;issue_url:string;title?:string}|null {
   try {
-    if (!fs.existsSync(indexPath)) return false;
+    if (!fs.existsSync(indexPath)) return null;
     const raw = fs.readFileSync(indexPath, "utf8");
     const lines = raw.split("\n");
     for (let i = lines.length - 1; i >= 0; i--) {
@@ -136,14 +137,17 @@ function hasFingerprint(indexPath: string, fingerprint: string): boolean {
       if (!line) continue;
       try {
         const rec = JSON.parse(line) as any;
-        if (typeof rec?.fingerprint === "string" && rec.fingerprint === fingerprint) return true;
+        if (rec?.fingerprint===fingerprint&&String(rec.repo).toLowerCase()===repo.toLowerCase()
+          &&Number.isSafeInteger(rec.issue_number)&&rec.issue_number>0&&typeof rec.issue_url==='string'
+          &&new RegExp('^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/issues/'+rec.issue_number+'$').test(rec.issue_url))
+          return {issue_number:rec.issue_number,issue_url:rec.issue_url,...(typeof rec.title==='string'?{title:rec.title}:{})};
       } catch {
         // ignore malformed line
       }
     }
-    return false;
+    return null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -184,6 +188,19 @@ function buildBody(args: {
   }
   const h = args.dev_handoff;
   if (h) {
+    if(h.setup_diagnostic){
+      const d=h.setup_diagnostic;
+      lines.push('Backend setup diagnostic (not proof of earlier model effects):','',
+        `- stage: ${d.phase}`,`- cause: ${d.cause_code}`,`- assignment/run/generation: ${d.assignment_id} / ${d.run_id} / ${d.generation}`,
+        '- provider started for this request: false','- native dispatch for this request: false','',clip(d.message,2000),'');
+    }
+    if(h.runtime_diagnostic){
+      lines.push('Sidecar runtime diagnostic (reported, not proof of model outcome):','',clip(h.runtime_diagnostic.error,2000),'');
+      if(h.runtime_diagnostic.phase)lines.push(`- phase: ${h.runtime_diagnostic.phase}`);
+      if(h.runtime_diagnostic.assignment_id)lines.push(`- reported assignment: ${h.runtime_diagnostic.assignment_id}`);
+      if(h.runtime_diagnostic.run_id)lines.push(`- reported run: ${h.runtime_diagnostic.run_id}`);
+      lines.push('');
+    }
     if (h.latest_user_request) {
       lines.push("Latest user request:");
       lines.push("");
@@ -301,14 +318,16 @@ export async function createFeedbackGitHubIssue(args: FeedbackGitHubIssueArgs): 
   const latestUserRequest = handoff?.latest_user_request ?? "";
   const issueKeys = Array.isArray(handoff?.issue_digest) ? handoff!.issue_digest.map(x => x.key) : [];
   const fingerprint = fingerprintFor({
+    session_id:sessionId,
     rating,
     note,
     latest_user_request: latestUserRequest,
     issue_keys: issueKeys
   });
   const indexPath = issueIndexPath();
-  if (hasFingerprint(indexPath, fingerprint)) {
-    return { ok: false, skipped: "duplicate", repo, fingerprint };
+  const duplicate=findFingerprint(indexPath,fingerprint,repo);
+  if (duplicate) {
+    return { ok: false, skipped: "duplicate", repo, fingerprint,...duplicate };
   }
 
   const title = buildTitle({
@@ -383,6 +402,7 @@ export function startFeedbackGitHubIssue(args: FeedbackGitHubIssueArgs, hooks?: 
   const latestUserRequest = args.dev_handoff?.latest_user_request ?? "";
   const issueKeys = Array.isArray(args.dev_handoff?.issue_digest) ? args.dev_handoff!.issue_digest.map(x => x.key) : [];
   const fingerprint = fingerprintFor({
+    session_id:sessionId,
     rating,
     note,
     latest_user_request: latestUserRequest,

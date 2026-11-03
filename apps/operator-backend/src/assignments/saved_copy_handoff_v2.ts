@@ -33,7 +33,7 @@ export function savedCopyHandoffV2(snapshot:AssignmentSnapshotV2):null|{text:str
     const ref=readEvidenceRef(o.raw_payload_ref.slice(9));
     const raw=JSON.parse(readAuthoritativeEvidence(ref,{...op.binding,attempt_id:op.operation_id}).toString('utf8'));
     if(payloadDigestV2(raw).digest!==r.raw_payload_hash||canonicalJsonV2(raw.artifact_receipt)!==canonicalJsonV2(r.native_artifact_receipt))continue;
-    return {text:`${saved.document_path_changed?'Saved copy':'Saved model'}: ${path.win32.basename(saved.after.path)}. Final content verification is pending.`,observation_ids:[id]};
+    return {text:`${saved.document_path_changed?'Saved copy':'Saved model'}: ${path.win32.basename(saved.after.path)}. Final content verification is pending.\nSaved file: ${saved.after.path}`,observation_ids:[id]};
    }catch{/* Missing, foreign or mismatched retained evidence cannot support delivery. */}
   }
  }

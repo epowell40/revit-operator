@@ -1,0 +1,11 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/revit/create-family-from-template"
+  },
+  "first_response": {
+    "message": "Error: Tool documentation is hidden because search exposure is not certified for POST /revit/create-family-from-template.",
+    "stage": "mcp_tool_documentation_pre_dispatch"
+  },
+  "expected_alias": "revit_create_family_from_template"
+}

@@ -2,7 +2,7 @@ import { payloadDigestV2 } from '@revitoperator/payload-digest-v2';
 import { textNoteRoundTripMatchesV1 } from '@revitoperator/text-note-round-trip-v1';
 import { readAuthoritativeEvidence, readEvidenceRef } from '../evidence/evidence_store.js';
 import { sameAssignmentBindingV2, type AssignmentSnapshotV2, type OperationV2, type OperationResultV2 } from '../domain/assignment-kernel/index.js';
-import { appliedOperationHasVerifiedPostconditionV2 } from '../domain/assignment-kernel/outcome.js';
+import { appliedOperationHasVerifiedPostconditionV2, verificationOperationHasVerifiedPostconditionV2 } from '../domain/assignment-kernel/outcome.js';
 
 const object = (v: unknown): Record<string, any> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, any> : {};
 const positive = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v > 0;
@@ -14,6 +14,55 @@ const uid = (v: unknown) => typeof v === 'string' && v.length >= 10 && v.length 
 const typeName = (v: unknown): v is string => typeof v === 'string' && v.trim().length > 0
   && v.length <= 256 && !/[\x00-\x1f\x7f]/.test(v);
 const sameTypeName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+function scheduleRows(value: unknown, expected: number[]) {
+  if (!Array.isArray(value) || value.length !== expected.length || value.length > 32) return null;
+  const rows = value.map(object);
+  if (!equalIds(rows.map(r => r.elementId), expected) || new Set(rows.map(r => r.elementId)).size !== rows.length) return null;
+  for (const r of rows) {
+    const d = object(r.definition), identity = object(d.identity);
+    if (r.complete !== true || r.scope !== 'flat_definition_table_parameters' || !uid(r.uniqueId)
+        || d.schema !== 'operator.schedule_definition_snapshot.v1' || d.complete !== true
+        || identity.id !== r.elementId || identity.uniqueId !== r.uniqueId
+        || !['regular','sheet_list','view_list','keynote_legend','material_takeoff','key','multi_category'].includes(identity.kind)
+        || !Array.isArray(r.parameters) || r.parameters.length > 2048) return null;
+  }
+  return rows;
+}
+
+// Reuse the same complete native schedule-row guard for requested derived
+// projections. Existing annotation/unchanged-schedule semantics stay exact.
+export {scheduleRows as preservedScheduleRowsV2};
+
+/** Only native-bound complete preservation evidence can account for additional
+ * modified schedules. The six incidental owners in the old462 receipt still
+ * refuse: no baseline or independent read is invented for historical work. */
+export function preservedScheduleTargets(payload: Record<string, any>, expected: number[]) {
+  if (!expected.length) return [];
+  const p = object(payload.schedulePreservation);
+  if (p.schema !== 'operator.annotation_schedule_preservation.v1' || p.complete !== true
+      || !ids(p.scheduleIds) || p.scheduleIds.length > 32 || !equalIds(p.scheduleIds, expected)) return null;
+  const before = scheduleRows(p.before, expected), after = scheduleRows(p.after, expected);
+  if (!before || !after) return null;
+  for (const b of before) {
+    const a = after.find(r => r.elementId === b.elementId);
+    if (!a || payloadDigestV2(b).digest !== payloadDigestV2(a).digest) return null;
+  }
+  return [...expected].sort((a,b) => a-b);
+}
+
+/** Shared flat-schedule comparison; the legacy annotation schema is retained.
+ * A separate native read must equal the actual pre-transaction observation. */
+export function preservedScheduleReadMatchesV2(applied: Record<string, any>, expected: number[], read: unknown) {
+  const proof = object(object(read).schedulePreservation), before = object(applied.schedulePreservation).before;
+  if (proof.schema !== 'operator.annotation_schedule_read.v1' || proof.complete !== true
+      || !ids(proof.requestedElementIds) || !equalIds(proof.requestedElementIds, expected)) return false;
+  const observed = scheduleRows(proof.items, expected);
+  return Boolean(observed && Array.isArray(before) && before.length === expected.length && before.every((b:any) => {
+    const current = observed!.find(r=>r.elementId===b.elementId);
+    return current && payloadDigestV2(current).digest === payloadDigestV2(b).digest;
+  }));
+}
 
 /** Deliberately bounded contracts. Name/query resolution, text repair/type
  * creation, viewport pinning changes and cross-sheet deletion are not certified
@@ -77,10 +126,11 @@ export function nativeAnnotationCommitTargetV2(input: unknown, payload: unknown)
       || !positive(t.id) || object(n.textType).id !== t.id
       || b.typeId != null && t.id !== b.typeId
       || b.typeId == null && b.typeName != null && t.name !== b.typeName
-      || !equalIds(tx.added_element_ids, [p.textNoteId])
-      || tx.modified_element_ids.some(id => id !== b.viewId && id !== p.textNoteId)) return null;
+      || !equalIds(tx.added_element_ids, [p.textNoteId])) return null;
+  const scheduleIds = preservedScheduleTargets(p, tx.modified_element_ids.filter(id => id !== b.viewId && id !== p.textNoteId));
+  if (!scheduleIds) return null;
   return {kind: q.kind, id: p.textNoteId as number, read: {method: 'POST', path: '/revit/find-text-notes',
-    body: {elementIds: [p.textNoteId], max: 1}}};
+    body: {elementIds: [p.textNoteId], max: 1, ...(scheduleIds.length ? {preservationScheduleIds:scheduleIds} : {})}}};
 }
 
 export function nativeAnnotationReadbackMatchesV2(input: unknown, applied: unknown, readInput: unknown, payload: unknown): boolean {
@@ -110,6 +160,10 @@ export function nativeAnnotationReadbackMatchesV2(input: unknown, applied: unkno
       || p.truncated === true || !ids(p.requestedElementIds) || !equalIds(p.requestedElementIds, [c.id])
       || !ids(p.elementIds) || !equalIds(p.elementIds, [c.id]) || !Array.isArray(p.items) || p.items.length !== 1) return false;
   const n = p.items[0], point = object(n.location), type = object(a.textType);
+  const schedules = object(c.read.body).preservationScheduleIds;
+  if (Array.isArray(schedules) && schedules.length) {
+    if (!preservedScheduleReadMatchesV2(a, schedules, p)) return false;
+  }
   // Same native uppercase drafting policy; the shared round-trip adapter alone
   // handles native CR and the single trailing paragraph, never arbitrary trim.
   const requested = b.text.replace(/[a-z]/g, (ch: string) => ch.toUpperCase());
@@ -120,7 +174,7 @@ export function nativeAnnotationReadbackMatchesV2(input: unknown, applied: unkno
     && (b.widthFt == null || near(n.widthFeet, b.widthFt));
 }
 
-function commit(snapshot: AssignmentSnapshotV2, op: OperationV2) {
+function commit(snapshot: AssignmentSnapshotV2, op: OperationV2, requireLatest = true) {
   const r = op.result;
   if (snapshot.execution_control?.state === 'paused' || snapshot.unresolved_unknown_operation_ids.length
       || snapshot.input_invalidated_operation_ids?.includes(op.operation_id) || op.requested_effect !== 'apply'
@@ -131,7 +185,7 @@ function commit(snapshot: AssignmentSnapshotV2, op: OperationV2) {
       || !sameAssignmentBindingV2(op.binding, snapshot.current_binding) || !sameAssignmentBindingV2(r.binding, op.binding)
       || op.input.method !== 'POST' || !op.request_identity || op.input.path !== op.request_identity.path || !op.request_identity.request_signature
       || r.request_identity?.request_signature !== op.request_identity.request_signature
-      || Object.values(snapshot.operations).some(other => other.operation_id !== op.operation_id && other.requested_effect === 'apply'
+      || requireLatest && Object.values(snapshot.operations).some(other => other.operation_id !== op.operation_id && other.requested_effect === 'apply'
         && (other.dispatch_state === 'dispatched' && other.settlement_state !== 'settled'
           || other.persistent_effect !== 'none' && other.result && Date.parse(other.result.completed_at) >= Date.parse(r.completed_at)))) return null;
   for (const id of op.observation_ids) {
@@ -150,10 +204,43 @@ function commit(snapshot: AssignmentSnapshotV2, op: OperationV2) {
   return null;
 }
 
+/** Eligibility for a NEW schedule read only. A historical note check and its
+ * native unchanged schedule snapshots do not renew any postcondition. The
+ * normal schedule comparator must verify current values independently. */
+export function annotationPreservedScheduleAtCommitV2(snapshot: AssignmentSnapshotV2, op: OperationV2, scheduleId: number): boolean {
+  if (!positive(scheduleId) || snapshot.terminal || snapshot.outcome !== 'active' || snapshot.completion_proposal
+      || Object.values(snapshot.operations).some(o => o.requested_effect === 'apply'
+        && (o.persistent_effect === 'unknown' || o.dispatch_state === 'dispatched' && o.settlement_state !== 'settled'))
+      || !appliedOperationHasVerifiedPostconditionV2(snapshot, op.operation_id)) return false;
+  const retained = commit(snapshot, op, false);
+  if (!retained || retained.c.kind !== 'text' || !object(retained.c.read.body).preservationScheduleIds?.includes(scheduleId)) return false;
+  return op.verification_operation_ids.some(id => {
+    const read = snapshot.operations[id], r = read?.result;
+    return verificationOperationHasVerifiedPostconditionV2(snapshot, id) && !snapshot.input_invalidated_operation_ids?.includes(id)
+      && read?.verification_of_operation_id === op.operation_id && r?.authority === 'native-host'
+      && sameAssignmentBindingV2(read.binding, op.binding) && sameAssignmentBindingV2(r.binding, read.binding)
+      && r.operation_id === id && Boolean(read.request_identity) && read.request_identity!.method === read.input.method && read.request_identity!.path === read.input.path
+      && r.request_identity?.method === read.request_identity!.method && r.request_identity?.path === read.request_identity!.path
+      && r.request_identity?.request_signature === read.request_identity?.request_signature
+      && Boolean(r.receipt_id && r.native_correlation_id && r.raw_payload_hash)
+      && read.observation_ids.some(oid => { const o = snapshot.observations[oid]; return o?.operation_id === id
+        && o.authority === 'native-host' && o.raw_payload_hash === r.raw_payload_hash && sameAssignmentBindingV2(o.binding, read.binding)
+        && o.facts.some(f => f.fact_id === 'verification.postcondition_satisfied' && f.fact_class === 'verification' && f.value === true); })
+      && Date.parse(read.opened_at) >= Date.parse(op.result!.completed_at)
+      && Date.parse(r.completed_at) >= Date.parse(read.opened_at);
+  });
+}
+
 export function committedNativeAnnotationReadbackPlanV2(snapshot: AssignmentSnapshotV2, op: OperationV2) {
   if (snapshot.terminal || snapshot.outcome !== 'active' || snapshot.completion_proposal
       || op.verification_operation_ids.length || appliedOperationHasVerifiedPostconditionV2(snapshot, op.operation_id)) return null;
   return commit(snapshot, op)?.c.read ?? null;
+}
+
+/** Called by the settlement edge after its independent comparison passes.
+ * Preserved schedules are coverage obligations, never new drawing work. */
+export function committedNativeAnnotationDeliverableV2(snapshot: AssignmentSnapshotV2, op: OperationV2): number | null {
+  return commit(snapshot, op)?.c.id ?? null;
 }
 
 export function nativeAnnotationPostconditionSatisfiedV2(snapshot: AssignmentSnapshotV2, op: OperationV2, result: OperationResultV2, payload: unknown) {

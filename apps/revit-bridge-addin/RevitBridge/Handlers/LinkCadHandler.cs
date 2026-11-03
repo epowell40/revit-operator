@@ -17,6 +17,7 @@ namespace RevitBridge.Handlers
         public sealed class Params
         {
             public string? sourcePath { get; set; }
+            public string? expectedSourceSha256 { get; set; }
             public string? sheetNumber { get; set; }
             public long? sheetViewId { get; set; }
             public long? viewId { get; set; }
@@ -36,12 +37,16 @@ namespace RevitBridge.Handlers
             public string? importUnit { get; set; } // Default|Foot|Inch|Meter|...
             public string? colorMode { get; set; } // preserve (default)|black_and_white|invert
             public double? customScale { get; set; } // 1.0 = one-to-one when supported by Revit API
+            public bool? autoCorrectAlmostVHLines { get; set; } // false preserves source directions
             public bool? link { get; set; } // default true (link if API supports)
             public bool? preflightOnly { get; set; }
             public bool? dryRun { get; set; }
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
+            => Task.FromResult(RevitBridge.Logic.Handlers.NativeMutationPreflightBoundary.Execute(enter => Execute(app, jsonData, enter)));
+
+        private static object Execute(UIApplication app, string jsonData, Action enterNativeScope)
         {
             var p = string.IsNullOrWhiteSpace(jsonData) ? new Params() : (JsonSerializer.Deserialize<Params>(jsonData) ?? new Params());
 
@@ -51,7 +56,7 @@ namespace RevitBridge.Handlers
 
             if (dryRun && (p.preflightOnly ?? false))
             {
-                return Task.FromResult<object>(CadLinkPreflightCapability.CreateResponse());
+                return CadLinkPreflightCapability.CreateResponse();
             }
 
             var doc = app.ActiveUIDocument.Document;
@@ -74,9 +79,9 @@ namespace RevitBridge.Handlers
                 sheet = targetSheet;
 
             var full = ResolveSourcePath(src);
-            var ext = (Path.GetExtension(full) ?? "").Trim().ToLowerInvariant();
-            if (ext != ".dwg") throw new InvalidOperationException("link-cad only supports .dwg files.");
+            var sourceFormat = CadLinkOptionPolicy.SourceFormat(full);
             var sourceSha256 = FileSha256(full);
+            CadLinkOptionPolicy.RequireExpectedSourceHash(p.expectedSourceSha256, sourceSha256);
 
             var shouldPlaceOnSheet = sheet != null && (targetView == null || !(targetView is ViewSheet)) && (p.placeOnSheet ?? true);
             var viewportPoint = sheet == null ? XYZ.Zero : ResolveViewportPoint(sheet, p);
@@ -91,6 +96,8 @@ namespace RevitBridge.Handlers
                 sourcePath = src,
                 sourceFullPath = full,
                 sourceSha256,
+                sourceFormat,
+                autoCorrectAlmostVHLines = p.autoCorrectAlmostVHLines ?? false,
                 targetMode = directSheetImport ? "direct_sheet_import" : "view_then_sheet",
                 viewId = RevitBridge.Common.ElementIdCompat.GetValue(targetView?.Id),
                 viewName = targetView?.Name ?? plannedDraftingViewName,
@@ -115,11 +122,12 @@ namespace RevitBridge.Handlers
 
             if (dryRun)
             {
-                return Task.FromResult<object>(new { status = "Dry Run", dryRun = true, previewExecuted = false,
-                    transaction = OperatorNativeTransactionReceipt.NotStarted(), plan });
+                return new { status = "Dry Run", dryRun = true, previewExecuted = false,
+                    transaction = OperatorNativeTransactionReceipt.NotStarted(), plan };
             }
 
-            var result = RevitBridge.Logic.Handlers.NativeSingleTransaction.Execute(app, doc, wantLink ? "Link CAD (DWG)" : "Import CAD (DWG)", created =>
+            enterNativeScope();
+            var result = RevitBridge.Logic.Handlers.NativeSingleTransaction.Execute(app, doc, wantLink ? "Link CAD" : "Import CAD", created =>
             {
                 var targetViewCreatedInTransaction = false;
                 if (!directSheetImport)
@@ -137,6 +145,7 @@ namespace RevitBridge.Handlers
                 options.ColorMode = (ImportColorMode)Enum.Parse(typeof(ImportColorMode), colorMode);
                 options.ThisViewOnly = true;
                 options.Placement = ImportPlacement.Origin;
+                options.AutoCorrectAlmostVHLines = p.autoCorrectAlmostVHLines ?? false;
                 ApplyImportUnit(options, p.importUnit);
                 ApplyCustomScale(options, p.customScale);
 
@@ -192,6 +201,8 @@ namespace RevitBridge.Handlers
                 return new Dictionary<string, object?>
                 {
                     ["mode"] = mode, ["isLinked"] = imported.IsLinked,
+                    ["sourceFormat"] = sourceFormat,
+                    ["autoCorrectAlmostVHLines"] = options.AutoCorrectAlmostVHLines,
                     ["colorMode"] = options.ColorMode.ToString(), ["importUnit"] = options.Unit.ToString(),
                     ["customScale"] = options.CustomScale, ["totalTransformScale"] = imported.GetTotalTransform().Scale,
                     ["targetMode"] = directSheetImport ? "direct_sheet_import" : "view_then_sheet",
@@ -206,7 +217,7 @@ namespace RevitBridge.Handlers
                 };
             });
             result["status"] = OperatorNativeTransactionExecution.OutcomeStatus(result, "Success");
-            return Task.FromResult<object>(result);
+            return result;
         }
 
         private static ViewSheet? ResolveSheet(Document doc, long? sheetViewId, string sheetNumber)

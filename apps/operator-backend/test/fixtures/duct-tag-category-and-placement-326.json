@@ -1,0 +1,216 @@
+{
+  "subject": {
+    "native_class": "Duct",
+    "category_name": "Ducts",
+    "category_token": "OST_DuctCurves",
+    "id": 1460134,
+    "independent_summary": "Retained326 independent-subject.json"
+  },
+  "notice": "Exact retained326 native category rollback and independently discarded obstructed leader. Negative history; never count as delivered tags.",
+  "cases": [
+    {
+      "payload": {
+        "success": false,
+        "transaction": {
+          "status": "rolled_back",
+          "committed": false,
+          "modified_element_ids": [],
+          "affected_element_ids": [],
+          "added_element_ids": [],
+          "deleted_element_ids": []
+        },
+        "error": "Tag category visibility could not be ensured: A single supported target tag category is required to ensure visibility.",
+        "changeTracking": {
+          "documentChangedObserved": false,
+          "exhaustiveChangeInventory": false,
+          "eventCount": 0,
+          "matchingEventCount": 0,
+          "distinctWrapperMatchCount": 0,
+          "captureFailureCount": 0
+        },
+        "applied": false,
+        "transactionStages": [
+          {
+            "transaction": {
+              "status": "rolled_back",
+              "committed": false,
+              "modified_element_ids": [],
+              "affected_element_ids": [],
+              "added_element_ids": [],
+              "deleted_element_ids": []
+            },
+            "success": false,
+            "error": "Tag category visibility could not be ensured: A single supported target tag category is required to ensure visibility.",
+            "changeTracking": {
+              "documentChangedObserved": false,
+              "exhaustiveChangeInventory": false,
+              "eventCount": 0,
+              "matchingEventCount": 0,
+              "distinctWrapperMatchCount": 0,
+              "captureFailureCount": 0
+            }
+          }
+        ],
+        "status": "Blocked"
+      },
+      "input": {
+        "method": "POST",
+        "path": "/revit/tag-elements",
+        "body": {
+          "viewId": 1395555,
+          "elementIds": [
+            1460134
+          ],
+          "tagFamilyName": "Duct Size Tag",
+          "tagTypeName": "Duct Size Tag",
+          "onlyUntagged": true,
+          "addLeader": true,
+          "orientation": "horizontal",
+          "placementMode": "geometry_aware",
+          "placementProfile": "mep",
+          "maxRepairAttempts": 3,
+          "max": 1,
+          "dryRun": false
+        }
+      }
+    },
+    {
+      "payload": {
+        "status": "CommittedWithErrors",
+        "success": false,
+        "viewId": 1395555,
+        "targetCount": 1,
+        "taggedCount": 0,
+        "attemptedCount": 1,
+        "deferredCount": 0,
+        "deferredElementIds": [],
+        "continuationRequired": false,
+        "continuationReason": null,
+        "skippedAlreadyTagged": 0,
+        "skippedNoLocation": 0,
+        "errorCount": 1,
+        "unresolvedCategories": [],
+        "mappingWarnings": [],
+        "tagFamily": {
+          "status": "unsupported_target_categories",
+          "targetTagCategory": null,
+          "sourceTagCategory": null,
+          "sourceProjectPath": null,
+          "familyName": null,
+          "typeName": null,
+          "typeId": null,
+          "familyId": null,
+          "generatedFamilyPath": null,
+          "error": "Geometry-aware auto-loading requires targets from one supported tag category.",
+          "elementInventoryStatus": null,
+          "elementInventoryError": null,
+          "elementInventoryTotalCount": 0,
+          "elementInventoryTruncated": false,
+          "elementInventory": [],
+          "contentProfile": "none",
+          "contentSanitizationStatus": "not_requested",
+          "keptTextElements": [],
+          "removedTextElements": [],
+          "sourceCandidates": []
+        },
+        "tagVisibility": {
+          "Status": "not_requested",
+          "Requested": false,
+          "CategoryId": null,
+          "CategoryName": null,
+          "OwnerViewId": null,
+          "OwnerViewName": null,
+          "OwnerKind": null,
+          "WasHidden": false,
+          "IsHidden": false,
+          "Changed": false,
+          "Error": null
+        },
+        "placementMode": "geometry_aware",
+        "placementProfile": "mep",
+        "geometry": {
+          "evaluatedCount": 1,
+          "collisionFreeCount": 0,
+          "repairedCount": 1,
+          "unresolvedCollisionCount": 1,
+          "leaderAppliedCount": 0,
+          "actualLeaderReadbackCount": 0,
+          "predictedLeaderFallbackCount": 0,
+          "unavailableLeaderGeometryCount": 0,
+          "leaderCrossingCount": 0,
+          "leaderProtectedCrossingCount": 1
+        },
+        "tagIds": [],
+        "tags": [],
+        "tagReadback": [],
+        "errors": [
+          {
+            "elementId": 1460134,
+            "failureKind": "tag_unresolved_leader_collision",
+            "error": "No professionally clear tag/leader position remained after 3 bounded attempts. The unresolved tag was removed."
+          }
+        ],
+        "transaction": {
+          "status": "committed",
+          "committed": true,
+          "modified_element_ids": [],
+          "affected_element_ids": [],
+          "added_element_ids": [],
+          "deleted_element_ids": []
+        },
+        "changeTracking": {
+          "documentChangedObserved": true,
+          "exhaustiveChangeInventory": true,
+          "eventCount": 1,
+          "matchingEventCount": 1,
+          "distinctWrapperMatchCount": 1,
+          "captureFailureCount": 0
+        },
+        "applied": true,
+        "transactionStages": [
+          {
+            "transaction": {
+              "status": "committed",
+              "committed": true,
+              "modified_element_ids": [],
+              "affected_element_ids": [],
+              "added_element_ids": [],
+              "deleted_element_ids": []
+            },
+            "success": false,
+            "error": null,
+            "changeTracking": {
+              "documentChangedObserved": true,
+              "exhaustiveChangeInventory": true,
+              "eventCount": 1,
+              "matchingEventCount": 1,
+              "distinctWrapperMatchCount": 1,
+              "captureFailureCount": 0
+            }
+          }
+        ]
+      },
+      "input": {
+        "method": "POST",
+        "path": "/revit/tag-elements",
+        "body": {
+          "viewId": 1395555,
+          "elementIds": [
+            1460134
+          ],
+          "tagFamilyName": "Duct Size Tag",
+          "tagTypeName": "Duct Size Tag",
+          "onlyUntagged": true,
+          "addLeader": true,
+          "orientation": "horizontal",
+          "placementMode": "geometry_aware",
+          "placementProfile": "mep",
+          "ensureTagCategoryVisible": false,
+          "maxRepairAttempts": 3,
+          "max": 1,
+          "dryRun": false
+        }
+      }
+    }
+  ]
+}

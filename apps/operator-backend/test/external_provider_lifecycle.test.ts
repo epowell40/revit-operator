@@ -87,8 +87,11 @@ test("external provider admission, drain, usage, and pause use the canonical ass
     assert.equal(Object.values(snapshot().provider_calls)[0]!.usage!.total_tokens, 17);
     assert.equal(Object.values(snapshot().provider_calls)[0]!.usage!.cached_input_tokens, 8);
     controlAssignmentExecutionV2({ binding, command_id: "pause", expected_command_id: null, action: "pause" });
+    const pausedVersion = snapshot().assignment_version;
     await assert.rejects(executeExternalProviderCallV2(options), /admission_denied/);
     assert.equal(invokes, 1);
+    assert.equal(snapshot().assignment_version, pausedVersion, "Pause is not a budget or runtime failure");
+    assert.equal(snapshot().terminal, false);
     controlAssignmentExecutionV2({ binding, command_id: "resume", expected_command_id: "pause", action: "resume" });
     const failure = Error("upstream failed without usage");
     await assert.rejects(executeExternalProviderCallV2({ ...options, invoke: async () => { throw failure; } }), error => error === failure);
@@ -96,7 +99,9 @@ test("external provider admission, drain, usage, and pause use the canonical ass
     assert.equal(Object.values(snapshot().provider_calls).filter(call => call.success === false).length, 1);
     assert.equal(Object.values(snapshot().provider_calls).find(call => call.success === false)!.usage, undefined,
       "missing usage must never become zero usage");
+    const beforeForeignVersion = snapshot().assignment_version;
     await assert.rejects(executeExternalProviderCallV2({ ...options, binding: { ...binding, generation: 9 } }), /binding_stale/);
+    assert.equal(snapshot().assignment_version, beforeForeignVersion, "foreign generation cannot settle another task");
     const exhaustedReceipt = createOpenAiModelCallReceipt({ route: "desktop_computer", requested_model: "gpt-6.1-sol",
       reasoning_effort: "medium", started_at_utc: new Date().toISOString(), duration_ms: 8,
       response: { id: "budget-receipt", status: "completed", model: "gpt-6.1-sol",
@@ -104,6 +109,16 @@ test("external provider admission, drain, usage, and pause use the canonical ass
     await executeExternalProviderCallV2({ ...options, invoke: async () => "budget response", receipt: () => exhaustedReceipt });
     await assert.rejects(executeExternalProviderCallV2(options), /admission_denied:blocked/);
     assert.equal(invokes, 1, "exhausted token budget stops the next network call");
+    assert.equal(snapshot().terminal, true, "the host admission stop must be durable before the owner catches the error");
+    assert.equal(snapshot().outcome, "blocked");
+    assert.equal(snapshot().terminal_reason, "token_budget_exhausted");
+    const version = snapshot().assignment_version;
+    const caught = settleAssignmentKernelExecutionFailureV2({ binding, failure_id: "owner-catch-after-admission",
+      error_class: "runtime", phase: "provider_turn" });
+    assert.equal(caught.disposition, "terminal_preserved");
+    assert.equal(caught.snapshot.assignment_version, version, "generic catch cannot replace the authoritative budget stop");
+    assert.equal(caught.snapshot.terminal_reason, "token_budget_exhausted");
+    assert.equal(caught.snapshot.execution_failure_ids.length, 0);
   } finally {
     if (previous === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT; else process.env.OPERATOR_WORKSPACE_ROOT = previous;
     __testOnlyResetGoalListCache();

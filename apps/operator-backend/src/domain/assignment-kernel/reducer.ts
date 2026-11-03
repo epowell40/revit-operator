@@ -4,6 +4,7 @@ import { defaultAssignmentWorkBudgetV2, allocateAuthenticatedFollowupV1 } from "
 import { USER_FOLLOWUP_ALLOCATION_V1 } from './user_followup_allocation.js';
 import { familyCapacityRetryV2 } from "./family_capacity_retry.js";
 import { preDispatchReadRetryV2 } from './pre_dispatch_read_retry.js';
+import { committedReadRefreshV2,committedDocumentReadRefreshV2 } from './committed_read_refresh.js';
 import { recordWorkPlanLocationV2 } from './work_plan_location.js';
 import { retainAdvisoryFollowupsV2, dispositionAdvisoryFollowupV2 } from "./advisory_followups.js";
 import { applyAssignmentExecutionControlV2, assertProviderUsageOperationAdmissionV1, validateProviderUsageHoldV1 } from "./provider_usage_hold.js";
@@ -68,7 +69,9 @@ export function assertAdvisoryCheckpointContinuationV1(snapshot: AssignmentSnaps
     "advisory_continuation_input_pending", "Other execution-critical answers are still required.");
   kernelAssertV2(!snapshot.progress_blocker && !snapshot.provider_budget_exhausted && !snapshot.provider_usage_hold && snapshot.execution_failure_ids.length === 0,
     "advisory_continuation_execution_blocked", "A checkpoint cannot clear execution failure or budget stops.");
-  const candidate = allocateNewWork ? allocateAuthenticatedFollowupV1(snapshot,continuation.command_id,now) : snapshot;
+  kernelAssertV2(continuation.resource_renewal===undefined||allocateNewWork,'advisory_resource_renewal_decision_invalid',
+    'Explicit resource renewal requires an authenticated work-allocation decision.');
+  const candidate = allocateNewWork ? allocateAuthenticatedFollowupV1(snapshot,continuation.command_id,now,continuation.resource_renewal) : snapshot;
   const budget = advisoryWorkBudget(candidate);
   kernelAssertV2(Object.keys(snapshot.provider_calls).length < budget.max_provider_calls
     && Object.keys(snapshot.operations).length < budget.max_operations
@@ -399,6 +402,18 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
       kernelAssertV2(correction?.retry_of_operation_id===operation.retry_of_operation_id,
         'operation_pre_dispatch_read_retry_invalid','Retry requires an unused, settled native non-dispatch of the same verification read and unchanged committed subject.');
     }
+    if(operation.retry_basis==='committed_target_read'){
+      const refresh=committedReadRefreshV2(snapshot,operation);
+      kernelAssertV2(refresh?.retry_of_operation_id===operation.retry_of_operation_id
+        &&refresh?.retry_after_operation_id===operation.retry_after_operation_id,
+        'operation_committed_read_refresh_invalid','Inspection refresh requires an unused later native commit on an exact declared target.');
+    }
+    if(operation.retry_basis==='committed_document_read'){
+      const refresh=committedDocumentReadRefreshV2(snapshot,operation);
+      kernelAssertV2(refresh?.retry_of_operation_id===operation.retry_of_operation_id
+        &&refresh?.retry_after_operation_id===operation.retry_after_operation_id,
+        'operation_committed_document_read_refresh_invalid','Read refresh requires an unused later native commit to the same bound document. It is not write or completion authority.');
+    }
     if (operation.retry_basis === "family_session_capacity_released") {
       const correction = familyCapacityRetryV2(snapshot, operation);
       kernelAssertV2(correction?.retry_of_operation_id === operation.retry_of_operation_id
@@ -423,7 +438,7 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
   } else {
     kernelAssertV2(!operation.retry_basis, "operation_retry_basis_unbound", "Retry basis requires a predecessor operation.");
   }
-  kernelAssertV2(!operation.retry_after_operation_id || operation.retry_basis === "committed_target_change" || operation.retry_basis === "family_session_capacity_released",
+  kernelAssertV2(!operation.retry_after_operation_id || operation.retry_basis === "committed_target_change" || operation.retry_basis === "family_session_capacity_released" || operation.retry_basis === "committed_target_read" || operation.retry_basis === 'committed_document_read',
     "operation_retry_change_unbound", "A committed-change reference requires its typed retry basis.");
   if (operation.purpose === "verification") {
     const subject = operation.verification_of_operation_id
@@ -1062,7 +1077,7 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
           assertAdvisoryCheckpointContinuationV1(snapshot, event.review_id, event.continuation!, event.occurred_at, false, allocateNewWork);
           // The immutable proposal remains in its original review_requested event.
           // Only the pending projection changes; identity, controls and usage do not.
-          snapshot = { ...(allocateNewWork ? allocateAuthenticatedFollowupV1(snapshot,event.continuation!.command_id,event.occurred_at) : snapshot), completion_proposal: undefined };
+          snapshot = { ...(allocateNewWork ? allocateAuthenticatedFollowupV1(snapshot,event.continuation!.command_id,event.occurred_at,event.continuation!.resource_renewal) : snapshot), completion_proposal: undefined };
         } else kernelAssertV2(event.continuation === undefined, "advisory_continuation_decision_invalid", "Continuation requires its versioned decision.");
         snapshot = { ...snapshot, pending_review_ids: snapshot.pending_review_ids.filter((id) => id !== event.review_id) };
         break;

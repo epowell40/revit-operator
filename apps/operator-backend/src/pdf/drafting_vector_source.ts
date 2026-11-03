@@ -212,12 +212,20 @@ function assertPlan(plan:DraftingVectorSource,expected:string){
 }
 
 /** Whole source records are paged; never silently truncate coordinates or text. */
-export function pageDraftingVectorSource(plan:DraftingVectorSource,expectedPlanSha256:string,section:"contours"|"text"|"clips",offset:number,limit:number,filterRegion?:PaperRegion){
+export function pageDraftingVectorSource(plan:DraftingVectorSource,expectedPlanSha256:string,section:"contours"|"contour_index"|"text"|"clips",offset:number,limit:number,filterRegion?:PaperRegion){
   assertPlan(plan,expectedPlanSha256);
   if(!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(limit)||limit<1||limit>200)throw Error("Whole-record page bounds invalid");
-  if(!["contours","text","clips"].includes(section))throw Error("Unknown vector source section");
+  if(!["contours","contour_index","text","clips"].includes(section))throw Error("Unknown vector source section");
   if(filterRegion&&(!Array.isArray(filterRegion)||filterRegion.length!==4||!filterRegion.every(finite)||filterRegion[0]>=filterRegion[2]||filterRegion[1]>=filterRegion[3]||filterRegion[0]<plan.region[0]||filterRegion[1]<plan.region[1]||filterRegion[2]>plan.region[2]||filterRegion[3]>plan.region[3]))throw Error("Filter region must be finite, nonempty and within inspected source region");
-  const all=section==="text"?plan.text:section==="clips"?plan.clips:plan.paths.flatMap(p=>p.contours.map(c=>({pathId:p.id,operatorIndex:p.operatorIndex,paint:p.paint,style:p.style,...c})));
+  const all=section==="text"?plan.text:section==="clips"?plan.clips:plan.paths.flatMap(p=>p.contours.map(c=>{
+    if(section!=="contour_index")return{pathId:p.id,operatorIndex:p.operatorIndex,paint:p.paint,style:p.style,...c};
+    // A discovery index, never a classification, selection, clipped path or native plan.
+    const commandCounts={move:0,line:0,close:0,cubic_bezier:0};
+    for(const command of c.commands)commandCounts[command.kind]++;
+    return{id:c.id,pathId:p.id,conservativeBounds:c.conservativeBounds,commandCount:c.commands.length,commandCounts,
+      paint:p.paint,lineWidth:p.style.lineWidth,strokeRgb:p.style.strokeRgb,fillRgb:p.style.fillRgb,
+      dash:p.style.dash,clipIds:p.style.clipIds,intersectsRegion:c.intersectsRegion,crossesRegion:c.crossesRegion};
+  }));
   const records=all.filter(record=>!filterRegion||("conservativeBounds" in record?overlaps(record.conservativeBounds,filterRegion):record.contours.some(c=>overlaps(c.conservativeBounds,filterRegion))));
   if(offset>records.length)throw Error("Source page offset exceeds record count");
   return {sourceSha256:plan.sourceSha256,planSha256:plan.planSha256,page:plan.page,sourceLabel:plan.sourceLabel,sourceSheet:plan.sourceSheet,region:plan.region,filterRegion:filterRegion??null,section,sourceRecordCount:all.length,total:records.length,offset,records:records.slice(offset,offset+limit),nextOffset:offset+limit<records.length?offset+limit:null,nativeWriteAllowed:false as const};

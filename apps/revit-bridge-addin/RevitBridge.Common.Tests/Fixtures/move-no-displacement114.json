@@ -1,0 +1,54 @@
+{
+  "request": {
+    "ids": [
+      1456396
+    ],
+    "mode": "vector",
+    "vectorX": 0,
+    "vectorY": -0.3333333333333333,
+    "vectorZ": 0,
+    "dryRun": false,
+    "behavior": "allOrNothing",
+    "options": {
+      "failOnPinned": true
+    }
+  },
+  "snapshots": [
+    {
+      "id": 1456396,
+      "before": {
+        "kind": "LocationPoint",
+        "pointXyz": [
+          -22.23958333333284,
+          28.406250000000053,
+          67.83333333333216
+        ],
+        "rotationRadians": 3.141592653589791,
+        "rotationDegrees": 179.99999999999986
+      },
+      "after": {
+        "kind": "LocationPoint",
+        "pointXyz": [
+          -22.23958333333284,
+          28.406250000000053,
+          67.83333333333216
+        ],
+        "rotationRadians": 3.141592653589791,
+        "rotationDegrees": 179.99999999999986
+      }
+    }
+  ],
+  "source": "Exact original114 native move receipt; no reconstructed locations",
+  "contentHash": "sha256:ada8c76444d3121d875a6bf5b54497876659f634859847937c337b37d433babb",
+  "modifiedIds": [
+    101014,
+    669230,
+    1329345,
+    1357215,
+    1357222,
+    1456396,
+    1706379,
+    1710053,
+    1710065
+  ]
+}

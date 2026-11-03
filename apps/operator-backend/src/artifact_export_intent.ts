@@ -20,10 +20,17 @@ function requestedFileExport(userText: string, kind: "workbook" | "pdf" | "docum
     // overwrite a source, or save through an arbitrary native operation.
     if (/\b(?:do not|don't|dont|never)\s+(?:\w+\s+){0,3}save\b[^.!?;\n]{0,60}\b(?:copy|as|model|project|document|rvt)\b/i.test(text)
         || /\bwithout\s+saving\b/i.test(text)) return false;
-    return /(?:^|[.!?;]\s*|\bthen\s+)(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?save\s+(?:a\s+(?:separate\s+|new\s+)?copy|as)\b[^!?;\n]*\.rvt\b/i.test(text);
+    return /(?:^|[.!?;]\s*|\bthen\s+)(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?save\s+(?:a\s+(?:separate\s+|new\s+)?copy|as)\b[^!?;\n]*\.rvt\b/i.test(text)
+      // A destination commonly follows "at:" on the next line. This is an
+      // explicit native document-copy file request, not element-edit authority.
+      || /(?:^|[.!?;]\s*|\bthen\s+)(?:please\s+)?(?:create|make)\s+a\s+(?:(?:separate|new|reviewed)\s+){0,3}copy\s+of\s+(?:the\s+)?(?:(?:currently|current|active|open)\s+){0,3}(?:revit\s+)?(?:model|project|document)\s+(?:at|to)\s*:?\s*["']?(?:[a-z]:[\\/]|\\\\)[^!?;\r\n]{1,1024}\.rvt\b/i.test(text);
   }
   const artifact = kind === "pdf" ? "pdfs?" : "excel|xlsx|workbook|spreadsheet";
-  return new RegExp("(?:^|[.!?;,]\\s*|\\bthen\\s+)(?:(?:for|using|from|with|in)\\s+[^.!?;\\n,]{1,100},\\s*)?(?:please\\s+)?(?:(?:can|could|would|will)\\s+you\\s+)?(?:prepare|create|make|produce|generate|write|save|export)\\b[^.!?;\\n]{0,180}\\b(?:" + artifact + ")\\b", "i").test(text);
+  // "Print a PDF" requests a file, not permission to operate a physical
+  // printer or publish another artifact type. Keep the existing file limits.
+  if (kind === "pdf" && /\b(?:do not|don't|dont|never)\s+(?:\w+\s+){0,3}print\b[^.!?;\n]{0,100}\bpdfs?\b/i.test(text)) return false;
+  const verbs = "prepare|create|make|produce|generate|write|save|export" + (kind === "pdf" ? "|print" : "");
+  return new RegExp("(?:^|[.!?;,]\\s*|\\bthen\\s+)(?:(?:for|using|from|with|in)\\s+[^.!?;\\n,]{1,100},\\s*)?(?:please\\s+)?(?:(?:can|could|would|will)\\s+you\\s+)?(?:" + verbs + ")\\b[^.!?;\\n]{0,180}\\b(?:" + artifact + ")\\b", "i").test(text);
 }
 
 export function requestedWorkbookExport(userText: string): boolean {

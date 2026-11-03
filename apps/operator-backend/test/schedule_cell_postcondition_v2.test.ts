@@ -8,6 +8,22 @@ import { scheduleCellNativeReadbackV2 } from './fixtures/schedule_cell_readback_
 const native: any = scheduleCellNativeReadbackV2;
 const request={targetField:'Current Rating',rowField:'Name',rowKey:'MAIN1',value:'1600 A'},ids=['element_id:1662159'];
 const clone=()=>structuredClone(native);
+
+test('447 exact plural native parameter response verifies the same affected schedule-backed instance',()=>{
+ const f=JSON.parse(fs.readFileSync('test/fixtures/schedule-cell-comments-read447.json','utf8').replace(/^\uFEFF/,''));
+ assert(compare(f.input,f.native_read,f.affected));
+ for(const mutate of [(p:any)=>p.items=[],(p:any)=>p.items.push(structuredClone(p.items[0])),
+  (p:any)=>p.items[0].id++,(p:any)=>p.items[0].parameters.Mark='OTHER',
+  (p:any)=>p.items[0].parameterDetails.find((v:any)=>v.name==='Comments').valueString='OTHER',
+  (p:any)=>p.items[0].parameterDetails.push(structuredClone(p.items[0].parameterDetails[0])),
+  (p:any)=>p.items[0].found=false,(p:any)=>p.items[0].error='native read failed',
+  (p:any)=>p.truncated=true,(p:any)=>p.itemsComplete=false,(p:any)=>p.ok=false,
+  (p:any)=>p.id=p.items[0].id]){
+  const p=structuredClone(f.native_read);mutate(p);assert.equal(compare(f.input,p,f.affected),false,mutate.toString());
+ }
+ for(const p of [{request:f.native_read},{diagnostics:f.native_read},{items:'invalid'},{items:[null]}])assert.equal(compare(f.input,p,f.affected),false);
+ assert.equal(compare(f.input,f.native_read,[]),false);
+});
 test('exact retained MAIN1 native target/row/field/formatted value is demonstrable',()=>assert(compare(request,native,ids)));
 test('wrong target, wrong row and matching number on another field never pass',()=>{
  assert(!compare(request,{...clone(),id:1662160},ids));assert(!compare({...request,rowKey:'MAIN2'},native,ids));

@@ -26,7 +26,8 @@ test("interrupted proposal or backend safety rejection is never automatically re
 });
 test("tool labels claims unverified and cannot accept a model-selected assignment identity",()=>{
  assert.match(WORK_REPORT_TOOL.description,/unverified/);assert.equal(WORK_REPORT_TOOL.parameters.additionalProperties,false);
- assert.deepEqual(Object.keys(WORK_REPORT_TOOL.parameters.properties),["claimed_completed","remaining_work","uncertainties"]);
+ assert.deepEqual(Object.keys(WORK_REPORT_TOOL.parameters.properties),["claimed_completed","remaining_work","uncertainties","written_findings"]);
+ assert.equal(WORK_REPORT_TOOL.parameters.properties.written_findings.maxLength,8000);
 });
 
 test("only retained backend advisory proposal ends the turn with explicitly unverified prose",()=>{

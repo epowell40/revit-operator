@@ -15,6 +15,103 @@ namespace RevitBridge.Common.Tests
         private const string Candidate22Query = "project-wide element inventory by category grouped by family and type complete count air terminals";
 
         [Fact]
+        public void SheetImageDiscoveryDoesNotRecommendUnsupportedSpatialFrameMapping()
+        {
+            var image = Assert.Single(OperatorToolManifest.Tools, t => t.Path == "/revit/export-image");
+            var frame = Assert.Single(OperatorToolManifest.Tools, t => t.Path == "/revit/export-view-frame");
+            Assert.Contains("DrawingSheet", image.Description);
+            Assert.Contains("not pixel-to-model", image.Description);
+            Assert.Contains("DrawingSheet", frame.Description);
+            Assert.Contains("not supported", frame.Description);
+            Assert.Contains("/revit/export-image", frame.Description);
+            var capabilities = File.ReadAllText(Path.Combine(FindRevitBridgeAddinRoot(), "RevitBridge", "Operator", "OperatorCapabilities.cs"));
+            Assert.Contains("capture_current_sheet_or_view = \"/revit/export-image\"", capabilities);
+            Assert.DoesNotContain("capture_current_sheet_or_view = \"/revit/export-view-frame\"", capabilities);
+            var handler = File.ReadAllText(Path.Combine(FindRevitBridgeAddinRoot(), "RevitBridge.Logic", "Handlers", "Selection", "ExportViewFrameHandler.cs"));
+            Assert.Contains("!SelectionUtil.IsSupported2dView(view)", handler);
+            Assert.Contains("/revit/export-image", handler);
+        }
+
+        [Fact]
+        public void LaterEditsToAuthorizedResultHaveDiscoverableTrackedCheckpointSave()
+        {
+            var tool = Assert.Single(OperatorToolManifest.Tools, t => t.Path == "/revit/save-as");
+            Assert.Contains("same authorized result path", tool.Description);
+            Assert.Contains("overwrite=true", tool.Description);
+            Assert.Contains("new committed edits", tool.Description);
+            Assert.Contains("overwrite=false", tool.Description);
+            Assert.Contains("never the original input or an unrelated file", tool.Description);
+            Assert.Contains("not a retry of an uncertain save", tool.Description);
+            Assert.Contains("inspect-exported-files", tool.Description);
+            Assert.DoesNotContain("POST /revit/save ", tool.Description);
+        }
+
+        [Theory]
+        [InlineData("linked document query elements rooms equipment link instance", 2)]
+        [InlineData("sheet detail viewport geometry; linked model inventory; find elements include linked document equipment controls", 3)]
+        [InlineData("inspect linked equipment in a room using transformed model bounds", 2)]
+        public void LinkedSpatialInventoryIsDiscoverableInBoundedSearch(string query, int max)
+        {
+            var ranked = OperatorToolManifest.Tools
+                .Select(tool => new { Tool = tool, Score = OperatorToolSearchRanking.Score(query,
+                    tool.Path, tool.Title, tool.Group, tool.Description, tool.Example, tool.Method) })
+                .Where(candidate => candidate.Score > 0)
+                .OrderByDescending(candidate => candidate.Score)
+                .ThenBy(candidate => candidate.Tool.RiskLevel)
+                .ThenBy(candidate => candidate.Tool.Path, StringComparer.Ordinal)
+                .Take(max).ToList();
+            Assert.Contains(ranked, candidate => candidate.Tool.Path == "/revit/export-visible-elements");
+        }
+
+        [Fact]
+        public void LinkedInventoryDiscoveryRetainsItsSpatialAndCompletenessLimits()
+        {
+            var tool = Assert.Single(OperatorToolManifest.Tools, t => t.Path == "/revit/export-visible-elements");
+            Assert.Contains("includeLinked", tool.Description);
+            Assert.Contains("modelBounds", tool.Description);
+            Assert.Contains("best-effort", tool.Description);
+            Assert.Contains("not exact room membership or project-wide absence proof", tool.Description);
+            Assert.DoesNotContain("page, filter", tool.Description);
+        }
+
+        [Theory]
+        [InlineData("/revit/find-elements")]
+        [InlineData("/revit/export-visible-elements")]
+        public void PartialInventoryDocumentationPointsToExistingSourceInventoryWithoutClaimingAbsence(string route)
+        {
+            var tool = Assert.Single(OperatorToolManifest.Tools, item => item.Path == route);
+            Assert.Contains("POST /revit/quantify", tool.Description);
+            Assert.Contains("scope=links or both", tool.Description);
+            Assert.Contains("sourceCoverage", tool.Description);
+            Assert.Contains("direct source-document instances", tool.Description);
+            Assert.Contains("not room membership or hidden/nested completeness", tool.Description);
+            Assert.Equal(OperatorActionRisk.Low, tool.RiskLevel);
+            var quantify = Assert.Single(OperatorToolManifest.Tools, item => item.Path == "/revit/quantify");
+            Assert.Contains("incomplete coverage cannot prove absence", quantify.Description);
+            Assert.Contains("not unshared family-definition contents or room membership", quantify.Description);
+        }
+
+        [Fact]
+        public void McpLinkedInventoryFixtureMatchesTheCompleteNativeProductMetadata()
+        {
+            using var fixture = JsonDocument.Parse(File.ReadAllText(Path.Combine(FindRepositoryRoot(),
+                "packages", "revit-tool-search-ranking-v3", "linked-spatial-inventory.v1.json")));
+            Assert.Equal("operator.linked_spatial_discovery.v1", fixture.RootElement.GetProperty("schema").GetString());
+            var rows = fixture.RootElement.GetProperty("candidates").EnumerateArray().ToList();
+            Assert.Equal(OperatorToolManifest.Tools.Count, rows.Count);
+            foreach (var tool in OperatorToolManifest.Tools)
+            {
+                var row = Assert.Single(rows, r => r.GetProperty("method").GetString() == tool.Method
+                    && r.GetProperty("path").GetString() == tool.Path);
+                Assert.Equal(tool.Title, row.GetProperty("title").GetString());
+                Assert.Equal(tool.Description, row.GetProperty("description").GetString());
+                Assert.Equal(tool.Example ?? "", row.GetProperty("example").GetString());
+                Assert.Equal(tool.Group, row.GetProperty("group").GetString());
+                Assert.Equal(tool.RiskLevel.ToString().ToLowerInvariant(), row.GetProperty("risk").GetString());
+            }
+        }
+
+        [Fact]
         public void RouteDocumentationExplainsExactOneSidedEndpointPrecedence()
         {
             foreach (var route in new[] { "/revit/create-mep-route", "/revit/mep-route-workflow" })
@@ -105,10 +202,11 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
-        public void HistoricalQuantityRankingCannotReadmitAnExcludedProductRoute()
+        public void QuantityRankingCannotReadmitExcludedVisualization()
         {
-            Assert.False(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/quantify"));
-            Assert.DoesNotContain(OperatorToolManifest.Tools, tool => tool.Path == "/revit/quantify");
+            Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/quantify"));
+            Assert.False(OperatorSupportedToolInventory.IsSupportedTool("POST", "/revit/quantify-visualize"));
+            Assert.DoesNotContain(OperatorToolManifest.Tools, tool => tool.Path == "/revit/quantify-visualize");
             Assert.All(OperatorToolManifest.Tools, tool =>
                 Assert.True(OperatorSupportedToolInventory.IsSupportedTool(tool.Method, tool.Path)));
         }
@@ -127,9 +225,13 @@ namespace RevitBridge.Common.Tests
                 .ThenBy(candidate => candidate.Tool.RiskLevel)
                 .ThenBy(candidate => candidate.Tool.Path, StringComparer.Ordinal)
                 .ToList();
-            Assert.Equal("/revit/find-elements", ranked[0].Tool.Path);
-            Assert.Contains("itemsComplete is true", ranked[0].Tool.Description);
-            Assert.Contains("truncated result is not a complete inventory", ranked[0].Tool.Description);
+            Assert.Equal("/revit/quantify", ranked[0].Tool.Path);
+            Assert.Contains("sourceCoverage", ranked[0].Tool.Description);
+            Assert.Contains("incomplete coverage cannot prove absence", ranked[0].Tool.Description);
+            var find = ranked.Single(candidate => candidate.Tool.Path == "/revit/find-elements");
+            Assert.Contains("itemsComplete is true", find.Tool.Description);
+            Assert.Contains("truncated result is not a complete inventory", find.Tool.Description);
+            Assert.True(find.Score > ranked.Single(candidate => candidate.Tool.Path == "/revit/list-element-types").Score);
             Assert.True(ranked[0].Score > ranked.Single(candidate => candidate.Tool.Path == "/revit/list-element-types").Score);
         }
 

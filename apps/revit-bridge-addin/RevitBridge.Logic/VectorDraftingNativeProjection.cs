@@ -21,7 +21,7 @@ namespace RevitBridge.Logic
         public static object Check(Document doc, VectorDraftingStoredImport state, VectorDraftingOwnedPart part)
         {
             var plan = VectorDraftingImportState.Plan(state); var view = VectorDraftingImportState.View(doc, state);
-            var expected = plan.entities.Skip(part.Index * plan.layout.partSize).Take(plan.layout.partSize).ToArray();
+            var expected = VectorDraftingImportState.ExpectedPart(plan, state, part.Index);
             var issues = new List<object>(); int issueCount = 0, inspected = 0, simplifiedCubics = 0;
             void Issue(string sourceId, string reason) { issueCount++; if (issues.Count < 100) issues.Add(new { sourceId, reason }); }
             XYZ Point(double[] p) => view.Origin + view.RightDirection * (p[0] / 12 * view.Scale) + view.UpDirection * (p[1] / 12 * view.Scale);

@@ -164,7 +164,7 @@ export type ChatResponse = {
     request_hash: string;
     control_command_id: string | null;
     report: {kind: "scope_report" | "proposed_question"; claimed_completed: string[];
-      remaining_work: string[]; uncertainties: string[]; question?: string};
+      remaining_work: string[]; uncertainties: string[]; question?: string; user_facing_text?: string};
     evidence_ref: import("./evidence/evidence_ref.js").EvidenceRefV1;
     verified: false;
   }>;

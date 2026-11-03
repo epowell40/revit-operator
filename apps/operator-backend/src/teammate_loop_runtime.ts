@@ -2,7 +2,7 @@ import {checkedTeammateVerificationAssertionV2,type TeammateVerificationAssertio
 import { resultSucceeded, mcpResultSucceeded } from "./teammate_result_status.js";
 import {createDesktopHelperCallLeaseV1,type DesktopHelperCallLeaseV1} from './brains/desktop_helper_budget.js';
 import {getAssignmentKernelSnapshotV2} from './assignments/assignment_kernel_v2_store.js';
-import { reviewedTeammateNativeAliasRoute } from './teammate_native_aliases.js';
+import { reviewedTeammateNativeAliasRequest } from './teammate_native_aliases.js';
 import { formatTeammateTurnContractValue, requestedPreviewOperation } from "./teammate_turn_contract_format.js";
 import { clearVerification, clearKnownNoEffectApply, markVerified, reconcileCanonicalFinalVerification, reconcileCanonicalOutstandingVerification, retainApplyArtifactReceipt } from "./teammate_verification_state.js";
 import type { OperationV2 } from "./domain/assignment-kernel/operation.js";
@@ -21,6 +21,8 @@ import { missingOpaqueMutationInputs, mutationIntentBlockReason } from "./teamma
 import { canonicalTeammateInputs, canonicalTeammateOperationScope, normalizedTeammateUserText as normalizedUserText, type TeammateTaskRequest } from "./teammate_assignment_inputs.js";
 import { expectedPostconditionValuesV2, observedPostconditionValuesV2, observedReadbackCallValuesV2 } from "./postcondition_verification_v2.js";
 import { createdViewIdsFromIdentitiesV2, duplicatedViewDetailingSatisfiedV2 } from "./verification/view_owned_detailing_v2.js";
+import {isReservedVectorPageContinuationV2} from './brains/committed_readback_reservations_v2.js';
+import type {CodexServerRequest} from './codex/app_server.js';
 import { nativeArtifactPostconditionV2 } from "./verification/native_artifact_contract_v2.js";
 import { hasRevitTurnContext } from "./revit_context_policy.js";
 import { isStandaloneAssistantRequest } from "./goals/standalone_assistant_request.js";
@@ -90,6 +92,7 @@ export type TeammateLoopState = {
   apply_action_id: string | null;
   apply_operation_id: string | null;
   verification_action_ids: string[];
+  stage_verification_start_index: number;
   apply_attempts: number;
   stage_apply_attempts: number;
   apply_succeeded: boolean;
@@ -371,7 +374,7 @@ export function buildTeammateTurnContract(req: TeammateTaskRequest): TeammateTur
   };
 }
 
-export function formatTeammateTurnContract(req: Pick<ChatRequest, "user_text" | "context">): string {
+export function formatTeammateTurnContract(req: TeammateTaskRequest): string {
   return formatTeammateTurnContractValue(buildTeammateTurnContract(req));
 }
 
@@ -499,8 +502,8 @@ function classifyMcpCall(toolValue: unknown, argsValue: unknown): PendingCall {
   const tool = `${toolValue || ""}`.trim();
   const args = objectValue(structuredActionBody(argsValue));
   if (tool === "revit_call_tool") return classifyPathCall(args.method, args.path, args.body);
-  const nativeRoute = reviewedTeammateNativeAliasRoute(tool);
-  if (nativeRoute) return classifyPathCall("POST", nativeRoute, args);
+  const nativeRequest = reviewedTeammateNativeAliasRequest(tool, args);
+  if (nativeRequest) return classifyPathCall("POST", nativeRequest.path, nativeRequest.body);
   const target_tokens = targetTokens(args);
   const principal_target_tokens = [...operationTargetSelectorV2({
     operation: { capability_id: tool, tool },
@@ -630,6 +633,7 @@ function stateFor(req: ChatRequest): TeammateLoopState {
     apply_action_id: null,
     apply_operation_id: null,
     verification_action_ids: [],
+    stage_verification_start_index: 0,
     apply_attempts: 0,
     stage_apply_attempts: 0,
     apply_succeeded: false,
@@ -663,7 +667,7 @@ function isContextFreeDocumentBootstrapCall(call: PendingCall): boolean {
   return call.effect === "apply" && (call.path === "revit_open_model" || call.path === "/revit/open-model");
 }
 
-function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
+function gateCall(state: TeammateLoopState, call: PendingCall, sameVerificationCohortPage=false): string | null {
   const contract = state.contract;
   if (call.effect === "interaction") return null;
   if(call.effect==="preview"&&contract.model_effect_limit==="read"
@@ -736,7 +740,8 @@ function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
   if ((call.effect === "read" || call.effect === "navigation")
       && state.stage_apply_attempts > 0
       && !state.verified
-      && state.verification_action_ids.length >= MAX_POST_APPLY_VERIFICATION_ACTIONS) {
+      && !sameVerificationCohortPage
+      && state.verification_action_ids.length - state.stage_verification_start_index >= MAX_POST_APPLY_VERIFICATION_ACTIONS) {
     return "post_apply_verification_attempt_budget_exhausted";
   }
   return null;
@@ -749,6 +754,9 @@ function registerPending(state: TeammateLoopState, actionId: string, call: Pendi
   if (call.effect === "discovery" && /(?:tool-doc|revit_tool_doc)$/.test(call.path)) state.tool_doc_calls += 1;
   if (call.effect === "preview") state.preview_action_ids.push(actionId);
   if (call.effect === "apply") {
+    // Keep cumulative read/action history, but bound verification of this
+    // admitted apply independently from earlier, already verified stages.
+    state.stage_verification_start_index = state.verification_action_ids.length;
     clearVerification(state);
     state.apply_artifact_receipt = undefined;
     state.apply_operation_id = null;
@@ -1152,13 +1160,15 @@ export function teammateDesktopHelperScopeForOwner(owner:object,turnId:unknown):
 export function teammateDesktopHelperCallLeaseForOwner(owner:object,turnId:unknown):DesktopHelperCallLeaseV1|null {return ownerState(owner,turnId)?.desktop_helper_call_lease??null;}
 
 export function guardTeammateMcpCall(owner: object, params: { tool?: unknown; arguments?: unknown; turnId?: unknown },
-  canonicalSnapshot?: AssignmentSnapshotV2 | null): TeammateMcpGate {
+  canonicalSnapshot?: AssignmentSnapshotV2 | null, hostReadback?:{token:unknown;request:CodexServerRequest}): TeammateMcpGate {
   const state = ownerState(owner, params.turnId);
   if (!state) return { allowed: false, message: "[teammate_loop_missing] No active host teammate-loop contract exists for this Revit call." };
   if (state.canonical_supervision_only && !canonicalSnapshot) return { allowed: false, message: "[assignment_kernel_v2_missing] Canonical-only supervision requires a current V2 snapshot." };
   if (canonicalSnapshot && !state.canonical_supervision_only) reconcileCanonicalOutstandingVerification(state, canonicalSnapshot);
   const call = classifyDocumentedMcpCall(state, params.tool, params.arguments);
-  const reason = state.canonical_supervision_only ? null : gateCall(state, call);
+  const continuation=call.effect==='read'&&hostReadback
+    ?isReservedVectorPageContinuationV2(hostReadback.token,owner,hostReadback.request,canonicalSnapshot??null):false;
+  const reason = state.canonical_supervision_only ? null : gateCall(state, call,continuation);
   if (reason) {
     const recoverableEvidenceRead = reason === "evidence_selection_already_available"
       || reason === "identical_evidence_retrieval_must_be_corrected";

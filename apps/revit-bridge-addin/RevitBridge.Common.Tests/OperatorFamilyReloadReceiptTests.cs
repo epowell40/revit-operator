@@ -19,7 +19,9 @@ namespace RevitBridge.Common.Tests
                 var result = OperatorAttemptSuccessfulSettlement.Classify(JsonNode.Parse(raw)!, "apply", "POST", path);
                 Assert.Equal("applied", result.EffectState);
                 Assert.Equal("native_receipt", result.EffectAuthority);
-                Assert.Equal(new[] { "element:42" }, result.AffectedTargetIdentities);
+                // Match the reviewed cross-language native ElementId namespace;
+                // "element:42" cannot bind to the controller's numeric id:42.
+                Assert.Equal(new[] { "element_id:42" }, result.AffectedTargetIdentities);
                 foreach (var flag in new[] { "native_load_returned", "project_readback_verified" })
                 {
                     var changed = JsonNode.Parse(raw)!; changed["family_reload_receipt"]![flag] = false;

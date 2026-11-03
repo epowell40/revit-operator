@@ -8,6 +8,26 @@ import {
   preflightKnownGenericToolBody
 } from "./genericToolPreflight.js";
 
+test('tracked saved-family verification passes the published native schema without opening ordinary file inspection',()=>{
+ const schema=JSON.parse(readFileSync(new URL('../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-requests.v1.json',import.meta.url),'utf8'))['/revit/inspect-exported-files'];
+ assert(schema,'the native published contract must carry the tracked family selector');
+ const contract={method:'POST',path:'/revit/inspect-exported-files',request_schema:schema};
+ const request={familyDocumentId:'f7147842b85b4920aaa15fd4e20999be',paths:['C:/OperatorWorkspace/artifacts/families/Underlined.rfa']};
+ for(const body of [request,{...request,familyDocumentId:request.familyDocumentId.toUpperCase()},
+  {...request,paths:['C:/OperatorWorkspace/artifacts/families/Underlined.RFA']},
+  {paths:['C:/OperatorWorkspace/All.pdf','C:/OperatorWorkspace/Table.xlsx']},
+  {paths:['C:/OperatorWorkspace/Saved.rvt']},{paths:['C:/OperatorWorkspace/Saved.rfa']}])
+  assert.equal(preflightKnownGenericToolBody(contract,body),null,JSON.stringify(body));
+ for(const body of [{},{paths:[]},{paths:['']},{paths:['   ']},
+  {...request,familyDocumentId:null},{...request,familyDocumentId:''},{...request,familyDocumentId:'not-a-tracked-guid'},
+  {...request,paths:[request.paths[0],request.paths[0]]},{...request,paths:['C:/OperatorWorkspace/All.pdf']},
+  {...request,saveChanges:true},{paths:request.paths,docId:request.familyDocumentId}])
+  assert(preflightKnownGenericToolBody(contract,body),JSON.stringify(body));
+ // A syntactically valid but foreign session is still subject to the native
+ // ownership check. Schema admission itself provides no session authority.
+ assert.equal(preflightKnownGenericToolBody(contract,{...request,familyDocumentId:'b'.repeat(32)}),null);
+});
+
 test('managed Word update uses the real native revision contract at MCP preflight',()=>{
  const schema=JSON.parse(readFileSync(new URL('../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-requests.v1.json',import.meta.url),'utf8'))['/revit/import-drawing-spec'];
  const contract={method:'POST',path:'/revit/import-drawing-spec',request_schema:schema};
@@ -267,6 +287,7 @@ test("Candidate 11 exact find-text-notes elementIds request is admitted by its o
         viewId: { type: "integer" },
         elementId: { type: "integer" },
         elementIds: { type: "array", maxItems: 500, items: { type: "integer" } },
+        preservationScheduleIds: { type: "array", maxItems: 32, items: { type: "integer" } },
         max: { type: "integer", minimum: 1, maximum: 500 }
       },
       required: []
@@ -277,6 +298,12 @@ test("Candidate 11 exact find-text-notes elementIds request is admitted by its o
     elementIds: [1478627],
     max: 10
   }), null);
+  assert.equal(preflightKnownGenericToolBody(contract, {
+    elementIds: [1478627], max: 1, preservationScheduleIds: [1420970,1422218]
+  }), null);
+  assert.deepEqual(preflightKnownGenericToolBody(contract, {
+    elementIds: [1478627], max: 1, preservationScheduleIds: Array.from({length:33},(_,i)=>i+1)
+  })?.invalid_fields,['body.preservationScheduleIds']);
 
   const invalid = preflightKnownGenericToolBody(contract, {
     elementIds: 1478627,

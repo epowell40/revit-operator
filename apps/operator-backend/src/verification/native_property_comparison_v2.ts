@@ -6,7 +6,7 @@ type Difference={subject:string;expected:string[];observed:string[];values_clipp
 export type NativePropertyComparisonV2={state:'matched'|'mismatch'|'incomplete'|'unavailable'|'unsupported';differences:Difference[];omitted:number};
 const record=(v:unknown):Record<string,any>=>v&&typeof v==='object'&&!Array.isArray(v)?v as Record<string,any>:{};
 function tokenParts(token:string):[string,string]|null {
- const m=/^(target_property:"(?:[^"\\]|\\.)*":[^:]+|native_view_property:\d+:[^:]+|native_view_phasing:\d+:(?:phase|phaseFilter):(?:id|name)|native_category_property:\d+:(?:OST_[A-Za-z0-9_]+|label:"(?:[^"\\]|\\.)*"):(?:halftone|lineWeight|color)):(.*)$/.exec(token);
+ const m=/^(target_property:"(?:[^"\\]|\\.)*":[^:]+|native_view_property:\d+:[^:]+|native_view_template:\d+:(?:name|none)|native_view_phasing:\d+:(?:phase|phaseFilter):(?:id|name)|native_category_property:\d+:(?:OST_[A-Za-z0-9_]+|id:[1-9]\d*|label:"(?:[^"\\]|\\.)*"):(?:halftone|lineWeight|color|detailLevel)):(.*)$/.exec(token);
  return m?[m[1]!,m[2]!]:null;
 }
 

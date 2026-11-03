@@ -106,6 +106,16 @@ test("exact hosted/production modes are always General Agent while non-product m
   assert.equal(getToolExposureRuntimeDecision({ REVIT_OPERATOR_MODE: "future" }).mode, "certified");
 });
 
+test("explicit local general profile exposes native code without a laboratory escape", () => {
+  for (const runtime of ["local", "self_hosted"]) {
+    const env = { REVIT_OPERATOR_MODE: runtime, OPERATOR_TOOL_EXPOSURE_PROFILE: "general" };
+    assert.equal(getToolExposureRuntimeDecision(env).mode, "general");
+    assert.equal(isMcpToolAliasExposed("operator_run_dynamic_revit_program", env), true);
+  }
+  for (const runtime of ["Local", "local ", "self-hosted"])
+    assert.equal(getToolExposureRuntimeDecision({ REVIT_OPERATOR_MODE: runtime, OPERATOR_TOOL_EXPOSURE_PROFILE: "general" }).mode, "certified");
+});
+
 test("authenticated hosted production always exposes the full General Agent even with stale profile overrides", () => {
   for (const runtimeMode of ["hosted", "production"] as const) {
     const env = {

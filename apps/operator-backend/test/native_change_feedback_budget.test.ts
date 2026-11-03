@@ -1,0 +1,14 @@
+import fs from'node:fs';import path from'node:path';import{pathToFileURL}from'node:url';import test from'node:test';import assert from'node:assert/strict';
+import{assertBoundedModelEvidencePayload}from'../src/evidence/model_context_budget.js';
+const modulePath=['../packages/operator-assistant-ui','../../packages/operator-assistant-ui'].map(p=>path.resolve(p,'native_change_observations.mjs')).find(p=>fs.existsSync(p))!;
+const{nativeChangeFeedbackModelOutput:project}=await import(pathToFileURL(modulePath).href);
+function observation(count:number){return{schema:'operator.native_document_changes.v1',authority:'observed_changes_only',processId:5,epoch:'epoch',documentSessionId:'doc',throughSequence:Math.ceil(count/64),retainedFromSequence:1,maxEvents:16,maxIdsPerEvent:64,events:Array.from({length:Math.ceil(count/64)},(_,i)=>({sequence:i+1,documentSessionId:'doc',observedAtUtc:'2026-10-22T20:00:00Z',operation:'TransactionCommitted',transactionNames:['Imported annotations'],transactionNamesTruncated:false,addedIds:Array.from({length:Math.min(64,count-i*64)},(_,j)=>1545000+i*64+j),modifiedIds:[],deletedIds:[],complete:true,unavailableReason:null}))};}
+for(const count of[0,183,256,1024])test(`native feedback ${count} IDs passes the actual model budget without proof or lost artifact identity`,()=>{
+ const p={schema:'revit-operator.evidence-projection.v1',evidence_id:'ev1_native',content_hash:'sha256:'+'a'.repeat(64),byte_count:100000,source:'native-context',trust_level:'untrusted_caller',key_facts:{long_context:'x'.repeat(5900)},key_counts:{},truncated:true};
+ const before={type:'function_call_output',call_id:'context',output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[p],omitted:0,retrieval:'Retrieve retained evidence by ID.'})},bytes=JSON.stringify(before),interval={before:observation(0),context:{process_id:5,document:{sessionId:'doc'},nativeChangeObservations:observation(count)}};
+ const output=project(before,interval,'ev1_native'),usage=assertBoundedModelEvidencePayload([output]),envelope=JSON.parse(output.output),projected=envelope.evidence_projections[0],feedback=projected.native_change_feedback;
+ assert.equal(usage.projection_count,1);assert(Buffer.byteLength(JSON.stringify(projected))<=8192);assert.equal(envelope.native_change_feedback,undefined);
+ assert.equal(projected.evidence_id,p.evidence_id);assert.equal(projected.content_hash,p.content_hash);assert.equal(projected.byte_count,p.byte_count);
+ assert.equal(feedback.postcondition_verified,false);assert.equal(feedback.actor_attribution,'not_established');assert.equal(feedback.source_evidence_id,p.evidence_id);assert.equal(feedback.needs_fresh_target_readback,true);
+ if(count>256)assert.equal(feedback.change_ids_complete,false);assert.equal(JSON.stringify(before),bytes,'Original evidence projection remains unchanged');
+});

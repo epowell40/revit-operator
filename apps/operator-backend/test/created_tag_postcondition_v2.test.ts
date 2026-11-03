@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import test from 'node:test';
 import {createHash} from 'node:crypto';
-import {createdTagReadbackMatchesV2,nativeCreatedTagReadTargetsV2,decodeNativeCreatedTagReadV2} from '../src/verification/created_tag_postcondition_v2.js';
+import {createdTagRequestV2,createdTagReadbackMatchesV2,nativeCreatedTagReadTargetsV2,decodeNativeCreatedTagReadV2} from '../src/verification/created_tag_postcondition_v2.js';
 import {verificationCapabilityAdmissionV2,operationTargetSelectorV2} from '../src/verification/verification_capability_admission_v2.js';
 import {createGoal,__testOnlyResetGoalListCache} from '../src/goals/service.js';
 import {createAssignmentKernelForGoalV2} from '../src/assignments/assignment_kernel_v2_factory.js';
@@ -13,6 +13,42 @@ import {createOperatorBackendAuth} from '../src/operator_backend_auth.js';
 import {canonicalJsonV2,deriveProgressGapsV2} from '../src/domain/assignment-kernel/index.js';
 import {controlAssignmentExecutionV2} from '../src/assignments/assignment_kernel_v2_controls.js';
 const retained=()=>JSON.parse(fs.readFileSync('test/fixtures/created-tag-readback-43.json','utf8'));
+const nativeLeader=(b:any)=>b.addLeader??(b.placementMode?.trim().toLowerCase()==='geometry_aware');
+
+test('creation cannot certify ignored existing-tag repair arguments',()=>{
+ for(const [field,value] of Object.entries({hasLeader:true,tagHeadPositionXyz:[1,2,3],leaderEndXyz:[1,2,3],leaderElbowXyz:[1,2,3],leaderEndCondition:'free'})){
+  const f=retained();f.input.body[field]=value;
+  assert.equal(createdTagRequestV2(f.input),null,field);
+ }
+});
+
+test('ordinary creation derives the native leader default without inventing a repair request',()=>{
+ for(const [mode,leader] of [[undefined,false],['offset',false],['geometry_aware',true]] as const){
+  const f=retained();delete f.input.body.addLeader;
+  if(mode===undefined)delete f.input.body.placementMode;else f.input.body.placementMode=mode;
+  assert.equal(createdTagRequestV2(f.input)?.hasLeader,leader);
+ }
+});
+
+test('retained296 mixed-mode request remains unverified despite a real committed tag',()=>{
+ const f=JSON.parse(fs.readFileSync('test/fixtures/created-tag-mixed-mode-296.json','utf8').replace(/^\uFEFF/,''));
+ assert.equal(f.applied.transaction.committed,true);
+ assert.deepEqual(f.applied.tagIds,[1542953]);
+ assert.equal(createdTagRequestV2(f.input),null);
+ const explicit=structuredClone(f.input);explicit.body.addLeader=true;
+ assert.equal(createdTagRequestV2(explicit),null,'Adding the missing leader flag cannot legitimize ignored repair geometry.');
+});
+
+test('native leader defaults retain explicit override and reject malformed values/modes',()=>{
+ for(const mode of [undefined,'offset','geometry_aware',' GEOMETRY_AWARE '])for(const leader of [true,false]){
+  const f=retained();f.input.body.addLeader=leader;f.input.body.placementMode=mode;
+  assert.equal(createdTagRequestV2(f.input)?.hasLeader,leader);
+ }
+ for(const value of ['true',0,1,{}]){const f=retained();f.input.body.addLeader=value;assert.equal(createdTagRequestV2(f.input),null);}
+ for(const value of ['somewhere',true,{}]){const f=retained();f.input.body.placementMode=value;assert.equal(createdTagRequestV2(f.input),null);}
+ const f=retained();f.input.body.addLeader=null;f.input.body.placementMode=null;
+ assert.equal(createdTagRequestV2(f.input)?.hasLeader,false);
+});
 
 test('retained49 native SpaceTag association, owner, type and orphan state can be verified separately from apply',()=>{
  const f=JSON.parse(fs.readFileSync('test/fixtures/created-space-tag-readback-49.json','utf8').replace(/^\uFEFF/,''));
@@ -56,7 +92,7 @@ function nativeRead(input:any,f:any){
  const nativeClass=spatial?.tagCategory==='Space Tags'?'Autodesk.Revit.DB.Mechanical.SpaceTag':spatial?'Autodesk.Revit.DB.Architecture.RoomTag':'Autodesk.Revit.DB.IndependentTag';
  const operations=input.body.operations.map((o:any)=>{
   if(o.target==='doc')return {id:o.id,op:o.op,member_id:o.memberId,target_type:'Autodesk.Revit.DB.Document',result_preview:o.args[0]===identity.id?identity:subject};
-  const value=o.property==='OwnerViewId'?{id:f.input.body.viewId}:o.property==='HasLeader'?f.input.body.addLeader:o.property==='TagOrientation'?'Horizontal'
+  const value=o.property==='OwnerViewId'?{id:f.input.body.viewId}:o.property==='HasLeader'?nativeLeader(f.input.body):o.property==='TagOrientation'?'Horizontal'
    :o.property==='IsOrphaned'?false:['Space','Room'].includes(o.property)?structuredClone(subject):o.memberId?.includes('GetTypeId')?{id:f.input.body.tagTypeId??f.applied.tagReadback[0].tagTypeId}:{deferred_enumeration:true};
   return {id:o.id,op:o.op,...(o.property?{property:o.property}:{member_id:o.memberId}),target_type:nativeClass,result_preview:value};
  });
@@ -71,12 +107,19 @@ test('retained43 later type change is not proof of the earlier creation; apply-l
 
 for(const tagKind of ['independent','Space','Room'] as const)
 for(const typeSelection of ['explicit','native_default'] as const)
+for(const leaderSelection of ['explicit','default_offset','default_geometry'] as const)
 for(const variant of ['exact','wrong_type','wrong_owner','wrong_subject','wrong_subject_unique_id','truncated','wrong_class','wrong_orientation','wrong_leader','read_failure','schema_rejected','paused','stale','foreign_authority','partial_apply','missing_created_inventory'] as const)
-test(`ordinary ${tagKind} ${typeSelection} tag creation ${variant}: independent native read validates created identity, subject, type and owner`,async()=>{
+test(`ordinary ${tagKind} ${typeSelection} ${leaderSelection} tag creation ${variant}: independent native read validates created identity, subject, type and owner`,async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-created-tag-')),previous=process.env.OPERATOR_WORKSPACE_ROOT;
  process.env.OPERATOR_WORKSPACE_ROOT=root;__testOnlyResetGoalListCache();
  try{await runWithRequestContext({operator_backend_auth:createOperatorBackendAuth('shared_token','test-only')},async()=>{
   const f=tagKind==='independent'?retained():JSON.parse(fs.readFileSync('test/fixtures/created-space-tag-readback-49.json','utf8').replace(/^\uFEFF/,''));
+  f.input.body.orientation='Horizontal'; // Native accepts enum-style case, including retained305.
+  if(leaderSelection!=='explicit'){
+   delete f.input.body.addLeader;
+   if(leaderSelection==='default_offset')delete f.input.body.placementMode;else f.input.body.placementMode='geometry_aware';
+   f.applied.placementMode=leaderSelection==='default_offset'?'offset':'geometry_aware';
+  }
   if(typeSelection==='native_default'){
    delete f.input.body.tagTypeId;
    // Generated no-family-load neighbor; the actual default-selection replay
@@ -111,7 +154,7 @@ test(`ordinary ${tagKind} ${typeSelection} tag creation ${variant}: independent 
      if(variant==='truncated'){if(spatialSubject)payload.operations.find((o:any)=>o.property==='IsOrphaned').result_preview=true;else refs.truncated=true;}
      if(variant==='wrong_class')prop('OwnerViewId').target_type='Autodesk.Revit.DB.TextNote';
      if(variant==='wrong_orientation')prop('TagOrientation').result_preview='Vertical';
-     if(variant==='wrong_leader')prop('HasLeader').result_preview=!f.input.body.addLeader;
+     if(variant==='wrong_leader')prop('HasLeader').result_preview=!nativeLeader(f.input.body);
      // Structural admission and principal target extraction share the same graph.
      const admission=verificationCapabilityAdmissionV2({apply:{path:f.input.path,capability_id:'revit_call_tool',arguments:f.input},verification:{path:a.path,capability_id:'revit_call_tool',arguments:a}});
      assert(admission.admissible);assert.deepEqual(nativeCreatedTagReadTargetsV2(a),['id:'+tagId]);
@@ -143,4 +186,17 @@ test(`ordinary ${tagKind} ${typeSelection} tag creation ${variant}: independent 
   }finally{endTeammateLoopOwner(owner);}
  });}finally{__testOnlyResetGoalListCache();if(previous===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=previous;
   assert.equal(path.dirname(root),path.resolve(os.tmpdir()));fs.rmSync(root,{recursive:true,force:true});}
+});
+
+
+test('retained305 native orientation case normalizes without accepting a parameter-only association check',()=>{
+ const input=JSON.parse(fs.readFileSync('test/fixtures/created-tag-orientation-305.json','utf8'));
+ assert.equal(createdTagRequestV2(input)?.orientation,'horizontal');
+ const apply={capability_id:'revit_call_tool',arguments:input,path:input.path} as any;
+ const read={capability_id:'revit_call_tool',arguments:{method:'POST',path:'/revit/get-parameters',body:{elementIds:[1542954,1542955]}},path:'/revit/get-parameters'} as any;
+ const admission=verificationCapabilityAdmissionV2({apply,verification:read});
+ assert.equal(admission.admissible,false);assert.deepEqual(admission.required_semantic_outputs,['tag.created_subject_association']);
+ for(const orientation of ['Horizontal',' horizontal ','VERTICAL',' Vertical '])assert.equal(createdTagRequestV2({...input,body:{...input.body,orientation}})?.orientation,orientation.trim().toLowerCase());
+ for(const orientation of ['diagonal',{},true,3])assert.equal(createdTagRequestV2({...input,body:{...input.body,orientation}}),null);
+
 });

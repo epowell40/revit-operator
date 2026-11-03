@@ -8,6 +8,27 @@ namespace RevitOperator.DynamicRevitSandboxSupervisor.Tests;
 public sealed class ReadOnlyGeneratedProgramTests
 {
     [Fact]
+    public void NativePascalCaseCoverageSurvivesTransportAndMissingOrInconsistentCoverageFails()
+    {
+        var coverage = DynamicSnapshotCoverage.Create("OST_Rooms", new[] { "Name" }, 4096, 2000, false);
+        using var receipt = JsonDocument.Parse(JsonSerializer.Serialize(new { coverage }));
+        var parsed = Program.ReadSnapshotCoverage(receipt.RootElement, 2000);
+        Assert.Equal(2000, parsed.ReturnedCount);
+        Assert.False(parsed.HasMore);
+        Assert.Throws<ArgumentException>(() => Program.ReadSnapshotCoverage(receipt.RootElement, 1999));
+        using var absent = JsonDocument.Parse("{}");
+        Assert.Throws<InvalidOperationException>(() => Program.ReadSnapshotCoverage(absent.RootElement, 0));
+        using var missingHasMore = JsonDocument.Parse("{\"coverage\":{\"SourceScope\":\"active_document_non_type_elements\",\"Category\":null,\"ParameterNames\":[],\"Limit\":200,\"ReturnedCount\":0}}");
+        Assert.Throws<InvalidOperationException>(() => Program.ReadSnapshotCoverage(missingHasMore.RootElement, 0));
+        using var duplicateHasMore = JsonDocument.Parse("{\"coverage\":{\"SourceScope\":\"active_document_non_type_elements\",\"Category\":null,\"ParameterNames\":[],\"Limit\":200,\"ReturnedCount\":0,\"HasMore\":true,\"HasMore\":false}}");
+        Assert.Throws<InvalidOperationException>(() => Program.ReadSnapshotCoverage(duplicateHasMore.RootElement, 0));
+        using var foreign = JsonDocument.Parse(JsonSerializer.Serialize(new { coverage = new {
+            SourceScope = "linked_document", Category = "OST_Rooms", ParameterNames = new[] { "Name" },
+            Limit = 4096, ReturnedCount = 2000, HasMore = false } }));
+        Assert.Throws<ArgumentException>(() => Program.ReadSnapshotCoverage(foreign.RootElement, 2000));
+    }
+
+    [Fact]
     public void DuctTypeSampleCompilesAndReturnsBoundedReportWithoutOperations()
     {
         const string source = """

@@ -15,6 +15,7 @@ namespace RevitBridge.Operator
         private readonly Func<OperatorApprovalMode> _getApprovalMode;
         private readonly Func<OperatorWriteGrantStatus> _ensureWriteGrant;
         private readonly Func<OperatorJsonlLogger?> _getLogger;
+        private readonly Func<string> _getNativeUrl;
         private readonly OperatorCourierCompletionOutbox _completionOutbox = new OperatorCourierCompletionOutbox();
         private readonly OperatorRevitHostCircuit _hostCircuit = new OperatorRevitHostCircuit();
         private readonly string _executorId = ExecutorIdForCurrentProcess();
@@ -31,13 +32,14 @@ namespace RevitBridge.Operator
             OperatorActionRunner actionRunner,
             Func<OperatorApprovalMode> getApprovalMode,
             Func<OperatorWriteGrantStatus> ensureWriteGrant,
-            Func<OperatorJsonlLogger?> getLogger)
+            Func<OperatorJsonlLogger?> getLogger, Func<string> getNativeUrl)
         {
             _backendClient = backendClient;
             _actionRunner = actionRunner;
             _getApprovalMode = getApprovalMode;
             _ensureWriteGrant = ensureWriteGrant;
             _getLogger = getLogger;
+            _getNativeUrl = getNativeUrl;
         }
 
         public void Start()
@@ -295,7 +297,16 @@ namespace RevitBridge.Operator
                 object? result;
                 try
                 {
-                    result = await ExecuteWithBusyRetryAsync(
+                    if (OperatorNativeProgramCourierRequest.IsRoute(method, path))
+                    {
+                        // The authenticated target courier owns this launcher;
+                        // never queue a blocking compiler on Revit's UI thread.
+                        if (legacyAction == null || !job.TryGetProperty("general_agent_admission", out var nativeAdmission)
+                            || nativeAdmission.GetProperty("alias").GetString() != "operator_run_dynamic_revit_program")
+                            throw new InvalidOperationException("Native C# requires its exact General Agent tool admission.");
+                        result = await OperatorNativeProgramCourierExecution.ExecuteAsync(path, bodyJson, _getNativeUrl(), actionTimeout.Token).ConfigureAwait(false);
+                    }
+                    else result = await ExecuteWithBusyRetryAsync(
                         actionFactory,
                         actionTimeout.Token,
                         sessionId!,

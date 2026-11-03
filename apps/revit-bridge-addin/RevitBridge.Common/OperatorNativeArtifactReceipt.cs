@@ -27,6 +27,10 @@ namespace RevitBridge.Common
         public bool? SaveIoNotStarted { get; private set; }
         [JsonPropertyName("save_document"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public OperatorNativeSavedDocument? SaveDocument { get; internal set; }
+        /// <summary>Producing application year after successful Save As, for
+        /// version-correct file opening only; not model-content verification.</summary>
+        [JsonPropertyName("saved_revit_version"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? SavedRevitVersion { get; internal set; }
         [JsonPropertyName("phase")] public string Phase { get; }
         [JsonPropertyName("status")] public string Status { get; }
         [JsonPropertyName("expected_output_paths")] public IReadOnlyList<string> ExpectedOutputPaths { get; }

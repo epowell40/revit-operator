@@ -13,6 +13,7 @@ internal sealed class WindowsSandboxProfile : IDisposable
     private const int ErrorAlreadyExistsHResult = unchecked((int)0x800700B7);
     private readonly string _moniker;
     private IntPtr _sid;
+    private readonly HashSet<string> _runtimeGrants = new(StringComparer.OrdinalIgnoreCase);
 
     private WindowsSandboxProfile(string moniker, IntPtr sid, bool lessPrivileged)
     {
@@ -47,6 +48,7 @@ internal sealed class WindowsSandboxProfile : IDisposable
         var owner = WindowsIdentity.GetCurrent().User ?? throw new InvalidOperationException("Current Windows identity has no SID.");
         RunIcacls(taskRoot, "/grant", "*" + Sid.Value + ":(RX)", "/C", "/Q");
         RunIcacls(runtimeDirectory, "/inheritance:r", "/T", "/C", "/Q");
+        _runtimeGrants.Add(runtimeDirectory);
         RunIcacls(runtimeDirectory, "/grant:r", "*" + Sid.Value + ":RX", "*" + owner.Value + ":F", "*S-1-5-18:F", "*S-1-5-32-544:F", "/T", "/C", "/Q");
         RunIcacls(runtimeDirectory, "/setintegritylevel", "(OI)(CI)L", "/T", "/C", "/Q");
         RunIcacls(scratchDirectory, "/grant", "*" + Sid.Value + ":(OI)(CI)F", "/T", "/C", "/Q");
@@ -163,6 +165,9 @@ internal sealed class WindowsSandboxProfile : IDisposable
 
     public void Dispose()
     {
+        foreach (var runtime in _runtimeGrants)
+            try { RunIcacls(runtime, "/remove:g", "*" + Sid.Value, "/T", "/C", "/Q"); }
+            catch (Exception error) { Console.Error.WriteLine("dynamic_runtime_acl_cleanup_pending: " + error.GetType().Name); }
         if (_sid != IntPtr.Zero) { Native.FreeSid(_sid); _sid = IntPtr.Zero; }
         Native.DeleteAppContainerProfile(_moniker);
     }

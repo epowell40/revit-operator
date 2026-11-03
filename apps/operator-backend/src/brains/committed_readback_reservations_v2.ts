@@ -8,6 +8,9 @@ import {openAssignmentKernelOperationV2,failAssignmentKernelOperationV2} from '.
 import {bindCanonicalAssignmentToolArguments} from '../assignments/tool_argument_binding.js';
 import {operationTargetSelectorV2} from '../verification/verification_capability_admission_v2.js';
 import {revitRouteEffect} from '../action_path_mutability.js';
+import {createHash} from 'node:crypto';
+import {committedReadEpochV2} from '../verification/committed_read_epoch_v2.js';
+import {vectorStrokeCadReadRequestV2,vectorStrokeCadPageChainV2} from '../verification/vector_stroke_cad_readback_v2.js';
 
 type Lease=ReturnType<typeof openAssignmentKernelOperationV2>;
 type ReadPlan=Readonly<{method:string;path:string;body?:unknown}>;
@@ -16,6 +19,22 @@ type Retained={owner:object;request_id:string|number;turn_id:unknown;arguments:s
 const reservations=new WeakMap<object,Retained>();
 export function isCommittedReadbackReservationV2(token:unknown):token is object {
  return typeof token==='object'&&token!==null&&reservations.has(token);
+}
+/** A proven next page is part of the already admitted finite read cohort,
+ * not another retry. The ordinary legacy attempt cap still governs every
+ * unreserved/provider read. Consumption later revalidates all native controls. */
+export function isReservedVectorPageContinuationV2(token:unknown,owner:object,request:CodexServerRequest,s:AssignmentSnapshotV2|null):boolean {
+ if(!s||!isCommittedReadbackReservationV2(token)||!ready(s))return false;
+ const r=reservations.get(token)!,op=s.operations[r.lease.operation_id],args=request.params?.arguments;
+ if(r.owner!==owner||r.consumed||request.id!==r.request_id||request.params?.turnId!==r.turn_id
+  ||request.params?.tool!=='revit_call_tool'||canonicalJsonV2(args)!==r.arguments||!sameAssignmentBindingV2(s.current_binding,r.lease.binding)
+  ||!op||op.requested_effect!=='read'||op.settlement_state!=='open'||op.dispatch_state!=='not_dispatched'
+  ||s.input_invalidated_operation_ids?.includes(op.operation_id)||s.input_invalidated_operation_ids?.includes(op.verification_of_operation_id??''))return false;
+ const b=vectorStrokeCadReadRequestV2(args),apply=s.operations[op.verification_of_operation_id??''];
+ if(!b||!apply||b.cadGeometryOffset===0)return false;
+ const chain=vectorStrokeCadPageChainV2(s,apply);
+ return !!chain&&!chain.terminal&&chain.pages.length>0&&chain.pages.length<256
+  &&chain.cursor===b.cadGeometryOffset&&chain.applied.viewId===b.viewId&&chain.applied.elementId===b.cadElementId;
 }
 function ready(s:AssignmentSnapshotV2){return !s.terminal&&s.outcome==='active'&&!s.completion_proposal
  &&s.execution_control?.state!=='paused'&&!s.provider_usage_hold&&!s.progress_blocker&&!s.provider_budget_exhausted
@@ -37,7 +56,10 @@ export async function reserveCommittedReadbacksV2(input:{runtime:CodexMcpToolRun
    if(!current||!sameAssignmentBindingV2(current.current_binding,snapshot.current_binding)||!ready(current))throw Error('host_readback_controls_changed');
    const exhausted=assignmentNativeReadbackResourceBlockerV2(current,defaultAssignmentWorkBudgetV2(current,DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2),new Date().toISOString(),plans.length-index);
    if(exhausted)throw Error(exhausted);
-   const request:CodexServerRequest={id:`host-committed-readback:${subjectId}:${index}`,method:'item/tool/call',
+   // Different contiguous pages are separate reads of the same subject. Keep
+   // identical plans idempotent without colliding every new page at index zero.
+   const planKey=createHash('sha256').update(canonicalJsonV2({plan,write_epoch:committedReadEpochV2(current)?.operation_id??null})).digest('hex').slice(0,24);
+   const request:CodexServerRequest={id:`host-committed-readback:${subjectId}:${index}:${planKey}`,method:'item/tool/call',
     params:{namespace:'revit_operator',tool:'revit_call_tool',turnId:parent.params?.turnId,threadId:parent.params?.threadId,arguments:args}};
    const lease=openAssignmentKernelOperationV2({snapshot:current,controller_request_id:request.id,provider_turn_id:String(parent.params?.turnId??'unbound-turn'),
     capability_id:'revit_call_tool',classified_effect:'read',arguments:args,

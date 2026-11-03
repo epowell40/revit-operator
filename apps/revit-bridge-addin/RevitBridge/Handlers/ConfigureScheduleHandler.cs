@@ -206,10 +206,11 @@ namespace RevitBridge.Handlers
                 });
             }
 
-            bool scopedPresentation, scopedRowHeights;
+            bool scopedPresentation, scopedRowHeights, scopedWidthContent;
             using (var body = JsonDocument.Parse(jsonData)) {
                 scopedPresentation = RevitBridge.Common.SchedulePresentationContract.IsBoundedPresentationEdit(body.RootElement);
                 scopedRowHeights = RevitBridge.Common.ScheduleRowHeightPolicy.IsBoundedEdit(body.RootElement);
+                scopedWidthContent = RevitBridge.Common.ScheduleWidthPreservationContract.IsWidthOnlyEdit(body.RootElement);
             }
             var presentationScopeBefore = scopedPresentation ? RegularSchedulePresentationScope.Capture(doc, schedule) : null;
             var rowHeightsBefore = scopedRowHeights ? RegularScheduleRowHeights.Read(schedule) : null;
@@ -221,7 +222,9 @@ namespace RevitBridge.Handlers
             if (definitionBefore != null && !JsonSerializer.SerializeToElement(definitionBefore).GetProperty("complete").GetBoolean())
                 return Task.FromResult<object>(new { status = "Blocked", errorCode = "incomplete_width_preservation", definitionBefore,
                     transaction = RevitBridge.Common.OperatorNativeTransactionReceipt.NotStarted() });
+            var targetContentBefore = scopedWidthContent ? ScheduleWidthPreservation.Capture(doc, schedule) : null;
             var result = ApplyOperations(app, doc, schedule, p, scopedPresentation && hasFieldFormats);
+            if (scopedWidthContent) result["targetContentBefore"] = targetContentBefore;
             if (definitionBefore != null) result["definitionBefore"] = definitionBefore;
             if (scopedRowHeights) { result["rowHeightsBefore"] = rowHeightsBefore; result["presentationBefore"] = presentationBefore; }
             if (scopedPresentation) result["presentationScopeBefore"] = presentationScopeBefore;
@@ -234,6 +237,7 @@ namespace RevitBridge.Handlers
                 try
                 {
                     if (scopedPresentation) result["presentationScopeAfter"] = RegularSchedulePresentationScope.Capture(doc, schedule);
+                    if (scopedWidthContent) result["targetContentAfter"] = ScheduleWidthPreservation.Capture(doc, schedule);
                     result["presentationReadback"] = RegularSchedulePresentation.Read(doc, schedule);
                     if (scopedRowHeights) result["rowHeightsAfter"] = RegularScheduleRowHeights.Read(schedule);
                     if (definitionBefore != null) result["definitionAfter"] = ScheduleCombinedFieldOperations.Read(doc, schedule);

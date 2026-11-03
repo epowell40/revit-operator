@@ -48,6 +48,8 @@ namespace RevitBridge.Common
 
         private static readonly HashSet<string> ExtendedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
+            OperatorNativeProgramCourierRequest.ReadPath,
+            OperatorNativeProgramCourierRequest.ApplyPath,
             "/revit/batch-job",
             "/revit/export-pdf",
             "/revit/print",
@@ -67,6 +69,7 @@ namespace RevitBridge.Common
             "/revit/reload-family-edit-session",
             "/revit/create-similar-from-instance",
             "/revit/place-family-instance-on-host",
+            "/revit/place-mep-accessory-interactively",
             "/revit/existing-conditions-mep-draft-workflow"
         };
 

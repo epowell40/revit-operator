@@ -1,0 +1,103 @@
+{
+  "schema": "operator.retained-annotation462.v1",
+  "input": {
+    "method": "POST",
+    "path": "/revit/create-text",
+    "body": {
+      "action": "create",
+      "viewId": 1420963,
+      "x": 2.65,
+      "y": 0.7,
+      "widthFt": 0.72,
+      "text": "INTERNAL REVIEW - QA461",
+      "typeId": 1421335,
+      "dryRun": false
+    }
+  },
+  "scope": "Retained native sample note receipt. No before-preservation proof; remains unverified.",
+  "applied": {
+    "action": "create",
+    "textNoteId": 1545902,
+    "viewId": 1420963,
+    "textType": {
+      "id": 1421335,
+      "name": "1/4\" Trebuchet MS"
+    },
+    "success": true,
+    "transaction": {
+      "status": "committed",
+      "committed": true,
+      "modified_element_ids": [
+        1420970,
+        1422218,
+        1488968,
+        1521719,
+        1521731,
+        1543793
+      ],
+      "affected_element_ids": [
+        1420970,
+        1422218,
+        1488968,
+        1521719,
+        1521731,
+        1543793,
+        1545902
+      ],
+      "added_element_ids": [
+        1545902
+      ],
+      "deleted_element_ids": []
+    },
+    "changeTracking": {
+      "documentChangedObserved": true,
+      "exhaustiveChangeInventory": true,
+      "eventCount": 1,
+      "matchingEventCount": 1,
+      "distinctWrapperMatchCount": 1,
+      "captureFailureCount": 0
+    },
+    "applied": true,
+    "status": "Success",
+    "textNote": {
+      "textNoteId": 1545902,
+      "viewId": 1420963,
+      "viewName": "Cover Sheet",
+      "text": "INTERNAL REVIEW - QA461\r",
+      "point": {
+        "x": 2.65,
+        "y": 0.7,
+        "z": 0
+      },
+      "orientation": {
+        "kind": "TextNote",
+        "coordinateSpace": "model_feet",
+        "pointXyz": [
+          2.65,
+          0.7,
+          0
+        ],
+        "baseDirectionXyz": [
+          1,
+          0,
+          0
+        ],
+        "upDirectionXyz": [
+          0,
+          1,
+          0
+        ]
+      },
+      "widthFt": 0.72,
+      "widthSpace": "paper",
+      "modelSpaceWidthFt": 0.72,
+      "viewScale": 1,
+      "isTextWrappingActive": true,
+      "leaderCount": 0,
+      "textType": {
+        "id": 1421335,
+        "name": "1/4\" Trebuchet MS"
+      }
+    }
+  }
+}

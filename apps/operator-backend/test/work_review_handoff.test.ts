@@ -7,6 +7,9 @@ import type { AssignmentSnapshotV2 } from '../src/domain/assignment-kernel/snaps
 import { compactWorkReviewV2, projectWorkReviewV2, renderWorkReviewHandoffV2, workReviewRowsV2 } from '../src/assignments/work_review_handoff.js';
 import { finalCodexAssignmentMessageV2 } from '../src/brains/codex_assignment_progress.js';
 import {projectAdvisoryFollowupsV2} from '../src/assignments/advisory_followups_projection.js';
+import { generateWorkReturnFromKernelV2 } from '../src/work_returns/assignment_kernel_v2_generator.js';
+import { verifyWorkReturnHash } from '../src/work_returns/generator.js';
+import { renderTerminalResultV2 } from '../src/assignments/assignment_kernel_v2_terminal_result.js';
 const binding={assignment_id:'review-test',session_id:'session',run_id:'run',generation:1,document_fingerprint:'document'};
 function replace(s: AssignmentSnapshotV2, index: number, patch: Record<string,unknown>) {
   s.work_plan={...s.work_plan!,items:s.work_plan!.items.map((item,i)=>i===index?{...item,...patch}:item)};
@@ -21,6 +24,23 @@ function fixture(): AssignmentSnapshotV2 {
     advisory_followups:[{item_id:'followup:9',kind:'remaining_work',text:'Retained older unresolved report.',source_version:9,source_field:'remaining_work',source_index:0,last_mentioned_version:9,version:9,state:'open',verified:false}]
   } as unknown as AssignmentSnapshotV2;
 }
+
+test('blocked canonical returns and terminal text retain scoped questions without supplying inputs or certifying work',()=>{
+ const s=fixture();s.terminal=true;s.outcome='blocked';s.terminal_reason='token_budget_exhausted';
+ s.spec={...s.spec,criteria:[]};s.criteria={};s.clarifications={};s.execution_failures={};delete s.completion_proposal;
+ replace(s,0,{deferrals:[{reason:'No approved design setpoint or load. What heating design governs the stairs?',deferred_at:'2026-10-21T01:00:00Z'}]});
+ replace(s,1,{deferrals:[{reason:'Internal native verification unavailable; this is not an engineer input.',deferred_at:'2026-10-21T01:01:00Z'}]});
+ const before=JSON.stringify(s),goal={id:s.current_binding.assignment_id,updated_at:'2026-10-21T01:02:00Z'} as any;
+ const result=generateWorkReturnFromKernelV2(goal,s,null,null);
+ assert.equal(result.status,'blocked');assert.equal(result.question,null);assert.equal(result.clarification_id,null);
+ assert.deepEqual(result.completed,[]);assert(verifyWorkReturnHash(result));
+ assert.match(result.deviations_or_open_items[0]!,/Q1.*page 1.*What heating design/s);
+ assert.match(result.deviations_or_open_items[1]!,/Q2.*not an engineer input/s);
+ const terminal=renderTerminalResultV2(s);assert.match(terminal,/did not complete: token budget exhausted/);
+ assert.match(terminal,/Q1.*What heating design/s);assert.match(terminal,/Q2.*not an engineer input/s);
+ assert.equal(JSON.stringify(s),before);assert.deepEqual(generateWorkReturnFromKernelV2(goal,JSON.parse(before),null,null),result);
+ const altered={...result,deviations_or_open_items:[]};assert.equal(verifyWorkReturnHash(altered),false);
+});
 test('source checklist, stable questions and bounded summary survive restart without mutating canonical work',()=>{
   const s=fixture();replace(s,2,{deferrals:[{reason:'Which wall should receive this outlet? Preserve the circuit.',deferred_at:'2026-10-12T02:00:00Z'}]});
   replace(s,34,{deferrals:[{reason:'Architect coordination remains outside this assignment.',deferred_at:'2026-10-12T02:00:00Z'}]});
@@ -94,4 +114,59 @@ test('explicit repeated question references group in summary while retaining all
   assert.equal(projectAdvisoryFollowupsV2(s).items[0]!.question_ref,'QF1');
   replace(s,2,{deferrals:undefined});
   assert.match(renderWorkReviewHandoffV2(s)!.summary,/QF1.*Owner\/architect decision remains open/,'without parent the original report stays up front');
+});
+
+test('saved page-sheet hints and explicit technical followups do not masquerade as engineering questions',async()=>{
+ const s=fixture(); s.work_plan={...s.work_plan!,items:s.work_plan!.items.slice(0,3)};
+ replace(s,0,{location_history:[],source_basis:'Sample.pdf SHA256 '+ 'a'.repeat(64)+' p4 M100 garage question; p3 M002 supporting schedule.',deferrals:[{reason:'What approved garage exhaust design basis should govern?',deferred_at:'2026-10-21T01:00:00Z'}]});
+ replace(s,1,{location_history:[],source_basis:'Same source p7 M103 detail crop: target vent.',deferrals:[{reason:'Technical handoff, not engineering question: native leader correction remains operator work.',deferred_at:'2026-10-21T01:00:00Z'}]});
+ replace(s,2,{location_history:[],source_basis:'Source unresolved; equipment P01, operation123 and arbitrary model M999.',deferrals:[{reason:'Needs review; no explicit classification retained.',deferred_at:'2026-10-21T01:00:00Z'}]});
+ s.terminal=true;s.outcome='blocked';s.terminal_reason='token_budget_exhausted';
+ s.spec={...s.spec,criteria:[]};s.criteria={};s.clarifications={};s.execution_failures={};delete s.completion_proposal;s.advisory_followups=[];
+ const before=JSON.stringify(s),rows=workReviewRowsV2(s),text=renderWorkReviewHandoffV2(s)!;
+ assert.equal(rows[0]!.address,'M100 · page 4 (saved note)');
+ assert.equal(rows[1]!.address,'M103 · page 7 (saved note)');
+ assert.equal(rows[2]!.address,'Location not recorded','do not infer source location from equipment, arbitrary numbers or model labels');
+ assert.equal(rows[0]!.question_ref,'Q1');assert.equal(rows[1]!.question_ref,'Q2','stable references do not change');
+ assert.equal(rows[1]!.followup_kind,'operator_technical');assert.equal(rows[2]!.followup_kind,'open_item');
+ assert.match(text.details,/Operator follow-up Q2.*native leader correction/s);
+ assert.match(text.details,/Q1.*approved garage exhaust/);
+ assert.doesNotMatch(text.summary,/Questions and open items|more questions in Details/);
+ const result=generateWorkReturnFromKernelV2({id:binding.assignment_id,updated_at:'2026-10-21T01:02:00Z'} as any,s,null,null);
+ assert.equal(result.status,'blocked');assert.equal(result.question,null);assert.equal(result.clarification_id,null);
+ assert.deepEqual(result.completed,[]);assert(verifyWorkReturnHash(result));
+ assert.match(result.deviations_or_open_items[1]!,/^Operator follow-up Q2 · M103 · page 7 \(saved note\)/);
+ const root=['../packages/operator-assistant-ui','../../packages/operator-assistant-ui'].map(p=>path.resolve(p)).find(p=>fs.existsSync(path.join(p,'stopped_work_return.mjs')))!;
+ const ui=await import(pathToFileURL(path.join(root,'stopped_work_return.mjs')).href);
+ const shown=ui.stoppedWorkReturnMessage({kernel_version:2,work_return:result},{kernel_version:2,goal_id:binding.assignment_id,run_id:binding.run_id,generation:1});
+ assert.match(shown,/Operator follow-up Q2 · M103 · page 7/);assert.match(shown,/only actual engineering decisions need your answer/);
+ assert.equal(JSON.stringify(s),before,'presentation does not mutate decisions, status, deferrals, observations or scope');
+});
+
+test('technical-only handoff does not ask the engineer to repair internal tools',()=>{
+ const s=fixture();delete s.completion_proposal;s.advisory_followups=[];
+ s.work_plan={...s.work_plan!,items:s.work_plan!.items.slice(0,1)};
+ replace(s,0,{deferrals:[{reason:'Technical handoff, not engineering question: retained verification is unresolved.',deferred_at:'2026-10-21T01:00:00Z'}]});
+ const text=renderWorkReviewHandoffV2(s)!;
+ assert.match(text.summary,/Operator follow-up Q1/);
+ assert.doesNotMatch(text.summary,/Reply using the question reference/);
+ assert.match(text.summary,/Internal tool follow-ups remain Operator work/);
+ assert.equal(workReviewRowsV2(s)[0]!.status,'deferred');
+});
+
+test('technical-looking wording alone does not classify decisions or establish native source authority',()=>{
+ const s=fixture();s.work_plan={...s.work_plan!,items:s.work_plan!.items.slice(0,2)};
+ replace(s,0,{location_history:[],source_basis:'Unresolved equipment P4 M999; model view M202.',deferrals:[{reason:'Technical handoff: which electrical supply voltage should the engineer choose?',deferred_at:'2026-10-21T01:00:00Z'}]});
+ replace(s,1,{source_basis:'Legacy p7 M103, but structured source stays primary.',deferrals:[{reason:'Technical blocker, not an engineering question: native readback unavailable.',deferred_at:'2026-10-21T01:00:00Z'}]});
+ const rows=workReviewRowsV2(s);
+ assert.equal(rows[0]!.address,'Location not recorded');assert.equal(rows[0]!.followup_kind,'open_item');
+ assert.equal(rows[1]!.address,'E101 · page 2');assert.equal(rows[1]!.followup_kind,'operator_technical');
+ assert.equal(rows[0]!.location,null,'legacy text does not invent a bound source or target');
+ assert.equal(rows[1]!.location!.source!.attachment_id,'source');
+});
+
+test('an existing explicit primary PDF address is not replaced by an adjacent supporting reference',()=>{
+ const s=fixture();s.work_plan={...s.work_plan!,items:s.work_plan!.items.slice(0,1)};
+ replace(s,0,{location_history:[],source_basis:'PDF page 2; source sheet M101. Supporting detail p7 M103.',description:'Inspect the original marked subject.'});
+ assert.equal(workReviewRowsV2(s)[0]!.address,'M101 · page 2 (saved note)');
 });

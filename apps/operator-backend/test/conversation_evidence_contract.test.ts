@@ -75,6 +75,58 @@ function observed(snapshot:AssignmentSnapshotV2,route:string,payload:unknown,fac
 
 const resultAvailable:SemanticFactV2={fact_id:"task.result_available",fact_class:"domain",value:true};
 
+test("retained442 collector observation needs unchanged model evidence and actual identity/length delivery",()=>isolated(async()=>{
+  const fixture=JSON.parse(fs.readFileSync(path.resolve('test/fixtures/native-collector-read442.json'),'utf8').replace(/^\uFEFF/,''));
+  const question='Inspect one existing straight duct and report its exact identity, UniqueId and native curve length.';
+  const initial=await admitted(question,'model_content','collector442-before');
+  const missing=observed(initial,'/revit/native-api-ops',fixture.response,[resultAvailable],1,fixture.request);
+  const criterion=initial.spec.criteria[0]!.criterion_id;
+  assert.notEqual(evaluateCriterionV2({snapshot:missing.snapshot,criterion_id:criterion,
+    observation_ids:[missing.observation!.observation_id],evaluator_authority:'operator-runtime',evaluated_at:new Date().toISOString()}).status,'pass');
+  evaluateAssignmentObservationCriteriaV2({binding:missing.snapshot.current_binding,
+    claims:[{criterion_id:criterion,observation_ids:[missing.observation!.observation_id]}]});
+  const repaired=await admitted(question,'model_content','collector442-after');
+  const read=observed(repaired,'/revit/native-api-ops',fixture.response,[resultAvailable,fixture.expected_model_fact],2,fixture.request);
+  assert.equal(read.snapshot.terminal,false,'A native observation is not a delivered answer');
+  assert.equal(read.observation!.facts.some(f=>f.fact_id.startsWith('collection.')),false,'FirstElement proves no complete inventory');
+  const result=evaluateAssignmentObservationCriteriaV2({binding:read.snapshot.current_binding,
+    claims:[{criterion_id:criterion,observation_ids:[read.observation!.observation_id]}],
+    result_items:[{label:'Duct element ID',observation_id:read.observation!.observation_id,path:['results','duct','id']},
+      {label:'Duct UniqueId',observation_id:read.observation!.observation_id,path:['results','unique_id']},
+      {label:'Native curve length',observation_id:read.observation!.observation_id,path:['results','length']}],
+    assessment:{overview:'One existing straight duct was inspected.',findings:[{priority:'low',title:'Native duct read',
+      text:'Identity and length came from the current document collector and native object chain.',evidence_indices:[1]}],
+      limitations:['One inspected duct does not establish a complete inventory or design correctness.'],questions:[]}});
+  assert.equal(result.terminal,true);assert.equal(result.outcome,'complete');
+  assert.deepEqual(result.result_delivery!.items.map(x=>x.value),[fixture.response.results.duct.id,fixture.response.results.unique_id,fixture.response.results.length]);
+  const retained=getAssignmentKernelSnapshotV2(initial.current_binding.assignment_id)!;
+  assert.equal(retained.observations[missing.observation!.observation_id]!.facts.some(f=>f.fact_id==='model.content_observed'),false,'The old missing-evidence task was not backfilled');
+}));
+
+test("retained417 graph observation satisfies the unchanged model-content criterion only with delivered actual values",()=>isolated(async()=>{
+  const fixture=JSON.parse(fs.readFileSync(path.resolve('test/fixtures/native-graph-read417.json'),'utf8').replace(/^\uFEFF/,''));
+  const initial=await admitted('Read an existing text note and report its exact identity and leader count.','model_content','graph417');
+  const missing=observed(initial,'/revit/native-api-ops',fixture.response,[resultAvailable],1,fixture.request);
+  const criterion=initial.spec.criteria[0]!.criterion_id;
+  assert.notEqual(evaluateCriterionV2({snapshot:missing.snapshot,criterion_id:criterion,
+    observation_ids:[missing.observation!.observation_id],evaluator_authority:'operator-runtime',evaluated_at:new Date().toISOString()}).status,'pass');
+  evaluateAssignmentObservationCriteriaV2({binding:missing.snapshot.current_binding,
+    claims:[{criterion_id:criterion,observation_ids:[missing.observation!.observation_id]}]});
+  // A source repair affects a fresh task; never replay a settled read or rewrite
+  // the old task merely to obtain a different producer fact projection.
+  const repaired=await admitted('Read an existing text note and report its exact identity and leader count.','model_content','graph417-after');
+  const read=observed(repaired,'/revit/native-api-ops',fixture.response,[resultAvailable,fixture.expected_model_fact],2,fixture.request);
+  assert.equal(read.snapshot.terminal,false,'Observation alone must not invent result delivery');
+  const result=evaluateAssignmentObservationCriteriaV2({binding:read.snapshot.current_binding,
+    claims:[{criterion_id:criterion,observation_ids:[read.observation!.observation_id]}],
+    result_items:[{label:'Note identity',observation_id:read.observation!.observation_id,path:['results','note_unique_id']},
+      {label:'Leader count',observation_id:read.observation!.observation_id,path:['results','leader_count']}],
+    assessment:{overview:'The inspected note has zero leaders.',findings:[{priority:'low',title:'Native note read',
+      text:'The graph read the existing note identity and leader collection.',evidence_indices:[1]}],limitations:[],questions:[]}});
+  assert.equal(result.terminal,true);assert.equal(result.outcome,'complete');
+  assert.deepEqual(result.result_delivery!.items.map(x=>x.value),[fixture.response.results.note_unique_id,0]);
+}));
+
 test("C56 recovered semantic handoff completes the actual native sheet count through observation and final delivery",()=>isolated(async()=>{
   for(const [index,total] of [17,0].entries()){
     const question=index?"Are there any electrical sheets? Check the full sheet set.":"Inspect the sheet list and count the mechanical sheets. Reply in one sentence.";

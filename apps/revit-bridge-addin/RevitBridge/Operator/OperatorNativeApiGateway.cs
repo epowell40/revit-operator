@@ -367,7 +367,9 @@ namespace RevitBridge.Operator
                 foreach (var id in ids)
                 {
                     var value = ElementIdCompat.GetValue(id);
-                    if (value > 0) destination.Add(value);
+                    // Retain every observed id. The scope policy must reject an
+                    // unsupported identity rather than silently losing its effect.
+                    destination.Add(value);
                 }
             }
         }
@@ -1033,11 +1035,12 @@ namespace RevitBridge.Operator
             {
                 var all = new LogicalOrFilter(new ElementIsElementTypeFilter(false), new ElementIsElementTypeFilter(true));
                 var ids = collector.WherePasses(all).ToElementIds();
-                if (ids.Count > 250000)
-                    throw new InvalidOperationException("Native mutation scope baseline exceeds 250000 elements; no transaction was started.");
-                preexistingIds = new HashSet<long>(ids.Select(ElementIdCompat.GetValue).Where(id => id > 0));
-                if (preexistingIds.Count != ids.Count)
-                    throw new InvalidOperationException("Native mutation scope baseline is incomplete; no transaction was started.");
+                preexistingIds = OperatorNativeDocumentIdBaseline.Capture(ids.Select(ElementIdCompat.GetValue), id =>
+                {
+                    var element = document.GetElement(ElementIdCompat.Create(id));
+                    return element != null && element.IsValidObject && ElementIdCompat.GetValue(element.Id) == id
+                        && SameDocument(element.Document, document);
+                });
             }
             var updater = new NativeMutationScopeUpdater(app.ActiveAddInId, preexistingIds);
             UpdaterRegistry.RegisterUpdater(updater, document);
@@ -1453,7 +1456,7 @@ namespace RevitBridge.Operator
             if (targetType.IsGenericType)
             {
                 var def = targetType.GetGenericTypeDefinition();
-                if (def == typeof(List<>) || def == typeof(IList<>) || def == typeof(IEnumerable<>) || def == typeof(IReadOnlyList<>))
+                if (def == typeof(List<>) || def == typeof(IList<>) || def == typeof(ICollection<>) || def == typeof(IEnumerable<>) || def == typeof(IReadOnlyList<>))
                 {
                     var et = targetType.GetGenericArguments()[0];
                     var listType = typeof(List<>).MakeGenericType(et);
@@ -1522,7 +1525,7 @@ namespace RevitBridge.Operator
             if (t == typeof(string) || t == typeof(bool) || t == typeof(int) || t == typeof(long) || t == typeof(double) || t == typeof(float) || t == typeof(decimal) || t == typeof(ElementId) || t == typeof(XYZ) || t == typeof(UV) || t == typeof(object)) return true;
             if (CanResolveContextParameter(t)) return true;
             if (t.IsArray) return IsSupportedType(t.GetElementType() ?? typeof(object));
-            if (t.IsGenericType) { var def = t.GetGenericTypeDefinition(); if (def == typeof(List<>) || def == typeof(IList<>) || def == typeof(IEnumerable<>) || def == typeof(IReadOnlyList<>)) return IsSupportedType(t.GetGenericArguments()[0]); }
+            if (t.IsGenericType) { var def = t.GetGenericTypeDefinition(); if (def == typeof(List<>) || def == typeof(IList<>) || def == typeof(ICollection<>) || def == typeof(IEnumerable<>) || def == typeof(IReadOnlyList<>)) return IsSupportedType(t.GetGenericArguments()[0]); }
             return false;
         }
 
@@ -1546,11 +1549,7 @@ namespace RevitBridge.Operator
         }
 
         private static bool IsMutatingHint(string name)
-        {
-            var n = (name ?? "").ToLowerInvariant();
-            var prefixes = new[] { "set", "add", "create", "delete", "remove", "insert", "move", "rotate", "copy", "open", "save", "load", "sync", "purge", "regenerate", "commit", "rollback", "apply", "rename", "change", "modify", "post" };
-            return prefixes.Any(p => n.StartsWith(p, StringComparison.Ordinal));
-        }
+            => NativeApiMutationNames.IsMutating(name);
         private static bool IsFreezeRiskHint(string name, Type t)
         {
             var n = ((name ?? "") + " " + (t.FullName ?? "")).ToLowerInvariant();

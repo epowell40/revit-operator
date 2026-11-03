@@ -15,6 +15,7 @@ import {
 } from "./nativeTransport.js";
 import { TEST_NATIVE_EXECUTION_ATTESTATION } from "./certifiedMoveNativeAttestation.testSupport.js";
 import { preflightKnownGenericToolBody } from "./genericToolPreflight.js";
+import { SUPPORTED_MCP_ALIASES } from "./supportedToolInventory.js";
 
 // Match the existing source-mode stdio convention while keeping compiled frontier runs unchanged.
 const mcpServerArgs = import.meta.url.endsWith(".ts")
@@ -172,8 +173,7 @@ test("MCP tools/list opens the legacy catalog only for exact raw development lab
     REVIT_OPERATOR_MODE: "development",
     OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory"
   });
-  assert.equal(laboratoryNames.length, 98, "Exact development laboratory mode must preserve the supported catalog, excluding retired prototype workflows, plus V2 criterion evaluation, trusted-binding input request, legacy clarification, evidence retrieval, legacy completion, bootstrap discovery, strategy evidence, Dynamic Runtime, observation, target readback, laboratory SafeRead, bounded source interpretation and registration, and bounded move-family aliases.");
-  assert.equal(laboratoryNames.filter(name => name.startsWith("revit_")).length, 75, "Exact development laboratory mode must preserve retained Revit aliases plus observation, target readback, laboratory SafeRead, and the bounded move-family alias.");
+  assert.deepEqual(laboratoryNames, [...SUPPORTED_MCP_ALIASES].sort(), "Exact laboratory exposure must match every reviewed supported alias; counts alone can hide a missing alias paired with an unintended one.");
   assert.equal(laboratoryNames.includes("revit_observe_model"), true, "Laboratory mode must expose the typed spatial observation alias.");
   assert.equal(laboratoryNames.includes("operator_record_execution_strategy"), true, "Laboratory mode must expose non-authorizing strategy evidence.");
   assert.equal(laboratoryNames.includes("operator_run_dynamic_revit_program"), true, "Laboratory mode must expose the gated Dynamic Runtime launcher.");
@@ -397,13 +397,13 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
 
   const tools = await withTimeout(client.listTools(), "listing MCP tools");
   const names = new Set(tools.tools.map((tool) => tool.name));
-  assert.equal(tools.tools.length, 98, "Laboratory mode must preserve the supported catalog, excluding retired prototype workflows and the unsettled legacy workbook writer.");
+  assert.equal(tools.tools.length, names.size, "Duplicate registrations cannot be hidden by the alias set.");
+  assert.deepEqual([...names].sort(), [...SUPPORTED_MCP_ALIASES].sort(), "Laboratory registration must match the reviewed supported catalog exactly.");
   const connectorSchema = tools.tools.find(tool => tool.name === "revit_get_connectors")!.inputSchema;
   assert.equal((connectorSchema.properties?.includeVerificationParameters as any)?.type, "boolean");
   const ductSchema = tools.tools.find(tool => tool.name === "revit_create_duct")!.inputSchema;
   for (const field of ["ductSize", "width", "height", "diameter", "ductTypeId", "ductShape"])
     assert.ok(ductSchema.properties?.[field], `The executable duct alias must expose ${field}.`);
-  assert.equal([...names].filter(name => name.startsWith("revit_")).length, 75, "Laboratory mode must preserve retained revit_ aliases plus observation, target readback, SafeRead, and the bounded move-family alias.");
   assert.equal(names.has("revit_observe_model"), true, "Laboratory tools/list must include the typed spatial observation alias.");
   // Retirement must remove discovery and executable aliases before either transport.
   const retiredPrototypeAliases = [
@@ -466,19 +466,32 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   assert.match(retrievalTool.description!, /projection.key_counts/);
   assert.match(retrievalTool.description!, /missing_fields/);
   const generatedTool = tools.tools.find(tool => tool.name === "operator_run_dynamic_revit_program")!;
-  // Code-mode clients can discard descriptions on schema properties. Discovery
-  // must still contain everything needed to write the first valid program.
+  // The primary native contract fits one bounded selection. Complete legacy
+  // examples remain reachable through the actual source-property description.
+  const sdkDescription=String((generatedTool.inputSchema as any).properties.source.description??'');
+  assert(Buffer.byteLength(JSON.stringify({'tool.description':generatedTool.description}),'utf8')<8192);
+  assert.match(generatedTool.description!, /public static string Execute\(Autodesk.Revit.DB.Document doc\)/);
+  assert.match(generatedTool.description!, /tool\.inputSchema\.properties\.source/);
   assert.match(generatedTool.description!, /IDynamicRevitProgram/);
   assert.match(generatedTool.description!, /DynamicProgramResult Execute\(DynamicRevitContext c\)/);
-  assert.match(generatedTool.description!, /category=OST_DuctCurves/);
-  assert.match(generatedTool.description!, /public sealed class SampleReport/);
-  assert.match(generatedTool.description!, /print text\(result\) directly/);
-  assert.match(generatedTool.description!, /operation_budget at its default/);
-  assert.match(generatedTool.description!, /snapshot_limit is 1\.\.1000/);
+  assert.match(sdkDescription, /category=OST_DuctCurves/);
+  assert.match(sdkDescription, /public sealed class SampleReport/);
+  assert.match(generatedTool.description!, /print text\(result\): do not assume result\.content/);
+  assert.match(generatedTool.description!, /Leave operation_budget at default normally/);
+  assert.match(sdkDescription, /snapshot_limit is 1\.\.4096 for read and 1\.\.1000 for preview\/apply/);
   assert.match(generatedTool.description!, /path:\["report","Inspected"\]/);
-  assert.match(generatedTool.description!, /prioritized assessment with evidence_indices/);
-  assert.match(generatedTool.description!, /Missing parameter keys do not establish missing model relationships/);
-  for (const limit of [0, 1001, 3000, 5000]) {
+  assert.match(sdkDescription, /prioritized assessment with evidence_indices/);
+  assert.match(sdkDescription, /Missing parameter keys do not establish missing model relationships/);
+  assert.equal((generatedTool.inputSchema as any).properties.snapshot_limit.maximum, 4096);
+  assert.equal((generatedTool.inputSchema as any).properties.native_program.properties.parameter_checks.maxItems,64);
+  for(const parameter_checks of [[],[{element_id:0,parameter_name:'Author',expected_value:'Checked'}],
+    [{element_id:42,parameter_name:'Author',expected_value:3}],
+    [{element_id:42,parameter_name:'Author',expected_value:'Checked',verified:true}]]){
+    const denied=await client.callTool({name:generatedTool.name,arguments:{mode:'apply',source:'public class Edit {}',target_revit_year:'2024',
+      native_program:{entry_type:'Edit',effect_scope:'active_document',parameter_checks}}});
+    assert.equal(denied.isError,true);assert.match(JSON.stringify(denied.content),/Input validation error/);
+  }
+  for (const limit of [0, 4097, 5000, 1.5]) {
     const denied = await client.callTool({ name: generatedTool.name,
       arguments: { mode: "read", source: "public class Program {}", category: "OST_DuctCurves", snapshot_limit: limit } });
     assert.equal(denied.isError, true);
@@ -562,6 +575,19 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
     arguments: { query: "context", method: "GET" }
   }), "searching bridge tools over stdio");
   assert.match((search as any).content[0].text, /\/revit\/context/);
+  const searchPayload = JSON.parse((search as any).content[0].text);
+  assert.equal(searchPayload.total_matches, 1);
+  assert.equal(searchPayload.returned_matches, 1);
+  assert.equal(searchPayload.truncated, false);
+  const boundedSearch = await client.callTool({ name: "revit_search_tools", arguments: {
+    query: "native image", method: "POST", max: 1, includeSchemas: true
+  } });
+  const boundedSearchPayload = JSON.parse((boundedSearch as any).content[0].text);
+  assert.equal(boundedSearchPayload.total_matches, 2);
+  assert.equal(boundedSearchPayload.returned_matches, 1);
+  assert.equal(boundedSearchPayload.matches.length, 1);
+  assert.equal(boundedSearchPayload.truncated, true);
+  assert.match(boundedSearchPayload.search_guidance, /focused/);
 
   const context = await withTimeout(client.callTool({
     name: "revit_call_tool",

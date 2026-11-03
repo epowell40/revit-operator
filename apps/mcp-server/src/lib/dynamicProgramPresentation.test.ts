@@ -2,6 +2,21 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { presentDynamicProgramResult } from "./dynamicProgramPresentation.js";
 
+test("successful custom read presents the filtered answer without repeating thousands of input rows", () => {
+  const payload = { requested_mode: "read", execution_status: "completed", execution_ok: true,
+    report: { MatchingRooms: "20", MissingNames: "3", Scope: "Complete active-document category; missing names unknown; links excluded" },
+    verification: { evidence_sha256: "sha256:" + "a".repeat(64) },
+    evidence: { snapshotReceipt: JSON.stringify({ elements: Array.from({ length: 2000 }, (_, i) => ({ id: i, name: "Office", detail: "x".repeat(500) })) }) } };
+  const original = JSON.stringify(payload);
+  const view: any = presentDynamicProgramResult(payload);
+  assert.deepEqual(view.report, payload.report);
+  assert.equal(view.execution_ok, true);
+  assert.equal(view.retained_evidence.evidence_sha256, payload.verification.evidence_sha256);
+  assert.equal(view.evidence, undefined);
+  assert.ok(Buffer.byteLength(JSON.stringify(view)) < 3000);
+  assert.equal(JSON.stringify(payload), original, "canonical evidence and original hash input remain unchanged");
+});
+
 test("affected-element failure leads with native cause and stays bounded despite a large snapshot", () => {
   const payload = { execution_status: "failed", evidence: {
     failure: "SUPERVISOR_FAILURE: opaque hash",

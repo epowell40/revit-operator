@@ -2,6 +2,7 @@ import {canonicalJsonV2,type AssignmentSnapshotV2,type OperationV2} from '../dom
 import {sameAssignmentBindingV2} from '../domain/assignment-kernel/identity.js';
 import {appliedOperationHasVerifiedPostconditionV2} from '../domain/assignment-kernel/outcome.js';
 import {nativeChildProjectionReferencesV2} from '../assignments/assignment_kernel_v2_child_projection.js';
+import {parameterSchedulePreservationCommitV2} from './parameter_schedule_preservation_v2.js';
 
 /** One bounded separate read of every effective target/field in an explicit
  * parameter batch. This is a read plan, not proof or permission to mutate. */
@@ -38,7 +39,11 @@ export function committedParameterReadbackPlanV2(snapshot:AssignmentSnapshotV2, 
    && other.requested_effect==='apply' && other.persistent_effect!=='none' && other.opened_at>=operation.opened_at
    && (other.result?.affected_target_identities?.some(id=>ids.some(n=>id==='element_id:'+n))
      || Array.isArray((other.input.body as any)?.changes) && (other.input.body as any).changes.some((c:any)=>ids.includes(c?.elementId)))))return null;
- return {method:'POST',path:'/revit/get-parameters',body:{elementIds:ids,names,limit:500}};
+ const preservation=parameterSchedulePreservationCommitV2(snapshot,operation);
+ const readNames=[...new Set([...names,...(preservation?.viewNameProjection?.readNames??[])])].sort();
+ if(readNames.length>50)return null;
+ return {method:'POST',path:'/revit/get-parameters',body:{elementIds:ids,names:readNames,limit:500,
+  ...(preservation?.preservedIds.length?{preservationScheduleIds:preservation.preservedIds}:{})}};
 }
 
 /** A typed MCP setter settles an abstract parent; its exact retained native

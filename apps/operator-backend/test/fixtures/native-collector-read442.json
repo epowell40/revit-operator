@@ -1,0 +1,292 @@
+{
+  "response": {
+    "version": "operator.native_api_ops.v2",
+    "ok": true,
+    "read_only": true,
+    "ephemeral_handles": true,
+    "direct_context_targets": true,
+    "static_calls": true,
+    "property_access": true,
+    "argument_references": true,
+    "geometry_cleanup_errors": [],
+    "budgets": {
+      "max_total_ms": 5000,
+      "max_operation_ms": 2000
+    },
+    "operation_count": 10,
+    "duration_ms": 28,
+    "operations": [
+      {
+        "id": "active_document",
+        "op": "get_property",
+        "member_id": null,
+        "property": "Document",
+        "signature": "Document UIDocument.Document { get; }",
+        "target_type": "Autodesk.Revit.UI.UIDocument",
+        "target_identity": null,
+        "duration_ms": 0,
+        "result_preview": {
+          "title": "Snowdon HVAC - NativeGraphObservationTrial442",
+          "path": "C:\\wt\\local-first-development-workflow\\local-work\\user-failure-repair-20261007\\trial-native-graph-observation-442\\isolated-api-workspace\\artifacts\\models\\Snowdon HVAC - NativeGraphObservationTrial442.rvt",
+          "is_modifiable": false
+        }
+      },
+      {
+        "id": "collector",
+        "op": "construct",
+        "member_id": "ctor:Autodesk.Revit.DB.FilteredElementCollector(Autodesk.Revit.DB.Document)",
+        "property": null,
+        "signature": "FilteredElementCollector FilteredElementCollector..ctor(Document document)",
+        "target_type": null,
+        "target_identity": null,
+        "duration_ms": 0,
+        "result_preview": {
+          "type": "Autodesk.Revit.DB.FilteredElementCollector",
+          "deferred_enumeration": true
+        }
+      },
+      {
+        "id": "ducts",
+        "op": "call",
+        "member_id": "method:Autodesk.Revit.DB.FilteredElementCollector.OfCategory(Autodesk.Revit.DB.BuiltInCategory)",
+        "property": null,
+        "signature": "FilteredElementCollector FilteredElementCollector.OfCategory(BuiltInCategory category)",
+        "target_type": "Autodesk.Revit.DB.FilteredElementCollector",
+        "target_identity": null,
+        "duration_ms": 0,
+        "result_preview": {
+          "type": "Autodesk.Revit.DB.FilteredElementCollector",
+          "deferred_enumeration": true
+        }
+      },
+      {
+        "id": "instances",
+        "op": "call",
+        "member_id": "method:Autodesk.Revit.DB.FilteredElementCollector.WhereElementIsNotElementType()",
+        "property": null,
+        "signature": "FilteredElementCollector FilteredElementCollector.WhereElementIsNotElementType()",
+        "target_type": "Autodesk.Revit.DB.FilteredElementCollector",
+        "target_identity": null,
+        "duration_ms": 0,
+        "result_preview": {
+          "type": "Autodesk.Revit.DB.FilteredElementCollector",
+          "deferred_enumeration": true
+        }
+      },
+      {
+        "id": "duct",
+        "op": "call",
+        "member_id": "method:Autodesk.Revit.DB.FilteredElementCollector.FirstElement()",
+        "property": null,
+        "signature": "Element FilteredElementCollector.FirstElement()",
+        "target_type": "Autodesk.Revit.DB.FilteredElementCollector",
+        "target_identity": null,
+        "duration_ms": 1,
+        "result_preview": {
+          "id": 1365662,
+          "unique_id": "ee75abd3-0b00-4374-8f65-b8d52f0bb76e-0014d69e",
+          "name": "Tees",
+          "category": "Ducts"
+        }
+      },
+      {
+        "id": "element_id",
+        "op": "get_property",
+        "member_id": null,
+        "property": "Id",
+        "signature": "ElementId Element.Id { get; }",
+        "target_type": "Autodesk.Revit.DB.Mechanical.Duct",
+        "target_identity": {
+          "schema": "operator.native_element_receiver.v1",
+          "element_id": 1365662,
+          "unique_id": "ee75abd3-0b00-4374-8f65-b8d52f0bb76e-0014d69e",
+          "type_name": "Autodesk.Revit.DB.Mechanical.Duct",
+          "active_document": true
+        },
+        "duration_ms": 0,
+        "result_preview": {
+          "id": 1365662
+        }
+      },
+      {
+        "id": "unique_id",
+        "op": "get_property",
+        "member_id": null,
+        "property": "UniqueId",
+        "signature": "string Element.UniqueId { get; }",
+        "target_type": "Autodesk.Revit.DB.Mechanical.Duct",
+        "target_identity": {
+          "schema": "operator.native_element_receiver.v1",
+          "element_id": 1365662,
+          "unique_id": "ee75abd3-0b00-4374-8f65-b8d52f0bb76e-0014d69e",
+          "type_name": "Autodesk.Revit.DB.Mechanical.Duct",
+          "active_document": true
+        },
+        "duration_ms": 0,
+        "result_preview": "ee75abd3-0b00-4374-8f65-b8d52f0bb76e-0014d69e"
+      },
+      {
+        "id": "location",
+        "op": "get_property",
+        "member_id": null,
+        "property": "Location",
+        "signature": "Location Element.Location { get; }",
+        "target_type": "Autodesk.Revit.DB.Mechanical.Duct",
+        "target_identity": {
+          "schema": "operator.native_element_receiver.v1",
+          "element_id": 1365662,
+          "unique_id": "ee75abd3-0b00-4374-8f65-b8d52f0bb76e-0014d69e",
+          "type_name": "Autodesk.Revit.DB.Mechanical.Duct",
+          "active_document": true
+        },
+        "duration_ms": 0,
+        "result_preview": {
+          "type": "Autodesk.Revit.DB.LocationCurve",
+          "text": "Autodesk.Revit.DB.LocationCurve"
+        }
+      },
+      {
+        "id": "curve",
+        "op": "get_property",
+        "member_id": null,
+        "property": "Curve",
+        "signature": "Curve LocationCurve.Curve { get; }",
+        "target_type": "Autodesk.Revit.DB.LocationCurve",
+        "target_identity": null,
+        "duration_ms": 0,
+        "result_preview": {
+          "type": "Autodesk.Revit.DB.Line",
+          "text": "Autodesk.Revit.DB.Line"
+        }
+      },
+      {
+        "id": "length",
+        "op": "get_property",
+        "member_id": null,
+        "property": "Length",
+        "signature": "double Curve.Length { get; }",
+        "target_type": "Autodesk.Revit.DB.Line",
+        "target_identity": null,
+        "duration_ms": 0,
+        "result_preview": 0.3333333333333126
+      }
+    ],
+    "results": {
+      "duct": {
+        "id": 1365662,
+        "unique_id": "ee75abd3-0b00-4374-8f65-b8d52f0bb76e-0014d69e",
+        "name": "Tees",
+        "category": "Ducts"
+      },
+      "element_id": {
+        "id": 1365662
+      },
+      "unique_id": "ee75abd3-0b00-4374-8f65-b8d52f0bb76e-0014d69e",
+      "location": {
+        "type": "Autodesk.Revit.DB.LocationCurve",
+        "text": "Autodesk.Revit.DB.LocationCurve"
+      },
+      "curve": {
+        "type": "Autodesk.Revit.DB.Line",
+        "text": "Autodesk.Revit.DB.Line"
+      },
+      "length": 0.3333333333333126
+    }
+  },
+  "request": {
+    "operations": [
+      {
+        "id": "active_document",
+        "op": "get_property",
+        "target": "uidoc",
+        "property": "Document"
+      },
+      {
+        "id": "collector",
+        "op": "construct",
+        "memberId": "ctor:Autodesk.Revit.DB.FilteredElementCollector(Autodesk.Revit.DB.Document)",
+        "args": [
+          {
+            "$ref": "active_document"
+          }
+        ]
+      },
+      {
+        "id": "ducts",
+        "op": "call",
+        "memberId": "method:Autodesk.Revit.DB.FilteredElementCollector.OfCategory(Autodesk.Revit.DB.BuiltInCategory)",
+        "target": "$collector",
+        "args": [
+          "OST_DuctCurves"
+        ]
+      },
+      {
+        "id": "instances",
+        "op": "call",
+        "memberId": "method:Autodesk.Revit.DB.FilteredElementCollector.WhereElementIsNotElementType()",
+        "target": "$ducts",
+        "args": []
+      },
+      {
+        "id": "duct",
+        "op": "call",
+        "memberId": "method:Autodesk.Revit.DB.FilteredElementCollector.FirstElement()",
+        "target": "$instances",
+        "args": []
+      },
+      {
+        "id": "element_id",
+        "op": "get_property",
+        "target": "$duct",
+        "property": "Id"
+      },
+      {
+        "id": "unique_id",
+        "op": "get_property",
+        "target": "$duct",
+        "property": "UniqueId"
+      },
+      {
+        "id": "location",
+        "op": "get_property",
+        "target": "$duct",
+        "property": "Location"
+      },
+      {
+        "id": "curve",
+        "op": "get_property",
+        "target": "$location",
+        "property": "Curve"
+      },
+      {
+        "id": "length",
+        "op": "get_property",
+        "target": "$curve",
+        "property": "Length"
+      }
+    ],
+    "returns": [
+      "duct",
+      "element_id",
+      "unique_id",
+      "location",
+      "curve",
+      "length"
+    ],
+    "maxTotalMs": 5000,
+    "maxOperationMs": 2000
+  },
+  "expected_model_fact": {
+    "value": true,
+    "fact_class": "domain",
+    "dimensions": {
+      "route": "/revit/native-api-ops"
+    },
+    "fact_id": "model.content_observed"
+  },
+  "provenance": {
+    "source": "Retained disposable Snowdon sample trial442 native response",
+    "payload_sha256": "11faf1205581e0daa4caabfd88a42c92275f4c33f1a4d1ed865fbd334f82d8f8",
+    "operation_id": "opv2_18b8f55eade9b0a3a094313a0395e01dc46c0f18348ffdc54d39a915c13823b5"
+  }
+}

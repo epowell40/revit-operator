@@ -1,0 +1,1207 @@
+{
+  "source": "Diagnostic203 native summary, parameterDetails and readonly dependency/category/schema graphs; projection for prospective contract tests, not a completed mutation or exact historical after-state.",
+  "centers": [
+    {
+      "elementId": 1404116,
+      "uniqueId": "80ad68d1-c024-4f78-acf0-0e2bfff0fc27-00156cd4",
+      "className": "Autodesk.Revit.DB.Element",
+      "categoryId": -2008021,
+      "parentId": 1404115,
+      "parentUniqueId": "80ad68d1-c024-4f78-acf0-0e2bfff0fc27-00156cd3",
+      "schemaGuids": [],
+      "parameters": [
+        {
+          "id": -1153106,
+          "storage": "Integer",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1152385,
+          "storage": "ElementId",
+          "readOnly": false,
+          "value": "-1"
+        },
+        {
+          "id": -1150468,
+          "storage": "String",
+          "readOnly": true,
+          "value": ""
+        },
+        {
+          "id": -1150435,
+          "storage": "String",
+          "readOnly": true,
+          "value": "6\"ø"
+        },
+        {
+          "id": -1150434,
+          "storage": "String",
+          "readOnly": true,
+          "value": "6\"ø"
+        },
+        {
+          "id": -1150433,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1150432,
+          "storage": "String",
+          "readOnly": true,
+          "value": ""
+        },
+        {
+          "id": -1150431,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1150430,
+          "storage": "String",
+          "readOnly": true,
+          "value": ""
+        },
+        {
+          "id": -1140363,
+          "storage": "ElementId",
+          "readOnly": true,
+          "value": "-2008020"
+        },
+        {
+          "id": -1140362,
+          "storage": "ElementId",
+          "readOnly": true,
+          "value": "-2008020"
+        },
+        {
+          "id": -1140333,
+          "storage": "ElementId",
+          "readOnly": false,
+          "value": "712041"
+        },
+        {
+          "id": -1140325,
+          "storage": "String",
+          "readOnly": true,
+          "value": "Supply Air"
+        },
+        {
+          "id": -1140324,
+          "storage": "String",
+          "readOnly": false,
+          "value": "Mechanical Supply Air 8"
+        },
+        {
+          "id": -1140240,
+          "storage": "Double",
+          "readOnly": false,
+          "value": "0"
+        },
+        {
+          "id": -1140239,
+          "storage": "Double",
+          "readOnly": false,
+          "value": "0"
+        },
+        {
+          "id": -1140210,
+          "storage": "Double",
+          "readOnly": false,
+          "value": "0.0006"
+        },
+        {
+          "id": -1140208,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1114167,
+          "storage": "Integer",
+          "readOnly": false,
+          "value": "0"
+        },
+        {
+          "id": -1114166,
+          "storage": "Double",
+          "readOnly": false,
+          "value": "0"
+        },
+        {
+          "id": -1114129,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0.5"
+        },
+        {
+          "id": -1114128,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "45976.5183332205"
+        },
+        {
+          "id": -1114125,
+          "storage": "Integer",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1114121,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "3.75828316365112"
+        },
+        {
+          "id": -1114116,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0.17655362140279"
+        },
+        {
+          "id": -1114108,
+          "storage": "Double",
+          "readOnly": false,
+          "value": "0.860061156993497"
+        },
+        {
+          "id": -1114107,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "14.8544613552436"
+        },
+        {
+          "id": -1114103,
+          "storage": "Double",
+          "readOnly": false,
+          "value": "0.5"
+        },
+        {
+          "id": -1114005,
+          "storage": "Integer",
+          "readOnly": false,
+          "value": "0"
+        },
+        {
+          "id": -1114000,
+          "storage": "ElementId",
+          "readOnly": false,
+          "value": "9946"
+        },
+        {
+          "id": -1019016,
+          "storage": "String",
+          "readOnly": false,
+          "value": ""
+        },
+        {
+          "id": -1019014,
+          "storage": "String",
+          "readOnly": false,
+          "value": ""
+        },
+        {
+          "id": -1019012,
+          "storage": "Integer",
+          "readOnly": false,
+          "value": "0"
+        },
+        {
+          "id": -1019000,
+          "storage": "String",
+          "readOnly": false,
+          "value": "20hMZHm2HFUApm3Yl$vP3q"
+        },
+        {
+          "id": -1013405,
+          "storage": "Double",
+          "readOnly": false,
+          "value": "2.91666666666667"
+        },
+        {
+          "id": -1013201,
+          "storage": "ElementId",
+          "readOnly": true,
+          "value": "-1"
+        },
+        {
+          "id": -1012101,
+          "storage": "ElementId",
+          "readOnly": false,
+          "value": "-1"
+        },
+        {
+          "id": -1012100,
+          "storage": "ElementId",
+          "readOnly": false,
+          "value": "21885"
+        },
+        {
+          "id": -1010106,
+          "storage": "String",
+          "readOnly": false,
+          "value": ""
+        },
+        {
+          "id": -1004005,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "4.87138779799567"
+        },
+        {
+          "id": -1002002,
+          "storage": "String",
+          "readOnly": true,
+          "value": "Flex Duct Round"
+        },
+        {
+          "id": -1002001,
+          "storage": "String",
+          "readOnly": true,
+          "value": "Flex - Round"
+        },
+        {
+          "id": -1001203,
+          "storage": "String",
+          "readOnly": false,
+          "value": ""
+        }
+      ],
+      "parentParameters": [
+        {
+          "id": -1153106,
+          "storage": "Integer",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1152385,
+          "storage": "ElementId",
+          "readOnly": false,
+          "value": "-1"
+        },
+        {
+          "id": -1150468,
+          "storage": "String",
+          "readOnly": true,
+          "value": ""
+        },
+        {
+          "id": -1150435,
+          "storage": "String",
+          "readOnly": true,
+          "value": "6\"ø"
+        },
+        {
+          "id": -1150434,
+          "storage": "String",
+          "readOnly": true,
+          "value": "6\"ø"
+        },
+        {
+          "id": -1150433,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1150432,
+          "storage": "String",
+          "readOnly": true,
+          "value": ""
+        },
+        {
+          "id": -1150431,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1150430,
+          "storage": "String",
+          "readOnly": true,
+          "value": ""
+        },
+        {
+          "id": -1141008,
+          "storage": "String",
+          "readOnly": false,
+          "value": ""
+        },
+        {
+          "id": -1140988,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1140987,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1140986,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1140985,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1140984,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1140982,
+          "storage": "String",
+          "readOnly": false,
+          "value": ""
+        },
+        {
+          "id": -1140363,
+          "storage": "ElementId",
+          "readOnly": true,
+          "value": "-2008020"
+        },
+        {
+          "id": -1140362,
+          "storage": "ElementId",
+          "readOnly": true,
+          "value": "-2008020"
+        },
+        {
+          "id": -1140333,
+          "storage": "ElementId",
+          "readOnly": false,
+          "value": "712041"
+        },
+        {
+          "id": -1140325,
+          "storage": "String",
+          "readOnly": true,
+          "value": "Supply Air"
+        },
+        {
+          "id": -1140324,
+          "storage": "String",
+          "readOnly": true,
+          "value": "Mechanical Supply Air 8"
+        },
+        {
+          "id": -1140240,
+          "storage": "Double",
+          "readOnly": false,
+          "value": "0"
+        },
+        {
+          "id": -1140239,
+          "storage": "Double",
+          "readOnly": false,
+          "value": "0"
+        },
+        {
+          "id": -1140210,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1140208,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1114167,
+          "storage": "Integer",
+          "readOnly": false,
+          "value": "0"
+        },
+        {
+          "id": -1114166,
+          "storage": "Double",
+          "readOnly": false,
+          "value": "0"
+        },
+        {
+          "id": -1114129,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0.5"
+        },
+        {
+          "id": -1114128,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1114125,
+          "storage": "Integer",
+          "readOnly": true,
+          "value": "9"
+        },
+        {
+          "id": -1114121,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1114116,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1114108,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1114107,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1114103,
+          "storage": "Double",
+          "readOnly": false,
+          "value": "0.5"
+        },
+        {
+          "id": -1114005,
+          "storage": "Integer",
+          "readOnly": false,
+          "value": "0"
+        },
+        {
+          "id": -1114002,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "1.15104166666288"
+        },
+        {
+          "id": -1114000,
+          "storage": "ElementId",
+          "readOnly": false,
+          "value": "9946"
+        },
+        {
+          "id": -1019016,
+          "storage": "String",
+          "readOnly": false,
+          "value": ""
+        },
+        {
+          "id": -1019014,
+          "storage": "String",
+          "readOnly": false,
+          "value": ""
+        },
+        {
+          "id": -1019012,
+          "storage": "Integer",
+          "readOnly": false,
+          "value": "0"
+        },
+        {
+          "id": -1019000,
+          "storage": "String",
+          "readOnly": false,
+          "value": "20hMZHm2HFUApm3Yl$vP3q"
+        },
+        {
+          "id": -1013405,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1013201,
+          "storage": "ElementId",
+          "readOnly": true,
+          "value": "-1"
+        },
+        {
+          "id": -1012101,
+          "storage": "ElementId",
+          "readOnly": false,
+          "value": "-1"
+        },
+        {
+          "id": -1012100,
+          "storage": "ElementId",
+          "readOnly": false,
+          "value": "21885"
+        },
+        {
+          "id": -1010106,
+          "storage": "String",
+          "readOnly": false,
+          "value": ""
+        },
+        {
+          "id": -1004005,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "4.87138779799567"
+        },
+        {
+          "id": -1002052,
+          "storage": "ElementId",
+          "readOnly": false,
+          "value": "139193"
+        },
+        {
+          "id": -1002051,
+          "storage": "ElementId",
+          "readOnly": false,
+          "value": "139193"
+        },
+        {
+          "id": -1002050,
+          "storage": "ElementId",
+          "readOnly": false,
+          "value": "139193"
+        },
+        {
+          "id": -1002002,
+          "storage": "String",
+          "readOnly": true,
+          "value": ""
+        },
+        {
+          "id": -1002001,
+          "storage": "String",
+          "readOnly": true,
+          "value": ""
+        },
+        {
+          "id": -1002000,
+          "storage": "ElementId",
+          "readOnly": true,
+          "value": "139193"
+        },
+        {
+          "id": -1001203,
+          "storage": "String",
+          "readOnly": false,
+          "value": ""
+        }
+      ]
+    },
+    {
+      "elementId": 1404205,
+      "uniqueId": "80ad68d1-c024-4f78-acf0-0e2bfff0fc27-00156d2d",
+      "className": "Autodesk.Revit.DB.Element",
+      "categoryId": -2008021,
+      "parentId": 1404204,
+      "parentUniqueId": "80ad68d1-c024-4f78-acf0-0e2bfff0fc27-00156d2c",
+      "schemaGuids": [],
+      "parameters": [
+        {
+          "id": -1153106,
+          "storage": "Integer",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1152385,
+          "storage": "ElementId",
+          "readOnly": false,
+          "value": "-1"
+        },
+        {
+          "id": -1150468,
+          "storage": "String",
+          "readOnly": true,
+          "value": ""
+        },
+        {
+          "id": -1150435,
+          "storage": "String",
+          "readOnly": true,
+          "value": "6\"ø"
+        },
+        {
+          "id": -1150434,
+          "storage": "String",
+          "readOnly": true,
+          "value": "6\"ø"
+        },
+        {
+          "id": -1150433,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1150432,
+          "storage": "String",
+          "readOnly": true,
+          "value": ""
+        },
+        {
+          "id": -1150431,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1150430,
+          "storage": "String",
+          "readOnly": true,
+          "value": ""
+        },
+        {
+          "id": -1140363,
+          "storage": "ElementId",
+          "readOnly": true,
+          "value": "-2008020"
+        },
+        {
+          "id": -1140362,
+          "storage": "ElementId",
+          "readOnly": true,
+          "value": "-2008020"
+        },
+        {
+          "id": -1140333,
+          "storage": "ElementId",
+          "readOnly": false,
+          "value": "712041"
+        },
+        {
+          "id": -1140325,
+          "storage": "String",
+          "readOnly": true,
+          "value": "Supply Air"
+        },
+        {
+          "id": -1140324,
+          "storage": "String",
+          "readOnly": false,
+          "value": "Mechanical Supply Air 8"
+        },
+        {
+          "id": -1140240,
+          "storage": "Double",
+          "readOnly": false,
+          "value": "0"
+        },
+        {
+          "id": -1140239,
+          "storage": "Double",
+          "readOnly": false,
+          "value": "0"
+        },
+        {
+          "id": -1140210,
+          "storage": "Double",
+          "readOnly": false,
+          "value": "0.0006"
+        },
+        {
+          "id": -1140208,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1114167,
+          "storage": "Integer",
+          "readOnly": false,
+          "value": "0"
+        },
+        {
+          "id": -1114166,
+          "storage": "Double",
+          "readOnly": false,
+          "value": "0"
+        },
+        {
+          "id": -1114129,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0.5"
+        },
+        {
+          "id": -1114128,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "45976.5183332205"
+        },
+        {
+          "id": -1114125,
+          "storage": "Integer",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1114121,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "3.75828316365112"
+        },
+        {
+          "id": -1114116,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0.17655362140279"
+        },
+        {
+          "id": -1114108,
+          "storage": "Double",
+          "readOnly": false,
+          "value": "0.844370175351699"
+        },
+        {
+          "id": -1114107,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "14.8544613552436"
+        },
+        {
+          "id": -1114103,
+          "storage": "Double",
+          "readOnly": false,
+          "value": "0.5"
+        },
+        {
+          "id": -1114005,
+          "storage": "Integer",
+          "readOnly": false,
+          "value": "0"
+        },
+        {
+          "id": -1114000,
+          "storage": "ElementId",
+          "readOnly": false,
+          "value": "9946"
+        },
+        {
+          "id": -1019016,
+          "storage": "String",
+          "readOnly": false,
+          "value": ""
+        },
+        {
+          "id": -1019014,
+          "storage": "String",
+          "readOnly": false,
+          "value": ""
+        },
+        {
+          "id": -1019012,
+          "storage": "Integer",
+          "readOnly": false,
+          "value": "0"
+        },
+        {
+          "id": -1019000,
+          "storage": "String",
+          "readOnly": false,
+          "value": "20hMZHm2HFUApm3Yl$vP4B"
+        },
+        {
+          "id": -1013405,
+          "storage": "Double",
+          "readOnly": false,
+          "value": "2.91666666666667"
+        },
+        {
+          "id": -1013201,
+          "storage": "ElementId",
+          "readOnly": true,
+          "value": "-1"
+        },
+        {
+          "id": -1012101,
+          "storage": "ElementId",
+          "readOnly": false,
+          "value": "-1"
+        },
+        {
+          "id": -1012100,
+          "storage": "ElementId",
+          "readOnly": false,
+          "value": "21885"
+        },
+        {
+          "id": -1010106,
+          "storage": "String",
+          "readOnly": false,
+          "value": ""
+        },
+        {
+          "id": -1004005,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "4.7825140523476"
+        },
+        {
+          "id": -1002002,
+          "storage": "String",
+          "readOnly": true,
+          "value": "Flex Duct Round"
+        },
+        {
+          "id": -1002001,
+          "storage": "String",
+          "readOnly": true,
+          "value": "Flex - Round"
+        },
+        {
+          "id": -1001203,
+          "storage": "String",
+          "readOnly": false,
+          "value": ""
+        }
+      ],
+      "parentParameters": [
+        {
+          "id": -1153106,
+          "storage": "Integer",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1152385,
+          "storage": "ElementId",
+          "readOnly": false,
+          "value": "-1"
+        },
+        {
+          "id": -1150468,
+          "storage": "String",
+          "readOnly": true,
+          "value": ""
+        },
+        {
+          "id": -1150435,
+          "storage": "String",
+          "readOnly": true,
+          "value": "6\"ø"
+        },
+        {
+          "id": -1150434,
+          "storage": "String",
+          "readOnly": true,
+          "value": "6\"ø"
+        },
+        {
+          "id": -1150433,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1150432,
+          "storage": "String",
+          "readOnly": true,
+          "value": ""
+        },
+        {
+          "id": -1150431,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1150430,
+          "storage": "String",
+          "readOnly": true,
+          "value": ""
+        },
+        {
+          "id": -1141008,
+          "storage": "String",
+          "readOnly": false,
+          "value": ""
+        },
+        {
+          "id": -1140988,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1140987,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1140986,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1140985,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1140984,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1140982,
+          "storage": "String",
+          "readOnly": false,
+          "value": ""
+        },
+        {
+          "id": -1140363,
+          "storage": "ElementId",
+          "readOnly": true,
+          "value": "-2008020"
+        },
+        {
+          "id": -1140362,
+          "storage": "ElementId",
+          "readOnly": true,
+          "value": "-2008020"
+        },
+        {
+          "id": -1140333,
+          "storage": "ElementId",
+          "readOnly": false,
+          "value": "712041"
+        },
+        {
+          "id": -1140325,
+          "storage": "String",
+          "readOnly": true,
+          "value": "Supply Air"
+        },
+        {
+          "id": -1140324,
+          "storage": "String",
+          "readOnly": true,
+          "value": "Mechanical Supply Air 8"
+        },
+        {
+          "id": -1140240,
+          "storage": "Double",
+          "readOnly": false,
+          "value": "0"
+        },
+        {
+          "id": -1140239,
+          "storage": "Double",
+          "readOnly": false,
+          "value": "0"
+        },
+        {
+          "id": -1140210,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1140208,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1114167,
+          "storage": "Integer",
+          "readOnly": false,
+          "value": "0"
+        },
+        {
+          "id": -1114166,
+          "storage": "Double",
+          "readOnly": false,
+          "value": "0"
+        },
+        {
+          "id": -1114129,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0.5"
+        },
+        {
+          "id": -1114128,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1114125,
+          "storage": "Integer",
+          "readOnly": true,
+          "value": "10"
+        },
+        {
+          "id": -1114121,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1114116,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1114108,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1114107,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1114103,
+          "storage": "Double",
+          "readOnly": false,
+          "value": "0.5"
+        },
+        {
+          "id": -1114005,
+          "storage": "Integer",
+          "readOnly": false,
+          "value": "0"
+        },
+        {
+          "id": -1114002,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "3.56307966438448"
+        },
+        {
+          "id": -1114000,
+          "storage": "ElementId",
+          "readOnly": false,
+          "value": "9946"
+        },
+        {
+          "id": -1019016,
+          "storage": "String",
+          "readOnly": false,
+          "value": ""
+        },
+        {
+          "id": -1019014,
+          "storage": "String",
+          "readOnly": false,
+          "value": ""
+        },
+        {
+          "id": -1019012,
+          "storage": "Integer",
+          "readOnly": false,
+          "value": "0"
+        },
+        {
+          "id": -1019000,
+          "storage": "String",
+          "readOnly": false,
+          "value": "20hMZHm2HFUApm3Yl$vP4B"
+        },
+        {
+          "id": -1013405,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "0"
+        },
+        {
+          "id": -1013201,
+          "storage": "ElementId",
+          "readOnly": true,
+          "value": "-1"
+        },
+        {
+          "id": -1012101,
+          "storage": "ElementId",
+          "readOnly": false,
+          "value": "-1"
+        },
+        {
+          "id": -1012100,
+          "storage": "ElementId",
+          "readOnly": false,
+          "value": "21885"
+        },
+        {
+          "id": -1010106,
+          "storage": "String",
+          "readOnly": false,
+          "value": ""
+        },
+        {
+          "id": -1004005,
+          "storage": "Double",
+          "readOnly": true,
+          "value": "4.7825140523476"
+        },
+        {
+          "id": -1002052,
+          "storage": "ElementId",
+          "readOnly": false,
+          "value": "139193"
+        },
+        {
+          "id": -1002051,
+          "storage": "ElementId",
+          "readOnly": false,
+          "value": "139193"
+        },
+        {
+          "id": -1002050,
+          "storage": "ElementId",
+          "readOnly": false,
+          "value": "139193"
+        },
+        {
+          "id": -1002002,
+          "storage": "String",
+          "readOnly": true,
+          "value": ""
+        },
+        {
+          "id": -1002001,
+          "storage": "String",
+          "readOnly": true,
+          "value": ""
+        },
+        {
+          "id": -1002000,
+          "storage": "ElementId",
+          "readOnly": true,
+          "value": "139193"
+        },
+        {
+          "id": -1001203,
+          "storage": "String",
+          "readOnly": false,
+          "value": ""
+        }
+      ]
+    }
+  ]
+}

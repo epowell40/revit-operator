@@ -171,7 +171,11 @@ test("the transport-independent domain imports no edge, route, evidence-projecti
       assert.ok(["canonical.ts", "payload_provenance.ts"].includes(path.basename(file)), file);
     }
     if (source.includes("@revitoperator/assignment-kernel-v2-contracts")) {
-      assert.ok(["operation.ts", "provider_call.ts", "execution_failure.ts", "provider_usage_hold.ts", "reducer.ts", "semantic_admissibility.ts", "snapshot.ts", "family_capacity_retry.ts", "template_reassignment.ts", "native_inventory_workload.ts", "schedule_filter_restoration.ts"].includes(path.basename(file)), file);
+      assert.ok(["operation.ts", "provider_call.ts", "execution_failure.ts", "provider_usage_hold.ts", "reducer.ts", "semantic_admissibility.ts", "snapshot.ts", "family_capacity_retry.ts", "template_reassignment.ts", "native_inventory_workload.ts", "schedule_filter_restoration.ts", "committed_read_refresh.ts", "native_work_progress.ts", "verified_saved_partial.ts"].includes(path.basename(file)), file);
+      if (["committed_read_refresh.ts", "native_work_progress.ts", "verified_saved_partial.ts"].includes(path.basename(file))) {
+        assert.doesNotMatch(source, /\/revit\//i, "Native checkpoint wire decoding stays in the shared contract");
+        assert.doesNotMatch(source, /from ['"]node:/, "Kernel checkpoint accounting remains free of platform imports");
+      }
       if (path.basename(file) === 'schedule_filter_restoration.ts') {
         assert.match(source, /import \{ nativeScheduleFilterRequestV1, nativeScheduleFilterResultStateV1 \} from '@revitoperator\/assignment-kernel-v2-contracts'/);
         assert.doesNotMatch(source, /\/revit\//i, 'Filter wire parsing belongs in the shared pure decoder');

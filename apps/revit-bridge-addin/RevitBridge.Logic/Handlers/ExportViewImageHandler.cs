@@ -81,7 +81,7 @@ namespace RevitBridge.Logic.Handlers
             var artifact = ExportedImagePathResolver.ReadRequired(filePath);
             var actualFile = artifact.Path;
             int widthPx, heightPx;
-            using (var image = System.Drawing.Image.FromFile(actualFile)) { widthPx = image.Width; heightPx = image.Height; }
+            (widthPx, heightPx) = RevitBridge.Logic.ExportedImageMetadata.ReadDimensions(actualFile);
 
             return Task.FromResult<object>(new
             {

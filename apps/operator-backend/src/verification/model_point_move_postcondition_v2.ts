@@ -2,11 +2,13 @@ import { payloadDigestV2 } from '@revitoperator/payload-digest-v2';
 import { readAuthoritativeEvidence, readEvidenceRef } from '../evidence/evidence_store.js';
 import { sameAssignmentBindingV2, type AssignmentSnapshotV2, type OperationV2, type OperationResultV2 } from '../domain/assignment-kernel/index.js';
 import { appliedOperationHasVerifiedPostconditionV2 } from '../domain/assignment-kernel/outcome.js';
+import {preservedScheduleTargets,preservedScheduleReadMatchesV2} from './native_annotation_postcondition_v2.js';
 
 const row = (v: unknown): Record<string, any> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, any> : {};
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const id = (v: unknown): v is number => Number.isSafeInteger(v) && Number(v) > 0;
 const near = (a: unknown, b: number) => finite(a) && Math.abs(a - b) <= 1e-7;
+const nonblank = (v: unknown): v is string => typeof v === 'string' && Boolean(v.trim());
 const xyz = (v: unknown): v is number[] => Array.isArray(v) && v.length === 3 && v.every(finite);
 const sameRotation = (a: unknown, b: unknown) => finite(a) && finite(b)
   && Math.abs(Math.atan2(Math.sin(a-b), Math.cos(a-b))) <= 1e-7;
@@ -23,17 +25,36 @@ function pointMove(input: unknown, nativeApply: unknown) {
       || !Array.isArray(applied.movedIds) || applied.movedIds.length !== ids.length || new Set(applied.movedIds).size !== ids.length
       || applied.movedIds.some((n: unknown)=>!id(n)||!ids.includes(n)) || !Array.isArray(applied.snapshots) || applied.snapshots.length !== ids.length) return null;
   const seen = new Set<number>();
+  const textOnly = applied.snapshots.every((s:any)=>row(s.before).kind==='TextAnchor');
+  const extra: number[] = textOnly ? tx.modified_element_ids.filter((n:number)=>!ids.includes(n)) : [];
+  if (textOnly && (!tx.modified_element_ids.every(id) || new Set(tx.modified_element_ids).size!==tx.modified_element_ids.length)) return null;
+  if (extra.length) {
+    const tracking=row(applied.changeTracking), affected=tx.affected_element_ids;
+    if (extra.length>32 || tracking.documentChangedObserved!==true || tracking.exhaustiveChangeInventory!==true
+      || tracking.captureFailureCount!==0 || !Number.isSafeInteger(tracking.matchingEventCount) || tracking.matchingEventCount<1 || tracking.distinctWrapperMatchCount!==1
+      || !Array.isArray(affected) || affected.length!==tx.modified_element_ids.length || !affected.every(id)
+      || new Set(affected).size!==affected.length || !affected.every(n=>tx.modified_element_ids.includes(n))
+      || !preservedScheduleTargets(applied,extra)) return null;
+  }
   for (const value of applied.snapshots) {
     const s = row(value), before = row(s.before), after = row(s.after);
-    if (!ids.includes(s.id) || seen.has(s.id) || before.kind !== 'LocationPoint' || after.kind !== 'LocationPoint'
-        || !xyz(before.pointXyz) || !xyz(after.pointXyz) || !sameRotation(before.rotationRadians,after.rotationRadians)
+    const tag = before.kind === 'TagHead', text = before.kind === 'TextAnchor', modelPoint = before.kind === 'LocationPoint';
+    if (!ids.includes(s.id) || seen.has(s.id) || (!tag && !text && !modelPoint) || after.kind !== before.kind
+        || !xyz(before.pointXyz) || !xyz(after.pointXyz)
+        || (modelPoint && !sameRotation(before.rotationRadians,after.rotationRadians))
+        || ((tag || text) && (!id(before.ownerViewId) || after.ownerViewId !== before.ownerViewId
+          || !nonblank(before.ownerViewUniqueId) || after.ownerViewUniqueId !== before.ownerViewUniqueId
+          || !nonblank(before.elementUniqueId) || after.elementUniqueId !== before.elementUniqueId))
+        || (text && (before.coordinateSpace !== 'model_feet' || after.coordinateSpace !== 'model_feet'
+          || !textOnly))
         || !after.pointXyz.every((v: number,i: number)=>near(v,before.pointXyz[i]+delta[i]))) return null;
     seen.add(s.id);
   }
-  return {ids: ids as number[], delta, snapshots: applied.snapshots as any[]};
+  return {ids: ids as number[], delta, snapshots: applied.snapshots as any[], preservedIds:extra.sort((a,b)=>a-b)};
 }
 
-/** Compare native before + admitted vector with a separate complete point read.
+/** Compare native before + admitted vector with a separate complete typed point read.
+ * Model points retain rotation; tag heads retain exact tag and owning-view identity.
  * This proves the requested translation/rotation only: no PDF interpretation,
  * host-face, connectivity, collision or whole-comment claim is inferred. */
 export function modelPointMoveReadbackMatchesV2(input: unknown, nativeApply: unknown, payload: unknown): boolean {
@@ -46,19 +67,28 @@ export function modelPointMoveReadbackMatchesV2(input: unknown, nativeApply: unk
       && move.ids.every(n=>p.requestedElementIds.includes(n)) ? p.items : null;
   if (!Array.isArray(items) || items.length < move.ids.length || items.length > 1024 || p.truncated === true
       || (p.schema === 'operator.electrical_membership_read.v1' && items.length !== p.requestedElementIds.length)) return false;
+  if (move.preservedIds.length && (items.length!==move.ids.length+move.preservedIds.length
+      || !preservedScheduleReadMatchesV2(row(nativeApply),move.preservedIds,p))) return false;
   const actual = new Map<number, any>();
   for (const value of items) {
     const item = row(value);
-    if (!id(item.id) || actual.has(item.id) || item.found !== true
-        || typeof item.uniqueId !== 'string' || !item.uniqueId.trim() || row(item.location).type !== 'point') return false;
+    if (!id(item.id) || actual.has(item.id) || item.found !== true || item.error!=null || !nonblank(item.uniqueId)) return false;
+    if (move.preservedIds.includes(item.id)) {
+      const schedule=p.schedulePreservation.items.find((s:any)=>s.elementId===item.id);
+      if (item.className!=='ViewSchedule' || schedule?.uniqueId!==item.uniqueId) return false;
+    } else if (!['point','tagHead','textAnchor'].includes(row(item.location).type)
+        || move.preservedIds.length&&!move.ids.includes(item.id)) return false;
     if(p.schema === 'operator.electrical_membership_read.v1' && !p.requestedElementIds.includes(item.id))return false;
     actual.set(item.id,item);
   }
   return move.snapshots.every(s=> {
     if(!actual.has(s.id))return false;
-    const location = row(actual.get(s.id).location);
+    const item = actual.get(s.id), location = row(item.location), tag = s.before.kind === 'TagHead', text = s.before.kind === 'TextAnchor';
     return [location.x,location.y,location.z].every((v,i)=>near(v,s.before.pointXyz[i]+move.delta[i]))
-      && sameRotation(location.rotationRadians,s.before.rotationRadians);
+      && ((tag || text) ? item.className === (text ? 'TextNote' : 'IndependentTag') && item.uniqueId === s.before.elementUniqueId
+        && location.type === (text ? 'textAnchor' : 'tagHead') && (!text || location.coordinateSpace === 'model_feet') && location.ownerViewId === s.before.ownerViewId
+        && location.ownerViewUniqueId === s.before.ownerViewUniqueId
+        : location.type === 'point' && sameRotation(location.rotationRadians,s.before.rotationRadians));
   });
 }
 
@@ -96,8 +126,10 @@ export function committedModelPointMoveReadbackPlanV2(snapshot: AssignmentSnapsh
   if (snapshot.terminal || snapshot.outcome!=='active' || snapshot.completion_proposal || snapshot.execution_control?.state==='paused'
       || op.verification_operation_ids.length || appliedOperationHasVerifiedPostconditionV2(snapshot,op.operation_id)) return null;
   const p=retainedApply(snapshot,op), move=pointMove(op.input,p);
-  if (!move || move.ids.some(n=>!op.result!.affected_target_identities?.includes('element_id:'+n))) return null;
-  return {method:'POST',path:'/revit/get-element-summary',body:{elementIds:[...move.ids]}};
+  if (!move || [...move.ids,...move.preservedIds].some(n=>!op.result!.affected_target_identities?.includes('element_id:'+n))) return null;
+  if (move.preservedIds.length && op.result!.affected_target_identities!.length!==move.ids.length+move.preservedIds.length) return null;
+  return {method:'POST',path:'/revit/get-element-summary',body:{elementIds:[...move.ids,...move.preservedIds],
+    ...(move.preservedIds.length?{preservationScheduleIds:move.preservedIds}:{})}};
 }
 
 export function modelPointMovePostconditionSatisfiedV2(snapshot: AssignmentSnapshotV2, subject: OperationV2, result: OperationResultV2, payload: unknown): boolean {
@@ -113,5 +145,11 @@ export function modelPointMovePostconditionSatisfiedV2(snapshot: AssignmentSnaps
       || Date.parse(read.opened_at)<Date.parse(commit.completed_at) || Date.parse(result.completed_at)<Date.parse(read.opened_at)
       || payloadDigestV2(payload).digest!==result.raw_payload_hash) return false;
   const p=retainedApply(snapshot,subject);
-  return p!==null && modelPointMoveReadbackMatchesV2(subject.input,p,payload);
+  if(p===null)return false;
+  const move=pointMove(subject.input,p),body=row(read.input.body);
+  if(move?.preservedIds.length){
+    const same=(a:unknown,b:number[])=>Array.isArray(a)&&a.length===b.length&&new Set(a).size===a.length&&a.every(n=>id(n)&&b.includes(n));
+    if(!same(body.elementIds,[...move.ids,...move.preservedIds])||!same(body.preservationScheduleIds,move.preservedIds))return false;
+  }
+  return modelPointMoveReadbackMatchesV2(subject.input,p,payload);
 }

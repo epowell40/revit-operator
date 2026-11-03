@@ -1,4 +1,6 @@
 import { projectAdvisoryFollowupsV2 } from "./advisory_followups_projection.js";
+import { projectExecutionContinuation } from './execution_continuation.js';
+import { readImageInputDelivery } from '../desktop_image_delivery.js';
 import { projectWorkPlanScopeChecksV1, selectWorkPlanScopeReadIdsV1 } from './work_plan_scope_check.js';
 import { validWorkPlanScopeV1, type WorkPlanScopeV1 } from '../domain/assignment-kernel/work_plan_scope.js';
 import { compactWorkReviewV2 } from './work_review_handoff.js';
@@ -7,6 +9,7 @@ import type { AdvisoryFollowupDispositionV2 } from "../domain/assignment-kernel/
 import { advisoryVerificationV2, validAdvisoryProposalV1, type AdvisoryCompletionProposalV1 } from "../domain/assignment-kernel/execution_policy.js";
 import { assignmentWorkAllowanceV2, assignmentWorkBudgetStatusV2 } from "./assignment_work_allowance_v2.js";
 import { retainWorkPlanInspectionV2 } from "./work_plan_inspection.js";
+import { WORK_PLAN_INSPECTION_PATHS, WORK_PLAN_INSPECTION_GUIDANCE } from "./native_inspection_coverage.js";
 import { randomUUID } from "node:crypto";
 import { boundedWorkPlanPage, projectWorkPlan } from "./work_plan_projection.js";
 import { assignmentKernelV2ForBinding } from "./assignment_kernel_v2_factory.js";
@@ -15,8 +18,22 @@ import { deriveAndSettleAssignmentKernelV2, type AssignmentKernelBindingInputV2 
 import { evaluatePendingAssignmentCriteriaV2, DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2 } from "./assignment_kernel_v2_progress.js";
 import { workPlanPendingV2, type WorkPlanDeclarationV2 } from "../domain/assignment-kernel/work_plan.js";
 import { appliedOperationHasVerifiedPostconditionV2 } from "../domain/assignment-kernel/outcome.js";
+import { verifiedSavedPartialV2 } from "../domain/assignment-kernel/verified_saved_partial.js";
+import type { AssignmentSnapshotV2 } from '../domain/assignment-kernel/snapshot.js';
+
+/** Optional optimistic concurrency fence for a host command prepared from an
+ * earlier publication. No new completion semantics or evidence admission. */
+export function assertWorkPlanCommandVersion(snapshot: AssignmentSnapshotV2, action: string, expected?: number) {
+  if (expected === undefined) return;
+  if (action !== 'complete' || !Number.isSafeInteger(expected) || expected < 1) throw Error('work_plan_expected_version_invalid');
+  if (snapshot.assignment_version !== expected) throw Error('work_plan_version_changed');
+  if (!snapshot.quiescent || snapshot.provider_usage_hold || snapshot.in_flight_provider_call_ids.length
+      || snapshot.unresolved_unknown_operation_ids.length || snapshot.in_flight_operation_ids.length)
+    throw Error('work_plan_versioned_command_not_quiescent');
+}
 
 export function manageAssignmentWorkPlan(input: { binding: AssignmentKernelBindingInputV2; action: string;
+  expected_assignment_version?: number;
   scope_check?: WorkPlanScopeV1;
   reason?: string;
   location_hint?: WorkPlanLocationHintV2;
@@ -26,6 +43,7 @@ export function manageAssignmentWorkPlan(input: { binding: AssignmentKernelBindi
   if (!resolved || resolved.snapshot.terminal) throw new Error("work_plan_binding_stale_or_terminal");
   if (resolved.snapshot.execution_control?.state === "paused" && input.action !== "status" && input.action !== "update_followup") throw new Error("assignment_execution_paused");
   let snapshot = resolved.snapshot;
+  assertWorkPlanCommandVersion(snapshot, input.action, input.expected_assignment_version);
   if(input.action!=='check_scope'&&input.scope_check!==undefined)throw Error('work_plan_scope_arguments_invalid');
   if(input.action!=='locate' && input.location_hint!==undefined) throw new Error('work_plan_location_arguments_invalid');
   if (snapshot.completion_proposal && input.action !== "status" && input.action !== "update_followup") throw new Error("assignment_completion_proposal_pending");
@@ -52,6 +70,19 @@ export function manageAssignmentWorkPlan(input: { binding: AssignmentKernelBindi
   } else if(input.action==='locate') {
     if(!input.item_id || !input.location_hint || input.reason || input.operation_ids || input.declaration || input.completion_proposal || input.followup)
       throw new Error('work_plan_location_arguments_invalid');
+    if(input.location_hint.drafting?.stage==='checked'){
+      const d=input.location_hint.drafting;
+      for(const hash of [d.source_image_sha256,d.model_image_sha256]){
+        if(!hash)throw Error('drafting_check_images_required');
+        const delivery=readImageInputDelivery(snapshot.current_binding,hash);
+        if(hash===d.model_image_sha256){
+          const lastEdit=Math.max(0,...Object.values(snapshot.operations).filter(o=>o.requested_effect==='apply'&&o.persistent_effect!=='none')
+            .map(o=>Date.parse(o.result?.completed_at??o.opened_at)));
+          if(!Number.isFinite(Date.parse(delivery.started_at))||Date.parse(delivery.started_at)<=lastEdit)
+            throw Error('drafting_model_image_predates_edit: refresh the corresponding model region before recording the backcheck; keep drafted work.');
+        }
+      }
+    }
     snapshot=appendCurrentAssignmentKernelEventV2({goal_id:input.binding.assignment_id,binding:snapshot.current_binding,
       event_id:`work-plan-location:${randomUUID()}`,actor:'operator-work-plan',body:{event_type:'work_plan_location_recorded',item_id:input.item_id,location_hint:input.location_hint}}).snapshot;
   } else if (input.action === "defer" || input.action === "resume_item") {
@@ -75,12 +106,15 @@ export function manageAssignmentWorkPlan(input: { binding: AssignmentKernelBindi
       // This only rejects an early handoff. It does not execute another turn,
       // change a lease/budget, resolve a question, or certify checklist claims.
       // The existing owner may continue only while all normal controls admit it.
-      if (ready?.total && !budget.checkpoint_recommended && snapshot.outcome === 'active'
+      const untrackedRemainingWork = !snapshot.work_plan?.items.length && input.completion_proposal.remaining_work.length > 0;
+      if ((ready?.total || untrackedRemainingWork) && !budget.checkpoint_recommended && snapshot.outcome === 'active'
           && !snapshot.provider_usage_hold && !snapshot.progress_blocker
           && !snapshot.unresolved_unknown_operation_ids.length
           && !snapshot.pending_input_variable_ids.length && !snapshot.pending_review_ids.length) {
-        throw new Error('ready_work_remaining: The final handoff was not accepted. Ready checklist items remain: '
-          + ready.items.join(', ') + (ready.total > ready.items.length ? ' (more in status)' : '')
+        throw new Error('ready_work_remaining: The final handoff was not accepted. '
+          + (untrackedRemainingWork
+            ? 'Unfinished work is reported without retained next-work scope. Record one useful next work item from the current reference/model discrepancy, or its specific supported blocker; an exhaustive inventory is not required.'
+            : 'Ready checklist items remain: ' + ready!.items.join(', ') + (ready!.total > ready!.items.length ? ' (more in status)' : ''))
           + '. Continue a useful bounded batch, verify it, and recheck current host budget. Defer an actual missing-input, tool or user-required review blocker with a specific reason; do not defer merely unattempted work. '
           + 'If you need a context checkpoint, retain checklist updates and finish this provider turn with a brief progress handoff without propose_completion; the existing host loop may continue the same active task. Never repeat uncertain or completed edits.');
       }
@@ -99,13 +133,15 @@ export function manageAssignmentWorkPlan(input: { binding: AssignmentKernelBindi
         : { event_type: "work_plan_item_completed", item_id: input.item_id!, operation_ids: input.operation_ids!,
           ...(snapshot.work_plan?.items.find(item => item.item_id === input.item_id)?.kind === "inspection"
             ? { inspection: retainWorkPlanInspectionV2(snapshot, input.operation_ids!) } : {}) } }).snapshot;
-    if (input.action === "complete" && !workPlanPendingV2(snapshot)) {
+    if (input.action === "complete" && (!workPlanPendingV2(snapshot) || verifiedSavedPartialV2(snapshot))) {
       snapshot = evaluatePendingAssignmentCriteriaV2({ binding: snapshot.current_binding });
     }
     if (!snapshot.terminal) snapshot = deriveAndSettleAssignmentKernelV2(input.binding, "Declared multi-part task scope updated.");
   } else if (input.action !== "status") throw new Error("work_plan_action_invalid");
   return { ok: true, outcome: snapshot.outcome, work_plan_required: !advisoryVerificationV2(snapshot) && snapshot.spec.work_plan_required === true,
-    ...(advisoryVerificationV2(snapshot) ? { verification_policy: "advisory", completion_proposal: snapshot.completion_proposal ?? null, advisory_followups: projectAdvisoryFollowupsV2(snapshot, input.followup_start), checklist_claims: snapshot.work_plan_claims ?? [],
+    execution_continuation: projectExecutionContinuation(snapshot),
+    verification_policy: advisoryVerificationV2(snapshot) ? "advisory" : "strict",
+    ...(advisoryVerificationV2(snapshot) ? { completion_proposal: snapshot.completion_proposal ?? null, advisory_followups: projectAdvisoryFollowupsV2(snapshot, input.followup_start), checklist_claims: snapshot.work_plan_claims ?? [],
       notice: "Record complete for each declared item before propose_completion. In advisory mode, omit operation_ids for already-correct work; reference retained apply IDs for edits and saved artifacts to associate their checks. These are unverified item claims; native scope checks and source/layout review remain separate. Then propose_completion with claimed_completed, remaining_work and uncertainties. This never certifies completion." } : {}),
     work_allowance: { ...assignmentWorkAllowanceV2(snapshot), used_provider_calls: Object.keys(snapshot.provider_calls).length },
     budget_status: assignmentWorkBudgetStatusV2(snapshot, DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, new Date().toISOString()),
@@ -113,8 +149,11 @@ export function manageAssignmentWorkPlan(input: { binding: AssignmentKernelBindi
     review_handoff: compactWorkReviewV2(snapshot),
     scope_checks: projectWorkPlanScopeChecksV1(snapshot),
     interpretation_notice: "Scope descriptions and source basis are assistant interpretations. Item completion binds distinct independently verified operations; it is not independent certification of drawing coverage.",
+    edit_completion_guidance: "For an edit item, cite only existing applied edit operation IDs from available_verified_operations. Their accepted native verification reads are already associated; do not include read IDs in the edit's operation_ids. Before a scoped handoff, record finished verified edit items; keep unfinished required preservation and visual checks in their dependent inspection items. Do not drop those checks or repeat edits to correct bookkeeping. Inspection items use fresh native read IDs and their own coverage rules.",
+    planning_guidance: "Declare actual changes as edit items. Group the requirements fulfilled by one edit together; a single edit cannot be credited to several distinct edit items. Checking alignment, source appearance or content that is already correct belongs in an inspection item with the applicable edit dependencies, rather than an invented additional edit. Preserve existing scope and report unresolved work; do not manufacture model changes for the checklist.",
+    inspection_guidance: WORK_PLAN_INSPECTION_GUIDANCE,
     available_inspection_operations: boundedWorkPlanPage(Object.values(snapshot.operations).filter(op => op.requested_effect === "read" && op.result?.authority === "native-host" && op.result.status === "succeeded"
-      && ["/revit/get-connectors", "/revit/view-owned-detailing"].includes(op.request_identity?.path ?? ""))
+      && WORK_PLAN_INSPECTION_PATHS.includes(op.request_identity?.path as any))
       .reverse().map(op => ({ operation_id: op.operation_id, path: op.request_identity?.path, opened_at: op.opened_at })), input.operation_start ?? 0, 1500),
     available_verified_operations: boundedWorkPlanPage(Object.values(snapshot.operations).filter(op => op.requested_effect === "apply"
       && op.persistent_effect === "applied" && appliedOperationHasVerifiedPostconditionV2(snapshot, op.operation_id))

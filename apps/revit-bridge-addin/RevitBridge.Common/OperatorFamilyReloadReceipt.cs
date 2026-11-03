@@ -32,7 +32,7 @@ namespace RevitBridge.Common
                 var uniqueId = r.GetProperty("family_unique_id").GetString();
                 if (id <= 0 || id != root.GetProperty("loadedFamilyId").GetInt64() || string.IsNullOrWhiteSpace(uniqueId)) return true;
                 settlement = OperatorAttemptSettlement.Applied(method, path, "native_family_load_returned_and_project_identity_verified", "native_receipt",
-                    new[] { "element:" + id }, new[] { "family_session:" + r.GetProperty("session_id").GetString(), "family_unique_id:" + uniqueId });
+                    new[] { "element_id:" + id }, new[] { "family_session:" + r.GetProperty("session_id").GetString(), "family_unique_id:" + uniqueId });
             }
             catch (Exception) { }
             return true;

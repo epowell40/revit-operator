@@ -113,6 +113,16 @@ namespace RevitBridge.Handlers
                 return Task.FromResult<object>(readback);
             }
 
+            if (action == "create_legend")
+            {
+                // Discovery precedes all creation transactions. Keep invalid
+                // explicit sources as errors; only native absence is a known
+                // no-effect prerequisite, not a generic exception downgrade.
+                var sourcePreflight = LegendCreationPreflight.CheckSource(
+                    ResolveLegendSourceView(doc, p.sourceViewId) != null);
+                if (sourcePreflight != null) return Task.FromResult<object>(sourcePreflight);
+            }
+
             var plan = BuildPlan(doc, p, action, activeView);
             if (dryRun)
             {

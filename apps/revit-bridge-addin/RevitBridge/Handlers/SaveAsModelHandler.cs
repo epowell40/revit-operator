@@ -78,7 +78,7 @@ namespace RevitBridge.Handlers
 
             enteredSaveExecution = true;
             var saved = OperatorNativeSaveAsExecution.Execute(resolved, preview, overwrite,
-                () => ReadActiveDocument(app, doc), () => doc.SaveAs(resolved, options));
+                () => ReadActiveDocument(app, doc), () => doc.SaveAs(resolved, options), () => app.Application.VersionNumber);
 
             return Task.FromResult<object>(new
             {

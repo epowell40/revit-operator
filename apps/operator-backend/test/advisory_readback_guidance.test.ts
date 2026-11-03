@@ -38,6 +38,24 @@ test("advisory hints are bounded and require native observation context",()=>{
   s.observations={};assert.equal(codexAssignmentEvidenceContextV2(s),'');
 });
 
+test('recent route checks stay visible and explain exact per-commit scope without inventing verification',()=>{
+ const s=fixture();
+ s.provider_calls={};s.spec.created_at='2026-01-01T00:00:00Z';s.spec.requested_effect='apply';
+ Object.assign(s.spec.execution_policy,{max_provider_calls:64,max_total_tokens:8000000,max_operations:256,max_wall_clock_ms:1200000});
+ for(let i=0;i<12;i++)s.operations['route'+i]={...s.operations.edit,operation_id:'route'+i,settled_assignment_version:i+10,
+  request_identity:{path:'/revit/create-mep-route'},target:{target_id:'element_id:'+(100+i)},
+  result:{...s.operations.edit.result,affected_target_identities:['element_id:'+(100+i)]}};
+ const before=JSON.stringify(s),index=JSON.parse(codexAssignmentEvidenceContextV2(s));
+ assert.equal(index.pending_verification[0].operation_id,'route11');
+ assert.deepEqual(index.pending_verification_projection,{total_count:13,returned_count:8,complete:false});
+ const hint=index.pending_verification[0];assert.deepEqual(hint.next_inspection.body.elementIds,[111]);
+ assert.match(hint.guidance,/next_inspection exactly.*Do not merge.*connected equipment/i);
+ assert.match(hint.guidance,/separate calls.*one model turn/i);
+ assert.equal(hint.check_state,'no_recognized_postcondition');assert.equal(JSON.stringify(s),before);
+ const desktop=desktopAssignmentFeedbackInputV2([],s);
+ assert.match(JSON.stringify(desktop),/pending_verification_projection/);
+});
+
 test('large native transaction inventories stay retrievable without being repeated in every worker and desktop context',()=>{
  const s=fixture();s.provider_calls={};s.spec.created_at='2026-01-01T00:00:00Z';s.spec.requested_effect='apply';
  Object.assign(s.spec.execution_policy,{max_provider_calls:64,max_total_tokens:8000000,max_operations:256,max_wall_clock_ms:1200000});

@@ -1,11 +1,11 @@
 import { advisoryVerificationV2 } from "../execution_policy.js";
 import { workUnitInputVariableIdsV2 } from "../input_registry.js";
 import { CONVERSATION_EVIDENCE_GUIDANCE } from "../../../conversation_evidence_guidance.js";
-import { inspectionIsCurrentV2, workPlanPendingV2 } from "../work_plan.js";
+import { allRemainingWorkPlanItemsDeferredV2, inspectionIsCurrentV2, workPlanPendingV2 } from "../work_plan.js";
 import { canonicalJsonV2 } from "../canonical.js";
 import { assignmentActiveExecutionTimeMsV2 } from "./execution_time.js";
 import { readyNativeRollbackPreviewV2 } from "./ready_native_preview.js";
-import { nativeCommitProgressIdentityV2, nativeVerificationProgressIdentityV2 } from "./native_work_progress.js";
+import { nativeCommitProgressIdentityV2, nativeVerificationProgressIdentityV2, nativeVerificationAttemptIsRetainedV2, draftingConstructionProgressV2 } from "./native_work_progress.js";
 import { ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2, type AssignmentCriterionSpecV2 } from "../assignment_spec.js";
 import type { AssignmentSnapshotV2 } from "../snapshot.js";
 import { semanticFactIdentityV2 } from "../observation.js";
@@ -129,8 +129,12 @@ export function deriveProgressGapsV2(snapshot: AssignmentSnapshotV2): readonly P
     work_unit_ids: ["work-primary", "work-discovery", "work-evidence"], required_fact_ids: [], current_observation_ids: [],
     reason: snapshot.work_plan
       ? readyPreviewFollowupV2(snapshot) + "Continue the declared scope: " + snapshot.work_plan.items.filter(item => !item.completed_at || item.kind === "inspection" && !inspectionIsCurrentV2(snapshot,item)).map(item => item.item_id + ": " + item.description).join("; ").slice(0, 2400)
-        + ". Use operator_manage_work_plan to complete each item with its distinct verified operationIds; inspection items need fresh native connector or copied-view-detailing reads of all dependent edit targets after the latest edit. Declare inspections with kind=inspection and dependsOn naming edit items. Inspection coverage does not certify engineering correctness. One item cannot complete the entire request."
-      : "Inspect the source, then use operator_manage_work_plan action=declare before editing. Decompose the full requested area into independently verifiable room/system/branch items, with source basis and explicit assumptions. Include all required work; declare at least two items. Planning cannot authorize extra work or establish native completion."
+        + ". Use operator_manage_work_plan to complete each item with its distinct verified operationIds; inspection items need fresh native reads covering all dependent edit targets after the latest edit. Declare inspections with kind=inspection and dependsOn naming edit items. Inspection coverage does not certify engineering correctness. One completed item cannot complete other pending requested work."
+      : "Inspect the source, then use operator_manage_work_plan action=declare before editing. Retain the full original user request, with source basis and explicit assumptions. "
+        + (snapshot.spec.work_plan_min_items===1
+          ? "One item is sufficient for a genuinely single-effect request. For a composite request, separate every requested edit, relationship/formatting requirement, output file and final inspection, even when they concern only one element. A verified created element cannot stand in for those other deliverables. "
+          : "Decompose the full requested area into independently verifiable room/system/branch items; declare at least two items. ")
+        + "Planning cannot authorize extra work, grant extra resources or establish native completion."
   });
   if (snapshot.spec.result_delivery_required && !snapshot.result_delivery) {
     gaps.push({
@@ -270,7 +274,7 @@ export function criteriaPendingEvaluationV2(snapshot: AssignmentSnapshotV2): Rea
   for (const criterion of snapshot.spec.criteria) {
     // A first successful native edit proves a result exists, but it cannot
     // certify a multi-item drawing assignment while declared work remains.
-    if (snapshot.spec.requested_effect === "apply" && workPlanPendingV2(snapshot)
+    if (snapshot.spec.requested_effect === "apply" && workPlanPendingV2(snapshot) && !verifiedSavedPartialV2(snapshot)
         && criterion.semantic_fact_requirements.length === 1
         && criterion.semantic_fact_requirements[0] === "task.result_available") continue;
     const observations = relevantObservationIds(snapshot, criterion);
@@ -288,19 +292,29 @@ export function assignmentProgressBudgetBlockerV2(snapshot: AssignmentSnapshotV2
   if (providerCalls >= budget.max_provider_calls) return "provider_call_budget_exhausted";
   if (reasoningTurns >= budget.max_reasoning_turns) return "reasoning_turn_budget_exhausted";
   if (Object.keys(snapshot.operations).length>=budget.max_operations)return 'operation_budget_exhausted';
+  // A count of calls without construction is pacing advice, not evidence of
+  // a repeated no-progress cycle. Calibration and reconciliation can require
+  // distinct useful reads. Keep the frozen resource and actual progress-epoch
+  // blockers below; do not terminate an unfinished drawing at an arbitrary
+  // call count while its authorized allocation remains available.
   return assignmentNativeReadbackResourceBlockerV2(snapshot,budget,now,0);
+}
+
+/** Shared count only; callers cannot reset or grant progress with this value. */
+export function assignmentConsecutiveNoProgressEpochsV2(snapshot: AssignmentSnapshotV2): number {
+  const latest = snapshot.progress_epochs.at(-1);
+  const noProgress = latest && !latest.genuine_progress
+    ? [...snapshot.progress_epochs].reverse().findIndex((epoch) => epoch.genuine_progress
+      || canonicalJsonV2(epoch.unresolved_gap_ids) !== canonicalJsonV2(latest.unresolved_gap_ids))
+    : 0;
+  return noProgress < 0 ? snapshot.progress_epochs.length : noProgress;
 }
 
 /** Finite host readbacks consume operations/time, but no paid provider turn. */
 export function assignmentNativeReadbackResourceBlockerV2(snapshot: AssignmentSnapshotV2, budget: AssignmentProgressBudgetV2, now: string, additionalOperations:number): string | null {
   if(!Number.isSafeInteger(additionalOperations)||additionalOperations<0)return 'invalid_readback_operation_count';
   const operationCount = Object.keys(snapshot.operations).length;
-  const latest = snapshot.progress_epochs.at(-1);
-  const noProgress = latest && !latest.genuine_progress
-    ? [...snapshot.progress_epochs].reverse().findIndex((epoch) => epoch.genuine_progress
-      || canonicalJsonV2(epoch.unresolved_gap_ids) !== canonicalJsonV2(latest.unresolved_gap_ids))
-    : 0;
-  const consecutiveNoProgress = noProgress < 0 ? snapshot.progress_epochs.length : noProgress;
+  const consecutiveNoProgress = assignmentConsecutiveNoProgressEpochsV2(snapshot);
   const tokens = Object.values(snapshot.provider_calls).reduce((sum, call) => sum + (call.usage?.total_tokens ?? 0), 0);
   if (operationCount+additionalOperations>budget.max_operations) return "operation_budget_exhausted";
   if (!advisoryVerificationV2(snapshot) && consecutiveNoProgress >= budget.max_no_progress_epochs) return "no_progress_budget_exhausted";
@@ -324,6 +338,9 @@ export function decideAssignmentProgressV2(input: Readonly<{
   snapshot: AssignmentSnapshotV2;
   budget: AssignmentProgressBudgetV2;
   now: string;
+  /** In-process native transport ownership lookup, never request JSON. Ordinary
+   * controller callers omit it and continue to await every native operation. */
+  nativeInteractiveInput?: (snapshot: AssignmentSnapshotV2) => string | null;
 }>): ProgressDecisionV2 {
   const { snapshot, budget, now } = input;
   if (snapshot.terminal) {
@@ -336,6 +353,20 @@ export function decideAssignmentProgressV2(input: Readonly<{
     return { ...decisionBase(snapshot, now, "await_provider", "Canonical provider requests remain in flight."), decision: "await_provider", provider_call_ids: snapshot.in_flight_provider_call_ids };
   }
   if (snapshot.in_flight_operation_ids.length > 0) {
+    const interactiveId = input.nativeInteractiveInput?.(snapshot);
+    if (interactiveId && snapshot.in_flight_operation_ids.length === 1
+      && snapshot.in_flight_operation_ids[0] === interactiveId
+      && snapshot.outcome === 'active' && (snapshot.execution_control === undefined || snapshot.execution_control.state === 'running')
+      && !snapshot.quiescent && !snapshot.provider_usage_hold && !snapshot.provider_budget_exhausted
+      && !snapshot.completion_proposal && !snapshot.unresolved_unknown_operation_ids.length
+      && !snapshot.pending_input_variable_ids.length && !snapshot.pending_review_ids.length) {
+      const exhausted = assignmentProgressBudgetBlockerV2(snapshot, budget, now);
+      if (exhausted) return { ...decisionBase(snapshot, now, 'blocked', exhausted), decision: 'blocked', outcome: 'blocked',
+        gap_ids: [`effect:${interactiveId}`] };
+      return { ...decisionBase(snapshot, now, 'admit_reasoning_turn', 'owned_native_interaction_requires_ui_input'),
+        decision: 'admit_reasoning_turn', gap_ids: [`effect:${interactiveId}`], criterion_ids: [],
+        expected_information: ['Supply only the owned Revit placement interaction or await its original native result. No other native call, report, save or task completion while it remains pending.'] };
+    }
     return { ...decisionBase(snapshot, now, "await_operation", "Canonical operations remain in flight."), decision: "await_operation", operation_ids: snapshot.in_flight_operation_ids };
   }
   if (snapshot.execution_control?.state === "paused") {
@@ -387,6 +418,22 @@ export function decideAssignmentProgressV2(input: Readonly<{
   if (snapshot.provider_usage_hold) {
     return { ...decisionBase(snapshot, now, "await_provider_resume", "Provider usage is held until an explicit fenced Resume."),
       decision: "await_provider_resume", hold_id: snapshot.provider_usage_hold.hold_id };
+  }
+  // Retain a truthful incomplete checkpoint once every remaining declared item
+  // has an explicit blocker/question. Repeated reporting cannot fulfill those
+  // criteria. Existing drain, Pause, unknown/input/review and usage fences above
+  // still win. An attempted but unproven native read may stop incomplete only
+  // after explicit deferrals; unmet verification gaps and effects stay intact.
+  if (!advisoryVerificationV2(snapshot) && snapshot.quiescent
+      && snapshot.spec.requested_effect === "apply" && snapshot.spec.work_plan_required
+      && allRemainingWorkPlanItemsDeferredV2(snapshot)) {
+    const unverified = Object.values(snapshot.operations).filter(operation => operation.requested_effect === "apply"
+      && operation.persistent_effect === "applied" && !appliedOperationHasVerifiedPostconditionV2(snapshot, operation.operation_id));
+    if (unverified.every(operation => nativeVerificationAttemptIsRetainedV2(snapshot, operation.operation_id))) {
+      const reason = unverified.length ? "all_remaining_work_deferred_verification_unresolved" : "all_remaining_work_deferred";
+      return { ...decisionBase(snapshot,now,"blocked",reason),
+        decision:"blocked",outcome:"blocked",gap_ids:gaps.map(gap=>gap.gap_id) };
+    }
   }
   if (!advisoryVerificationV2(snapshot) && gaps.length === 0) {
     return { ...decisionBase(snapshot, now, "blocked", "Active quiescent Assignment has no admissible unresolved work."), decision: "blocked", outcome: "blocked", gap_ids: [] };
@@ -531,9 +578,28 @@ export function buildProgressEpochV2(input: Readonly<{
 }>): ProgressEpochV2 {
   const beforeFacts = new Set(Object.values(input.before.observations).flatMap((observation) => observation.facts.map(semanticFactIdentityV2)));
   const newObservations = Object.keys(input.after.observations).filter((id) => !input.before.observations[id]).sort();
+  const coveredSelections = new Map<string, Set<string>>();
+  for (const fact of Object.values(input.before.observations).flatMap(observation => observation.facts)) {
+    const path = fact.dimensions?.selection_path;
+    if (fact.fact_class !== "control" || fact.fact_id !== "control.evidence_selection_available"
+        || fact.value !== true || typeof path !== "string") continue;
+    const scope = canonicalJsonV2([fact.dimensions?.capability_id, fact.dimensions?.evidence_id]);
+    const paths = coveredSelections.get(scope) ?? new Set<string>();
+    paths.add(path); coveredSelections.set(scope, paths);
+  }
   const newFactRecords = newObservations.flatMap((id) =>
     input.after.observations[id]?.facts.map((fact) => ({ fact, identity: semanticFactIdentityV2(fact) })) ?? [])
-    .filter(({ identity }) => !beforeFacts.has(identity));
+    .filter(({ fact, identity }) => {
+      if (beforeFacts.has(identity)) return false;
+      const nextPath = fact.dimensions?.selection_path;
+      if (fact.fact_class !== "control" || fact.fact_id !== "control.evidence_selection_available" || typeof nextPath !== "string") return true;
+      const paths = coveredSelections.get(canonicalJsonV2([fact.dimensions?.capability_id, fact.dimensions?.evidence_id]));
+      if (!paths) return true;
+      for (let index = 0; index < nextPath.length; index += 1) {
+        if ((nextPath[index] === "." || nextPath[index] === "[") && paths.has(nextPath.slice(0, index))) return false;
+      }
+      return true;
+    });
   const newFacts = unique(newFactRecords.map(({ identity }) => identity));
   const previousDiscoveryReads = new Set(Object.keys(input.before.observations)
     .map(id => supportingDiscoveryReadIdentityV2(input.before, id, input.supporting_discovery_read_identities?.before)).filter(identity => identity !== null));
@@ -642,3 +708,4 @@ export function buildProgressEpochV2(input: Readonly<{
     recorded_at: input.recorded_at
   };
 }
+import { verifiedSavedPartialV2 } from "../verified_saved_partial.js";

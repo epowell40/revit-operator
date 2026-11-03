@@ -99,18 +99,36 @@ namespace RevitBridge.Logic
         public static string CurrentSnapshot(Document doc, VectorDraftingStoredImport state)
         {
             var plan = Plan(state); View(doc, state);
-            if (!state.Parts.Select(p => p.Index).SequenceEqual(Enumerable.Range(0, state.Parts.Count)) || state.Parts.Count > plan.partCount
+            if (!state.Parts.Select(p => p.Index).SequenceEqual(Enumerable.Range(0, state.Parts.Count)) || state.Parts.Count > PartCount(plan, state)
                 || state.Parts.SelectMany(p => p.Entities).Select(e => e.Id).Distinct().Count() != state.Parts.Sum(p => p.Entities.Count))
                 throw new InvalidOperationException("Vector part ownership/order changed.");
             foreach (var part in state.Parts)
             {
-                var expected = plan.entities.Skip(part.Index * plan.layout.partSize).Take(plan.layout.partSize).ToArray();
+                var expected = ExpectedPart(plan, state, part.Index);
                 if (!expected.Select(e => e.id).SequenceEqual(part.Entities.Select(e => e.PlanEntityId))
                     || expected.Where((e, i) => e.sourceId != part.Entities[i].SourceId || e.kind != part.Entities[i].Kind).Any())
                     throw new InvalidOperationException("Vector source/part entity membership changed.");
                 if (PartSnapshot(doc, state, part) != part.NativeSnapshotSha256) throw new InvalidOperationException("An owned vector part changed. Inspect/reconcile that result, do not duplicate it.");
             }
             return CanonicalHash(state);
+        }
+        public static int PartCount(VectorDraftingNativePlan plan, VectorDraftingStoredImport state)
+        {
+            if (state.Renderer == "operator.vector-drafting-native.v1") return plan.partCount;
+            if (state.Renderer == VectorDraftingAnnotationPolicy.Renderer) return VectorDraftingAnnotationPolicy.PartCount(plan);
+            throw new InvalidOperationException("Unrecognized vector ownership representation.");
+        }
+        public static VectorDraftingNativeEntity[] ExpectedPart(VectorDraftingNativePlan plan, VectorDraftingStoredImport state, int index)
+        {
+            if (state.Renderer == VectorDraftingAnnotationPolicy.Renderer) return VectorDraftingAnnotationPolicy.Part(plan, index);
+            if (state.Renderer != "operator.vector-drafting-native.v1" || index < 0 || index >= plan.partCount)
+                throw new InvalidOperationException("Source representation/part is invalid.");
+            return plan.entities.Skip(index * plan.layout.partSize).Take(plan.layout.partSize).ToArray();
+        }
+        public static int ContentCount(VectorDraftingNativePlan plan, VectorDraftingStoredImport state)
+        {
+            PartCount(plan, state); // Reject unknown representations before accepting counts.
+            return state.Renderer == VectorDraftingAnnotationPolicy.Renderer ? VectorDraftingAnnotationPolicy.Entities(plan).Length : plan.entities.Count;
         }
         public static object ReadEntity(Document doc, VectorDraftingStoredImport state, VectorDraftingOwnedEntity owned)
         {

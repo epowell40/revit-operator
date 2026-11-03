@@ -206,7 +206,7 @@ test("Codex planner cancellation requests a protocol interrupt without aborting 
 
 test("codex base instructions explicitly steer spatial export workflows", () => {
   const instructions = getCodexBaseInstructionsForTest();
-  assert.match(instructions, /Spatial\/object-location rule:/);
+  assert.match(instructions, /When performing spatial Revit tasks, think like a drafter using feedback/);
   assert.match(instructions, /\/revit\/export-visible-elements/);
   assert.match(instructions, /\/revit\/pick-candidate-cluster/);
   assert.match(instructions, /host-aware\/exemplar-driven workflows/);

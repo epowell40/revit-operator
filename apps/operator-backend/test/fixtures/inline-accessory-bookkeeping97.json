@@ -1,0 +1,426 @@
+{
+  "provenance": "Synthetic before/after contract, informed by retained85/96 native shapes; not a live insertion or historical acceptance.",
+  "before": {
+    "schema": "operator.inline_accessory_bookkeeping.v1",
+    "complete": true,
+    "scope": "public_semantic_projection_not_hidden_state",
+    "candidateScanComplete": true,
+    "internals": [
+      {
+        "elementId": 90,
+        "uniqueId": "native-owner-unique-90",
+        "className": "Autodesk.Revit.DB.Element",
+        "categoryId": null,
+        "typeId": -1,
+        "hasLocation": false,
+        "hasBounds": false,
+        "schemaGuids": [],
+        "parameters": [
+          {
+            "id": -1140363,
+            "storage": "ElementId",
+            "readOnly": true,
+            "value": "-1"
+          },
+          {
+            "id": -1140362,
+            "storage": "ElementId",
+            "readOnly": true,
+            "value": "-1"
+          },
+          {
+            "id": -1013201,
+            "storage": "ElementId",
+            "readOnly": true,
+            "value": "-1"
+          },
+          {
+            "id": -1002002,
+            "storage": "String",
+            "readOnly": true,
+            "value": ""
+          },
+          {
+            "id": -1002001,
+            "storage": "String",
+            "readOnly": true,
+            "value": ""
+          }
+        ],
+        "dependentIds": [
+          90,
+          91
+        ]
+      },
+      {
+        "elementId": 91,
+        "uniqueId": "native-owner-unique-91",
+        "className": "Autodesk.Revit.DB.Element",
+        "categoryId": null,
+        "typeId": -1,
+        "hasLocation": false,
+        "hasBounds": false,
+        "schemaGuids": [],
+        "parameters": [
+          {
+            "id": -1140363,
+            "storage": "ElementId",
+            "readOnly": true,
+            "value": "-1"
+          },
+          {
+            "id": -1140362,
+            "storage": "ElementId",
+            "readOnly": true,
+            "value": "-1"
+          },
+          {
+            "id": -1013201,
+            "storage": "ElementId",
+            "readOnly": true,
+            "value": "-1"
+          },
+          {
+            "id": -1002002,
+            "storage": "String",
+            "readOnly": true,
+            "value": ""
+          },
+          {
+            "id": -1002001,
+            "storage": "String",
+            "readOnly": true,
+            "value": ""
+          }
+        ],
+        "dependentIds": [
+          91
+        ]
+      }
+    ],
+    "centerlines": [
+      {
+        "elementId": 11,
+        "uniqueId": "native-owner-unique-11",
+        "className": "Autodesk.Revit.DB.Element",
+        "categoryId": -2008001,
+        "parentId": 10,
+        "parentUniqueId": "native-owner-unique-10",
+        "schemaGuids": [],
+        "parameters": [
+          {
+            "id": -1140333,
+            "storage": "ElementId",
+            "readOnly": false,
+            "value": "99"
+          },
+          {
+            "id": -1114108,
+            "storage": "Double",
+            "readOnly": false,
+            "value": ".1"
+          },
+          {
+            "id": -1013405,
+            "storage": "Double",
+            "readOnly": false,
+            "value": "4"
+          }
+        ],
+        "parentParameters": [
+          {
+            "id": -1140333,
+            "storage": "ElementId",
+            "readOnly": false,
+            "value": "99"
+          },
+          {
+            "id": -1114108,
+            "storage": "Double",
+            "readOnly": true,
+            "value": ".1"
+          },
+          {
+            "id": -1013405,
+            "storage": "Double",
+            "readOnly": true,
+            "value": "4"
+          }
+        ]
+      }
+    ],
+    "system": {
+      "elementId": 80,
+      "uniqueId": "native-owner-unique-80",
+      "className": "Autodesk.Revit.DB.Mechanical.MechanicalSystem",
+      "typeId": 99,
+      "typeUniqueId": "system-type-99",
+      "parameters": "[]",
+      "typeParameters": "[]",
+      "members": [
+        {
+          "elementId": 70,
+          "uniqueId": "native-owner-unique-70"
+        }
+      ],
+      "network": [
+        {
+          "elementId": 10,
+          "uniqueId": "native-owner-unique-10"
+        },
+        {
+          "elementId": 40,
+          "uniqueId": "native-owner-unique-40"
+        },
+        {
+          "elementId": 50,
+          "uniqueId": "native-owner-unique-50"
+        },
+        {
+          "elementId": 70,
+          "uniqueId": "native-owner-unique-70"
+        }
+      ]
+    }
+  },
+  "after": {
+    "schema": "operator.inline_accessory_bookkeeping.v1",
+    "complete": true,
+    "scope": "public_semantic_projection_not_hidden_state",
+    "candidateScanComplete": true,
+    "internals": [
+      {
+        "elementId": 90,
+        "uniqueId": "native-owner-unique-90",
+        "className": "Autodesk.Revit.DB.Element",
+        "categoryId": null,
+        "typeId": -1,
+        "hasLocation": false,
+        "hasBounds": false,
+        "schemaGuids": [],
+        "parameters": [
+          {
+            "id": -1140363,
+            "storage": "ElementId",
+            "readOnly": true,
+            "value": "-1"
+          },
+          {
+            "id": -1140362,
+            "storage": "ElementId",
+            "readOnly": true,
+            "value": "-1"
+          },
+          {
+            "id": -1013201,
+            "storage": "ElementId",
+            "readOnly": true,
+            "value": "-1"
+          },
+          {
+            "id": -1002002,
+            "storage": "String",
+            "readOnly": true,
+            "value": ""
+          },
+          {
+            "id": -1002001,
+            "storage": "String",
+            "readOnly": true,
+            "value": ""
+          }
+        ],
+        "dependentIds": [
+          90,
+          91
+        ]
+      },
+      {
+        "elementId": 91,
+        "uniqueId": "native-owner-unique-91",
+        "className": "Autodesk.Revit.DB.Element",
+        "categoryId": null,
+        "typeId": -1,
+        "hasLocation": false,
+        "hasBounds": false,
+        "schemaGuids": [],
+        "parameters": [
+          {
+            "id": -1140363,
+            "storage": "ElementId",
+            "readOnly": true,
+            "value": "-1"
+          },
+          {
+            "id": -1140362,
+            "storage": "ElementId",
+            "readOnly": true,
+            "value": "-1"
+          },
+          {
+            "id": -1013201,
+            "storage": "ElementId",
+            "readOnly": true,
+            "value": "-1"
+          },
+          {
+            "id": -1002002,
+            "storage": "String",
+            "readOnly": true,
+            "value": ""
+          },
+          {
+            "id": -1002001,
+            "storage": "String",
+            "readOnly": true,
+            "value": ""
+          }
+        ],
+        "dependentIds": [
+          91
+        ]
+      }
+    ],
+    "centerlines": [
+      {
+        "elementId": 11,
+        "uniqueId": "native-owner-unique-11",
+        "className": "Autodesk.Revit.DB.Element",
+        "categoryId": -2008001,
+        "parentId": 10,
+        "parentUniqueId": "native-owner-unique-10",
+        "schemaGuids": [],
+        "parameters": [
+          {
+            "id": -1140333,
+            "storage": "ElementId",
+            "readOnly": false,
+            "value": "99"
+          },
+          {
+            "id": -1114108,
+            "storage": "Double",
+            "readOnly": false,
+            "value": ".2"
+          },
+          {
+            "id": -1013405,
+            "storage": "Double",
+            "readOnly": false,
+            "value": "4"
+          }
+        ],
+        "parentParameters": [
+          {
+            "id": -1140333,
+            "storage": "ElementId",
+            "readOnly": false,
+            "value": "99"
+          },
+          {
+            "id": -1114108,
+            "storage": "Double",
+            "readOnly": true,
+            "value": ".2"
+          },
+          {
+            "id": -1013405,
+            "storage": "Double",
+            "readOnly": true,
+            "value": "4"
+          }
+        ]
+      },
+      {
+        "elementId": 21,
+        "uniqueId": "native-owner-unique-21",
+        "className": "Autodesk.Revit.DB.Element",
+        "categoryId": -2008001,
+        "parentId": 20,
+        "parentUniqueId": "native-owner-unique-20",
+        "schemaGuids": [],
+        "parameters": [
+          {
+            "id": -1140333,
+            "storage": "ElementId",
+            "readOnly": false,
+            "value": "99"
+          },
+          {
+            "id": -1114108,
+            "storage": "Double",
+            "readOnly": false,
+            "value": "0"
+          },
+          {
+            "id": -1013405,
+            "storage": "Double",
+            "readOnly": false,
+            "value": "4"
+          }
+        ],
+        "parentParameters": [
+          {
+            "id": -1140333,
+            "storage": "ElementId",
+            "readOnly": false,
+            "value": "99"
+          },
+          {
+            "id": -1114108,
+            "storage": "Double",
+            "readOnly": true,
+            "value": "0"
+          },
+          {
+            "id": -1013405,
+            "storage": "Double",
+            "readOnly": true,
+            "value": "4"
+          }
+        ]
+      }
+    ],
+    "system": {
+      "elementId": 80,
+      "uniqueId": "native-owner-unique-80",
+      "className": "Autodesk.Revit.DB.Mechanical.MechanicalSystem",
+      "typeId": 99,
+      "typeUniqueId": "system-type-99",
+      "parameters": "[]",
+      "typeParameters": "[]",
+      "members": [
+        {
+          "elementId": 70,
+          "uniqueId": "native-owner-unique-70"
+        }
+      ],
+      "network": [
+        {
+          "elementId": 10,
+          "uniqueId": "native-owner-unique-10"
+        },
+        {
+          "elementId": 20,
+          "uniqueId": "native-owner-unique-20"
+        },
+        {
+          "elementId": 30,
+          "uniqueId": "native-owner-unique-30"
+        },
+        {
+          "elementId": 40,
+          "uniqueId": "native-owner-unique-40"
+        },
+        {
+          "elementId": 50,
+          "uniqueId": "native-owner-unique-50"
+        },
+        {
+          "elementId": 70,
+          "uniqueId": "native-owner-unique-70"
+        }
+      ]
+    }
+  }
+}

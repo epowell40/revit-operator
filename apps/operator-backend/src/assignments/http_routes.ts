@@ -1,4 +1,5 @@
 import type http from "node:http";
+import {desktopNativeCatalog,executeDesktopNativeCall,desktopNativeInteractionState} from './desktop_native_tools.js';
 import { activeProviderTurnForBinding, interruptActiveProviderForBinding } from "../codex/active_turns.js";
 import { assignmentDirections, steerAssignment } from "./task_steering.js";
 import { listTaskNavigationAsync } from "./task_navigation.js";
@@ -33,7 +34,7 @@ import {
   openAssignmentKernelChildOperationV2,
   settleAssignmentKernelOperationV2
 } from "./assignment_kernel_v2_execution.js";
-import { sameAssignmentBindingV2, type AssignmentSnapshotV2 } from "../domain/assignment-kernel/index.js";
+import { AssignmentKernelErrorV2, sameAssignmentBindingV2, type AssignmentSnapshotV2 } from "../domain/assignment-kernel/index.js";
 import { getRequestAssignmentPrincipalId, requestMatchesAssignmentPrincipalId } from "../request_context.js";
 import { getAssignmentKernelPublicationV2, listAssignmentKernelSessionIndexV2 } from "./assignment_kernel_v2_publication.js";
 
@@ -71,6 +72,18 @@ export async function handleAssignmentHttpRoute(
   url: URL,
   authorizeSession: (sessionId: string) => boolean
 ): Promise<boolean> {
+  if(req.method==='POST'&&['/api/assignments/v2/desktop-native/catalog','/api/assignments/v2/desktop-native/call','/api/assignments/v2/desktop-native/interaction'].includes(url.pathname)) {
+    try {
+      const body=await readJson(req,128_000) as JsonMap;
+      const binding=v2Binding(body);
+      if(!authorizeSession(binding.session_id))return true;
+      requireV2Principal(getAssignmentKernelSnapshotV2(binding.assignment_id));
+      const result=url.pathname.endsWith('/catalog')?await desktopNativeCatalog(binding):url.pathname.endsWith('/interaction')
+        ?desktopNativeInteractionState(binding):await executeDesktopNativeCall(binding,body);
+      writeJson(res,200,result);
+    }catch(error){writeJson(res,409,{error:error instanceof Error?error.message:String(error)});}
+    return true;
+  }
   if (req.method === "GET" && url.pathname === "/api/task-navigation") {
     if (!getRequestAssignmentPrincipalId()) { writeJson(res, 403, { error: "Task navigation requires an authenticated principal." }); return true; }
     if (url.searchParams.get("stream") === "1") {
@@ -298,6 +311,7 @@ export async function handleAssignmentHttpRoute(
       if (!authorizeSession(binding.session_id)) return true;
       requireV2Principal(getAssignmentKernelSnapshotV2(binding.assignment_id));
       const result = manageAssignmentWorkPlan({ binding, action: String(body?.action), declaration: body?.declaration as any, completion_proposal: body?.completion_proposal as any,
+        expected_assignment_version: body?.expected_assignment_version as number | undefined,
         location_hint: body?.location_hint as any,
         scope_check: body?.scope_check as any,
         item_id: body?.item_id as string, reason: body?.reason as string, operation_ids: body?.operation_ids as string[], start: body?.start as number,
@@ -308,7 +322,15 @@ export async function handleAssignmentHttpRoute(
         if(snapshot)retainDesktopReviewConversationV1(snapshot.current_binding);
       }
       writeJson(res, 200, result);
-    } catch (error) { writeJson(res, 409, { error: error instanceof Error ? error.message : String(error) }); }
+    } catch (error) {
+      const cause = error instanceof Error ? error.cause : undefined;
+      // This fixed domain explanation is useful for correcting the rejected
+      // declaration. Other exception causes, task data and stacks stay private.
+      const guidance = cause instanceof AssignmentKernelErrorV2
+        && cause.code === 'work_plan_dependencies_invalid' && error instanceof Error && error.message === cause.code
+        ? cause.message : undefined;
+      writeJson(res, 409, { error: error instanceof Error ? error.message : String(error), ...(guidance ? { guidance } : {}) });
+    }
     return true;
   }
   if (req.method === "POST" && url.pathname === "/api/assignments/v2/criteria/evaluate") {

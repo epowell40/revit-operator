@@ -9,5 +9,6 @@
   <ItemGroup>
     <ProjectReference Include="..\DynamicRevitSdk\DynamicRevitSdk.csproj" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" />
+    <Compile Include="..\..\revit-bridge-addin\RevitBridge.Common\NativeApiMutationNames.cs" Link="Shared\NativeApiMutationNames.cs" />
   </ItemGroup>
 </Project>

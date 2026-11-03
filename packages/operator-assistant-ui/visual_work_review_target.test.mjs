@@ -1,6 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {createHash}from'node:crypto';
 import fs from 'node:fs';import {reviewTestPng}from'./fixtures/visual-review-image.mjs';
 import {reviewCurrentWork,normalizeVisualReviewRequest,visualWorkReviewModelOutput}from'./visual_work_review.mjs';
+import {readVisualReviewUiIdentityV1}from'./visual_work_review.mjs';
 const image='iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAYAAACM/rhtAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAcSURBVFhH7cEBAQAAAIIg/69uSEABAAAAAAB8GhkoAAFF1RG0AAAAAElFTkSuQmCC';
 const owner={assignment_id:'assignment',session_id:'session',run_id:'run',generation:1,principal_id:'principal',document_fingerprint:'project'};
 const request={view_id:41,capture_mode:'target_view',checks:[{id:'gap',expected:'No extra blank row below headings.'}]};
@@ -19,6 +20,16 @@ function setup(status='mismatch'){
   requestResponse:async body=>{calls.providers.push(body);clock+=60000;return{id:'resp_target',status:'completed',output:[],output_text:JSON.stringify({checks:[{id:'gap',status,observed:'An extra blank band is visible below headings.',correction:status==='mismatch'?'Remove only the blank data row.':''}]})};}};
  return{h,calls,context,capture};
 }
+
+test('native target review retains the failed post-review identity response without a screen fallback or native verdict',async()=>{
+ const {h,calls,context}=setup();h.readTargetContext=async()=>{calls.contexts++;if(calls.contexts===3)
+  await readVisualReviewUiIdentityV1(async()=>new Response(JSON.stringify({code:'NATIVE_TRANSPORT_LISTENER_UNTRUSTED',request_dispatched:false,outcome_unknown:false,retryable:true,reconciliation_required:false}),{status:503}));return context();};
+ const r=await reviewCurrentWork(request,h);assert.equal(r.state,'unavailable');assert.equal(r.reason,'visual_review_native_identity_unavailable');
+ assert.equal(r.capture.frame.kind,'native_target_view');assert.equal(r.reviewer_response_id,'resp_target');assert.equal(calls.captures,1);assert.equal(calls.providers.length,1);
+ assert.equal(r.raw_review_evidence.native_identity_observations.length,2);assert.equal(r.raw_review_evidence.native_target_exports.length,1);
+ assert.equal(r.identity_read_failure.http_status,503);assert.equal(r.identity_read_failure.native_error_code,'NATIVE_TRANSPORT_LISTENER_UNTRUSTED');assert.equal(r.identity_read_failure.retryable,true);
+ assert.deepEqual(r.checks,[]);assert.equal(r.native_postcondition_verified,false);assert.equal(r.whole_task_verified,false);
+});
 test('native target review examines actual inactive M002 pixels and keeps sheet identity through long reviewer latency',async()=>{
  const {h,calls}=setup(),result=await reviewCurrentWork(request,h);assert.equal(result.state,'mismatch');assert.equal(calls.contexts,4);assert.equal(calls.captures,2);assert.equal(calls.images.length,1);
  assert.equal(result.location.view_id,41);assert.equal(result.location.sheet_number,'M002');assert.equal(result.location.active_view_id,7);assert.equal(result.location.view_unique_id,'target-unique');
@@ -26,7 +37,8 @@ test('native target review examines actual inactive M002 pixels and keeps sheet 
  const body=calls.providers[0];assert.deepEqual(body.tools,[]);assert.equal(body.previous_response_id,undefined);assert.equal(body.input[0].content[1].image_url,'data:image/png;base64,'+image);
  const prompt=JSON.parse(body.input[0].content[0].text);assert.match(prompt.limits,/need not be active/);assert.equal(prompt.location.sheet_number,'M002');assert.equal(prompt.capture.content_hash,result.capture.content_hash);
  const projected=visualWorkReviewModelOutput({output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{evidence_id:'ev1_review'}]})},result,'ev1_review');
- const feedback=JSON.parse(projected.output).evidence_projections[0].visual_work_review;assert.equal(feedback.location.sheet_number,'M002');assert.equal(feedback.capture.width,40);assert(Buffer.byteLength(projected.output)<=8192);
+ assert(Array.isArray(projected.output));assert.equal(projected.output[1].type,'input_image');assert.equal(projected.output[1].image_url,'data:image/png;base64,'+image);
+ const feedback=JSON.parse(projected.output[0].text).evidence_projections[0].visual_work_review;assert.equal(feedback.location.sheet_number,'M002');assert.equal(feedback.capture.width,40);assert(Buffer.byteLength(projected.output[0].text)<=8192);
 });
 
 test('retained target pixels carry exact sheet/view identity and capture role without implying an edit delta',async()=>{

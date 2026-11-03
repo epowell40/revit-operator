@@ -858,8 +858,10 @@ test("bulk post-apply verification may accumulate target-bound readback across p
       tool: "revit_set_parameters",
       arguments: {
         changes: [
-          { elementId: 42, parameters: { "Drawn By": "EP", "Checked By": "QA" } },
-          { elementId: 43, parameters: { "Drawn By": "EP", "Checked By": "QA" } }
+          { elementId: 42, parameterName: "Drawn By", value: "EP" },
+          { elementId: 42, parameterName: "Checked By", value: "QA" },
+          { elementId: 43, parameterName: "Drawn By", value: "EP" },
+          { elementId: 43, parameterName: "Checked By", value: "QA" }
         ],
         apply: true,
         dryRun: false
@@ -1879,6 +1881,24 @@ test("authoritative read-only family investigation is not promoted by incidental
   const prompt = "Read-only investigation only; do not edit the model, open/edit/reload any family, change types, swap instances, or create files. In the currently open Snowdon Towers Revit model, find one placed equipment family instance and return a bounded family-evolution plan explicitly marked not executed. No changes whatsoever.";
 
   assert.equal(classifyAgentTurn(prompt), "inspection");
+});
+
+test("external family inspection remains read-only without authorizing retained editable sessions", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Perform complete read-only manufacturer family inspection. Inspect actual parameter types and units. Inspection only: do not load, place, select a configuration, edit or save. You may open an owned inspection and close it unsaved."));
+  try {
+    const filePath = "artifacts/reference/manufacturer.rfa";
+    const read = guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: {
+      method: "POST", path: "/revit/inspect-family-content", body: { filePath, includeParameters: true }
+    } });
+    assert.equal(read.allowed, true, read.message);
+    assert.equal(read.call?.effect, "read");
+    for (const path of ["/revit/open-family-doc", "/revit/load-family", "/revit/save-family-doc"]) {
+      const edit = guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: { method: "POST", path, body: { filePath } } });
+      assert.equal(edit.allowed, false, path);
+    }
+  } finally { endTeammateLoopOwner(lease); }
 });
 
 test("Codex MCP host guard treats serialized HTTP bodies like object bodies", () => {

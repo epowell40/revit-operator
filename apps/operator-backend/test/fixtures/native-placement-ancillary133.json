@@ -1,0 +1,479 @@
+{
+  "source": "retained original133 native after metadata; no baseline internal observation or historical pass inferred",
+  "sha256": "6960a24340f23c2b0f4977a9bef8c9674567d62f565413741b09c5c4125dda4b",
+  "internals": [
+    {
+      "elementId": 378358,
+      "uniqueId": "3d13c7d3-0af0-4341-a8dc-1c9a03b6c3ec-0005c5f6",
+      "exists": true,
+      "className": "Autodesk.Revit.DB.Element",
+      "categoryId": null,
+      "typeId": -1,
+      "ownerViewId": -1,
+      "hasLocation": false,
+      "hasBounds": false,
+      "parameters": [
+        {
+          "id": -1140363,
+          "storage": "ElementId",
+          "readOnly": true,
+          "value": "-1"
+        },
+        {
+          "id": -1140362,
+          "storage": "ElementId",
+          "readOnly": true,
+          "value": "-1"
+        },
+        {
+          "id": -1013201,
+          "storage": "ElementId",
+          "readOnly": true,
+          "value": "-1"
+        },
+        {
+          "id": -1002002,
+          "storage": "String",
+          "readOnly": true,
+          "value": null
+        },
+        {
+          "id": -1002001,
+          "storage": "String",
+          "readOnly": true,
+          "value": null
+        }
+      ],
+      "schemaGuids": [],
+      "dependentIds": [
+        378358,
+        1410847,
+        1410961,
+        1411027,
+        1411077,
+        1411186,
+        1411636,
+        1411751,
+        1422581,
+        1490143,
+        1492964
+      ]
+    },
+    {
+      "elementId": 669230,
+      "uniqueId": "1da30be4-c47a-43e4-8d1a-0f019adad8bd-000a362e",
+      "exists": true,
+      "className": "Autodesk.Revit.DB.Element",
+      "categoryId": null,
+      "typeId": -1,
+      "ownerViewId": -1,
+      "hasLocation": false,
+      "hasBounds": false,
+      "parameters": [
+        {
+          "id": -1140363,
+          "storage": "ElementId",
+          "readOnly": true,
+          "value": "-1"
+        },
+        {
+          "id": -1140362,
+          "storage": "ElementId",
+          "readOnly": true,
+          "value": "-1"
+        },
+        {
+          "id": -1013201,
+          "storage": "ElementId",
+          "readOnly": true,
+          "value": "-1"
+        },
+        {
+          "id": -1002002,
+          "storage": "String",
+          "readOnly": true,
+          "value": null
+        },
+        {
+          "id": -1002001,
+          "storage": "String",
+          "readOnly": true,
+          "value": null
+        }
+      ],
+      "schemaGuids": [],
+      "dependentIds": [
+        669230
+      ]
+    },
+    {
+      "elementId": 731023,
+      "uniqueId": "bd930a94-d127-4b5c-9d06-247f11140b64-000b278f",
+      "exists": true,
+      "className": "Autodesk.Revit.DB.Element",
+      "categoryId": null,
+      "typeId": -1,
+      "ownerViewId": -1,
+      "hasLocation": false,
+      "hasBounds": false,
+      "parameters": [
+        {
+          "id": -1140363,
+          "storage": "ElementId",
+          "readOnly": true,
+          "value": "-1"
+        },
+        {
+          "id": -1140362,
+          "storage": "ElementId",
+          "readOnly": true,
+          "value": "-1"
+        },
+        {
+          "id": -1013201,
+          "storage": "ElementId",
+          "readOnly": true,
+          "value": "-1"
+        },
+        {
+          "id": -1002002,
+          "storage": "String",
+          "readOnly": true,
+          "value": null
+        },
+        {
+          "id": -1002001,
+          "storage": "String",
+          "readOnly": true,
+          "value": null
+        }
+      ],
+      "schemaGuids": [],
+      "dependentIds": [
+        731023
+      ]
+    },
+    {
+      "elementId": 1321945,
+      "uniqueId": "fc9b5b8a-20b8-4963-a301-a4f2e7e903aa-00142bd9",
+      "exists": true,
+      "className": "Autodesk.Revit.DB.Element",
+      "categoryId": null,
+      "typeId": -1,
+      "ownerViewId": -1,
+      "hasLocation": false,
+      "hasBounds": false,
+      "parameters": [
+        {
+          "id": -1140363,
+          "storage": "ElementId",
+          "readOnly": true,
+          "value": "-1"
+        },
+        {
+          "id": -1140362,
+          "storage": "ElementId",
+          "readOnly": true,
+          "value": "-1"
+        },
+        {
+          "id": -1013201,
+          "storage": "ElementId",
+          "readOnly": true,
+          "value": "-1"
+        },
+        {
+          "id": -1002002,
+          "storage": "String",
+          "readOnly": true,
+          "value": null
+        },
+        {
+          "id": -1002001,
+          "storage": "String",
+          "readOnly": true,
+          "value": null
+        }
+      ],
+      "schemaGuids": [],
+      "dependentIds": [
+        1321945
+      ]
+    }
+  ],
+  "unchangedFlexDependent": {
+    "elementId": 1485146,
+    "uniqueId": "5394a5eb-ec67-4ba7-89e1-3a5581615cb8-0016a95a",
+    "exists": true,
+    "className": "Autodesk.Revit.DB.Element",
+    "categoryId": -2008021,
+    "typeId": -1,
+    "ownerViewId": -1,
+    "hasLocation": false,
+    "hasBounds": true,
+    "parameters": [
+      {
+        "id": -1153106,
+        "storage": "Integer",
+        "readOnly": true,
+        "value": "0"
+      },
+      {
+        "id": -1152385,
+        "storage": "ElementId",
+        "readOnly": false,
+        "value": "-1"
+      },
+      {
+        "id": -1150468,
+        "storage": "String",
+        "readOnly": true,
+        "value": ""
+      },
+      {
+        "id": -1150435,
+        "storage": "String",
+        "readOnly": true,
+        "value": "6\"ø"
+      },
+      {
+        "id": -1150434,
+        "storage": "String",
+        "readOnly": true,
+        "value": "6\"ø"
+      },
+      {
+        "id": -1150433,
+        "storage": "Double",
+        "readOnly": true,
+        "value": "0"
+      },
+      {
+        "id": -1150432,
+        "storage": "String",
+        "readOnly": true,
+        "value": null
+      },
+      {
+        "id": -1150431,
+        "storage": "Double",
+        "readOnly": true,
+        "value": "0"
+      },
+      {
+        "id": -1150430,
+        "storage": "String",
+        "readOnly": true,
+        "value": null
+      },
+      {
+        "id": -1140363,
+        "storage": "ElementId",
+        "readOnly": true,
+        "value": "-2008020"
+      },
+      {
+        "id": -1140362,
+        "storage": "ElementId",
+        "readOnly": true,
+        "value": "-2008020"
+      },
+      {
+        "id": -1140333,
+        "storage": "ElementId",
+        "readOnly": false,
+        "value": "712041"
+      },
+      {
+        "id": -1140325,
+        "storage": "String",
+        "readOnly": true,
+        "value": "Supply Air"
+      },
+      {
+        "id": -1140324,
+        "storage": "String",
+        "readOnly": false,
+        "value": "Mechanical Supply Air 76"
+      },
+      {
+        "id": -1140240,
+        "storage": "Double",
+        "readOnly": false,
+        "value": "0"
+      },
+      {
+        "id": -1140239,
+        "storage": "Double",
+        "readOnly": false,
+        "value": "0"
+      },
+      {
+        "id": -1140210,
+        "storage": "Double",
+        "readOnly": false,
+        "value": "0.0006"
+      },
+      {
+        "id": -1140208,
+        "storage": "Double",
+        "readOnly": true,
+        "value": "0"
+      },
+      {
+        "id": -1114167,
+        "storage": "Integer",
+        "readOnly": false,
+        "value": "0"
+      },
+      {
+        "id": -1114166,
+        "storage": "Double",
+        "readOnly": false,
+        "value": "0"
+      },
+      {
+        "id": -1114129,
+        "storage": "Double",
+        "readOnly": true,
+        "value": "0.5"
+      },
+      {
+        "id": -1114128,
+        "storage": "Double",
+        "readOnly": true,
+        "value": "45976.518333220549"
+      },
+      {
+        "id": -1114125,
+        "storage": "Integer",
+        "readOnly": true,
+        "value": "0"
+      },
+      {
+        "id": -1114121,
+        "storage": "Double",
+        "readOnly": true,
+        "value": "3.758283163651118"
+      },
+      {
+        "id": -1114116,
+        "storage": "Double",
+        "readOnly": true,
+        "value": "0.17655362140278957"
+      },
+      {
+        "id": -1114108,
+        "storage": "Double",
+        "readOnly": false,
+        "value": "0.57896828435737879"
+      },
+      {
+        "id": -1114107,
+        "storage": "Double",
+        "readOnly": true,
+        "value": "14.854461355243565"
+      },
+      {
+        "id": -1114103,
+        "storage": "Double",
+        "readOnly": false,
+        "value": "0.5"
+      },
+      {
+        "id": -1114005,
+        "storage": "Integer",
+        "readOnly": false,
+        "value": "0"
+      },
+      {
+        "id": -1114000,
+        "storage": "ElementId",
+        "readOnly": false,
+        "value": "1362876"
+      },
+      {
+        "id": -1019016,
+        "storage": "String",
+        "readOnly": false,
+        "value": null
+      },
+      {
+        "id": -1019014,
+        "storage": "String",
+        "readOnly": false,
+        "value": null
+      },
+      {
+        "id": -1019012,
+        "storage": "Integer",
+        "readOnly": false,
+        "value": "0"
+      },
+      {
+        "id": -1019000,
+        "storage": "String",
+        "readOnly": false,
+        "value": "1JbANhx6TBfudXEbM1T$NX"
+      },
+      {
+        "id": -1013405,
+        "storage": "Double",
+        "readOnly": false,
+        "value": "2.9166666666666665"
+      },
+      {
+        "id": -1013201,
+        "storage": "ElementId",
+        "readOnly": true,
+        "value": "-1"
+      },
+      {
+        "id": -1012101,
+        "storage": "ElementId",
+        "readOnly": false,
+        "value": "-1"
+      },
+      {
+        "id": -1012100,
+        "storage": "ElementId",
+        "readOnly": false,
+        "value": "21885"
+      },
+      {
+        "id": -1010106,
+        "storage": "String",
+        "readOnly": false,
+        "value": null
+      },
+      {
+        "id": -1004005,
+        "storage": "Double",
+        "readOnly": true,
+        "value": "3.2792773082604745"
+      },
+      {
+        "id": -1002002,
+        "storage": "String",
+        "readOnly": true,
+        "value": "Flex Duct Round"
+      },
+      {
+        "id": -1002001,
+        "storage": "String",
+        "readOnly": true,
+        "value": "Flex - Round"
+      },
+      {
+        "id": -1001203,
+        "storage": "String",
+        "readOnly": false,
+        "value": null
+      }
+    ],
+    "schemaGuids": [],
+    "dependentIds": [
+      1485146
+    ]
+  }
+}

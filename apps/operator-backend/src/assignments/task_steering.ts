@@ -12,6 +12,7 @@ import { requestAssignmentInputV2, supplyAssignmentInputResultV2, type Assignmen
 const KIND = "task.steering";
 export type CheckpointContinuationRequest = Readonly<{
   review_id: string; expected_control_command_id: string | null; document_fingerprint: string;
+  resource_renewal?: import('../domain/assignment-kernel/user_followup_allocation.js').UserResourceRenewalRequestV1;
 }>;
 export type SteeringReceipt = {
   command_id: string; binding: AssignmentKernelBindingInputV2; text: string; thread_id: string | null; turn_id: string | null;
@@ -99,7 +100,8 @@ function continueAdvisoryCheckpoint(input: {
   const variableId = "user_direction_" + createHash("sha256").update(input.command_id).digest("hex").slice(0,32);
   const body = { event_type: "review_resolved" as const, review_id: checkpoint.review_id, decision: USER_FOLLOWUP_ALLOCATION_V1,
     continuation: { command_id: input.command_id, expected_control_command_id: checkpoint.expected_control_command_id,
-      document_fingerprint: checkpoint.document_fingerprint, direction_variable_id: variableId, direction_text: input.text } };
+      document_fingerprint: checkpoint.document_fingerprint, direction_variable_id: variableId, direction_text: input.text,
+      ...(checkpoint.resource_renewal!==undefined?{resource_renewal:checkpoint.resource_renewal}:{}) } };
   const eventId = `checkpoint-continued:${input.command_id}`;
   const priorResolution = normalizeAssignmentKernelJournalV2(getGoal(input.binding.assignment_id)?.assignment_kernel_v2).events.find(event => event.event_id === eventId);
   if (priorResolution) {

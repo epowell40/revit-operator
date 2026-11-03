@@ -178,7 +178,7 @@ test("visible-element export discovery publishes the native inventory bound", ()
   assert.match(exportSchema, /"limit", Int\(minimum: 1, maximum: 2000\)/);
   assert.match(exportSchema, /"modelBounds", Arr\(Num\(\), minItems: 6, maxItems: 6\)/);
   assert.match(exportSchema, /required: Array\.Empty<string>\(\)/);
-  assert.match(manifest, /limit is 1\.\.2000; page, filter categories, or use modelBounds/);
+  assert.match(manifest, /limit is 1\.\.2000\.[^\n]*Filter categories or use modelBounds[^\n]*no offset paging/);
 });
 
 test("computer-use observation keeps dialog filters optional", () => {
@@ -387,7 +387,9 @@ test("hosted MCP courier is session-bound, approval-gated, and never auto-replay
   assert.match(codexBrain, /clientsByProfile = new Map/);
   assert.match(codexBrain, /function clientCacheKey\(workspaceRoot: string, profile: CodexThreadStartProfile\)/);
   assert.match(codexBrain, /profile\.profileNamespace/);
-  assert.match(codexBrain, /mcpRuntimesByWorkspace = new Map/);
+  assert.match(codexBrain, /mcpRuntimesByWorkspace = workspaceMcpRuntimes/);
+  const runtimePool=repoFile(path.join("operator-backend","src","codex","workspace_mcp_runtime.ts"),path.join("apps","operator-backend","src","codex","workspace_mcp_runtime.ts"));
+  assert.match(runtimePool, /workspaceMcpRuntimes = new Map/);
   assert.match(codexBrain, /fn:\s*\(client: CodexAppServer\)/);
   assert.doesNotMatch(codexBrain, /let client:\s*CodexAppServer\s*\|\s*null/);
 });

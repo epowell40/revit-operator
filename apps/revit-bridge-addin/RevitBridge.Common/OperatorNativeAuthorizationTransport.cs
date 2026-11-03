@@ -19,10 +19,20 @@ namespace RevitBridge.Common
             {
                 return await authorize().ConfigureAwait(false);
             }
-            catch (HttpRequestException) when (!cancellationToken.IsCancellationRequested)
+            catch (HttpRequestException)
             {
+                // Cancellation can win while a failed request unwinds. A catch
+                // filter would otherwise leak the disconnect instead of the
+                // caller's actual cancellation; this does not retry a decision.
+                cancellationToken.ThrowIfCancellationRequested();
                 await Task.Delay(250, cancellationToken).ConfigureAwait(false);
-                return await authorize().ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                try { return await authorize().ConfigureAwait(false); }
+                catch (HttpRequestException)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    throw;
+                }
             }
         }
     }

@@ -35,7 +35,7 @@ namespace RevitBridge.Logic.Handlers
 
             if (view == null) throw new Exception("View not found.");
             if (!SelectionUtil.IsSupported2dView(view))
-                throw new ArgumentException($"View type '{view.ViewType}' is not supported for Phase 1 export-view-frame.");
+                throw new ArgumentException($"View type '{view.ViewType}' is not supported for export-view-frame crop-box mapping. For a sheet or view image use /revit/export-image; for a schedule use its placed sheet or actual editor. An image does not provide pixel-to-model placement mapping. No frame was exported.");
 
             var warnings = new List<string>();
             var restoreCropBoxActive = false;

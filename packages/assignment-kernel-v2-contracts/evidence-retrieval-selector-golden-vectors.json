@@ -104,6 +104,54 @@
           ]
         }
       }
+    },
+    {
+      "id": "retained-scalar-filter-order",
+      "input": {
+        "item_range": {
+          "orderBy": {
+            "field": "length",
+            "direction": "desc"
+          },
+          "path": "payload.items",
+          "fields": [
+            "elementId",
+            "length"
+          ],
+          "start": 0,
+          "filters": [
+            {
+              "value": 0.5,
+              "op": "eq",
+              "field": "diameter"
+            }
+          ],
+          "count": 2
+        }
+      },
+      "expected": {
+        "item_range": {
+          "orderBy": {
+            "field": "length",
+            "direction": "desc"
+          },
+          "path": "payload.items",
+          "fields": [
+            "elementId",
+            "length"
+          ],
+          "start": 0,
+          "filters": [
+            {
+              "value": 0.5,
+              "op": "eq",
+              "field": "diameter"
+            }
+          ],
+          "count": 2
+        },
+        "kind": "item_range"
+      }
     }
   ],
   "invalid_selectors": [
@@ -307,6 +355,63 @@
         }
       },
       "error": "evidence_retrieval_selector_invalid"
+    },
+    {
+      "id": "scalar-selection-needs-fields",
+      "input": {
+        "item_range": {
+          "start": 0,
+          "path": "items",
+          "orderBy": {
+            "field": "x",
+            "direction": "asc"
+          },
+          "count": 1
+        }
+      },
+      "error": "requires item_range.fields"
+    },
+    {
+      "id": "scalar-no-expression",
+      "input": {
+        "item_range": {
+          "start": 0,
+          "path": "items",
+          "filters": [
+            {
+              "value": "x",
+              "op": "eval",
+              "field": "x"
+            }
+          ],
+          "fields": [
+            "id"
+          ],
+          "count": 1
+        }
+      },
+      "error": "invalid scalar filter"
+    },
+    {
+      "id": "scalar-order-is-numeric",
+      "input": {
+        "item_range": {
+          "start": 0,
+          "path": "items",
+          "filters": [
+            {
+              "value": "6",
+              "op": "gt",
+              "field": "x"
+            }
+          ],
+          "fields": [
+            "id"
+          ],
+          "count": 1
+        }
+      },
+      "error": "must be numeric"
     }
   ],
   "target_selection_vectors": [

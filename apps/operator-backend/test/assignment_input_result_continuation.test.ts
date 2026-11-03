@@ -127,6 +127,7 @@ test("C35 answered airflow invalidates the old workbook through the authenticate
     assert.doesNotMatch(initialGuidance, /The exported file is verified/,
       "C27: an assessment requirement must not invent an export before the first operation");
     assert.match(initialGuidance, /If export is still outstanding, complete that work first/);
+    await run("lookup", "revit_search_tools", { query: "export workbook and verify exported file", max: 5, includeSchemas: true });
     await run("export", "revit_call_tool", { method: "POST", path: "/revit/export-elements-xlsx",
       body: { elementIds: [42], parameterNames: ["Area"], fileName: "rooms.xlsx", dryRun: false } });
     const applied = advanceAssignmentKernelProgressV2({ binding }).snapshot;
@@ -138,10 +139,18 @@ test("C35 answered airflow invalidates the old workbook through the authenticate
       findings: [{ priority: "high" as const, title: "Missing source data", text: "335 requested fields are absent in the selected spaces.", evidence_indices: [2,3] }],
       limitations: ["Recorded values do not establish final heating or cooling loads or code compliance."],
       questions: ["Which occupancy, envelope and equipment-load assumptions should be used?"] };
-    assert.throws(() => buildAssignmentResultDeliveryV2(applied, selected, assessment), /ineligible/,
+    const exported=applied.operations[artifact.operation_id]!;
+    assert.equal(calls.filter(path=>path==="/revit/export-elements-xlsx").length,1);
+    assert.equal(calls.filter(path=>path==="/revit/inspect-exported-files").length,1,
+      "The owner independently checks the file after export; it does not replay export");
+    assert.equal(exported.verification_operation_ids.length,1);
+    const readback=applied.operations[exported.verification_operation_ids[0]!]!;
+    assert.equal(readback.requested_effect,"read");assert.equal(readback.purpose,"verification");
+    assert.equal(readback.verification_of_operation_id,exported.operation_id);
+    const unverified=structuredClone(applied);
+    unverified.operations[exported.operation_id]!.verification_operation_ids=[];
+    assert.throws(() => buildAssignmentResultDeliveryV2(unverified, selected, assessment), /ineligible/,
       "successful export alone cannot deliver an unverified artifact");
-    await run("lookup", "revit_search_tools", { query: "verify exported workbook", max: 5, includeSchemas: true });
-    await run("inspect", "revit_call_tool", { method: "POST", path: "/revit/inspect-exported-files", body: { paths: [outputPath] } });
     const verified = advanceAssignmentKernelProgressV2({ binding }).snapshot;
     assert.equal(verified.terminal, false, "file verification must not silently omit requested analysis");
     assert(deriveProgressGapsV2(verified).some(g => g.kind === "result_delivery_required"));

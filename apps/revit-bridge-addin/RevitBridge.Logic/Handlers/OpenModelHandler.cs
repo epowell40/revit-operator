@@ -59,7 +59,8 @@ namespace RevitBridge.Logic.Handlers
                         activeTitle = active?.Title,
                         completionEligible = false,
                         requestedEffectSatisfied = false,
-                        requiresExplicitDiscardAndReopen = true
+                        requiresExplicitDiscardAndReopen = true,
+                        transaction = RevitBridge.Common.OperatorNativeTransactionReceipt.NotStarted()
                     });
                 }
 
@@ -85,6 +86,7 @@ namespace RevitBridge.Logic.Handlers
                         completionEligible = false,
                         requestedEffectSatisfied = false,
                         requiresExplicitUnloadAndOpen = true,
+                        transaction = RevitBridge.Common.OperatorNativeTransactionReceipt.NotStarted(),
                         linkedHosts = DescribeLinkedDocumentReferences(linkedReferences)
                     });
                 }

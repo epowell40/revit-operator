@@ -97,6 +97,7 @@ namespace RevitBridge.Handlers
                 schedule = new { id = scheduleId, uniqueId = schedule.UniqueId, kind = "schedule" },
                 presentation = RegularSchedulePresentation.Read(doc, schedule), scope = Capture(doc, schedule),
                 rowHeights = RegularScheduleRowHeights.Read(schedule),
+                targetContent = ScheduleWidthPreservation.Capture(doc, schedule),
                 definition = ScheduleCombinedFieldOperations.Read(doc, schedule) };
         }
     }

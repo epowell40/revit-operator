@@ -1,0 +1,7 @@
+{
+  "provenance": "Minimal retained504 fresh native loaded-family observation; no new live run or seed compatibility claim.",
+  "functional_context": { "sameTypeTagCount": 77, "distinctDisplayedHostMarks": 36, "allRenderedValuesMatchHostMark": true },
+  "labels": [{ "runtimeType": "TextElement", "driverParameters": [] }],
+  "staticText": [],
+  "retained_classification": { "staticTextCount": 0, "parameterDrivenLabelCount": 0, "unboundLabelCount": 1, "nestedFamilyCount": 0, "nestedAnnotationCount": 0 }
+}

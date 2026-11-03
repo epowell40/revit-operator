@@ -69,6 +69,10 @@ namespace RevitBridge.Common
 
         public static OperatorNativeSaveAsResult Execute(string path, bool preview, bool overwrite,
             Func<OperatorNativeSaveDocumentIdentity> readActiveDocument, Action saveAs)
+            => Execute(path, preview, overwrite, readActiveDocument, saveAs, null);
+
+        public static OperatorNativeSaveAsResult Execute(string path, bool preview, bool overwrite,
+            Func<OperatorNativeSaveDocumentIdentity> readActiveDocument, Action saveAs, Func<string?>? readNativeVersion)
         {
             var ioStarted = false; var returned = false;
             OperatorNativeSaveDocumentIdentity? beforeDocument = null;
@@ -87,18 +91,18 @@ namespace RevitBridge.Common
                 Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path)!);
                 saveAs();
                 returned = true;
-                return Finish(path, beforeDocument, beforeFile, returned, readActiveDocument, null);
+                return Finish(path, beforeDocument, beforeFile, returned, readActiveDocument, null, readNativeVersion);
             }
             catch (Exception ex)
             {
                 if (!ioStarted) return new OperatorNativeSaveAsResult { Status = "Blocked", Error = ex.Message,
                     Receipt = OperatorNativeArtifactReceipt.BlockedSaveAs(preview) };
-                return Finish(path, beforeDocument!, beforeFile!, returned, readActiveDocument, ex.Message);
+                return Finish(path, beforeDocument!, beforeFile!, returned, readActiveDocument, ex.Message, readNativeVersion);
             }
         }
 
         private static OperatorNativeSaveAsResult Finish(string path, OperatorNativeSaveDocumentIdentity beforeDocument,
-            SaveFileSnapshot beforeFile, bool returned, Func<OperatorNativeSaveDocumentIdentity> readActiveDocument, string? error)
+            SaveFileSnapshot beforeFile, bool returned, Func<OperatorNativeSaveDocumentIdentity> readActiveDocument, string? error, Func<string?>? readNativeVersion)
         {
             OperatorNativeSaveDocumentIdentity? afterDocument = null;
             try { afterDocument = readActiveDocument(); } catch (Exception ex) { error = error ?? ex.Message; }
@@ -111,10 +115,18 @@ namespace RevitBridge.Common
             var complete = error == null && returned && file.FreshOutput && file.StableRead == true
                 && afterDocument != null && OperatorNativeSavedDocument.ValidIdentity(afterDocument)
                 && document.SameDocument && OperatorNativeSavedDocument.SamePath(afterDocument.Path, path);
+            string? version = null;
+            if (complete && readNativeVersion != null)
+            {
+                // Metadata failure must never turn a completed save into a
+                // failed/unknown write or invite a second save. No caller year.
+                try { var observed = readNativeVersion(); if (observed != null && observed.Length == 4 && System.Text.RegularExpressions.Regex.IsMatch(observed, "^20[2-3][0-9]$")) version = observed; }
+                catch { /* Unknown opening version; the file effect is unchanged. */ }
+            }
             return new OperatorNativeSaveAsResult { Status = complete ? "Success" : "SaveFailed", Ok = complete,
                 Error = complete ? null : error ?? "Save As returned, but the fresh file and active document identity could not both be verified.",
                 Receipt = new OperatorNativeArtifactReceipt("apply", complete ? "complete" : "unverified", new[] { path }, 1,
-                    returned ? new[] { true } : Array.Empty<bool>(), new[] { file }, "/revit/save-as") { SaveDocument = document } };
+                    returned ? new[] { true } : Array.Empty<bool>(), new[] { file }, "/revit/save-as") { SaveDocument = document, SavedRevitVersion = version } };
         }
 
         internal sealed class SaveFileSnapshot

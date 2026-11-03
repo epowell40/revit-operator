@@ -59,8 +59,9 @@ export function declareWorkPlanV2(snapshot: AssignmentSnapshotV2, declaration: W
     visiting.delete(id); visited.add(id);
   };
   for (const id of graph.keys()) visit(id);
-  kernelAssertV2(ids.size <= 128 && (advisoryVerificationV2(snapshot) || !snapshot.spec.work_plan_required || prior.length > 0 || added.length >= 2),
-    "work_plan_scope_incomplete", "Break the multi-part request into at least two independently verifiable work items.");
+  const minimumItems = snapshot.spec.work_plan_min_items === 1 ? 1 : 2;
+  kernelAssertV2(ids.size <= 128 && (advisoryVerificationV2(snapshot) || !snapshot.spec.work_plan_required || prior.length > 0 || added.length >= minimumItems),
+    "work_plan_scope_incomplete", `Retain the full requested scope in at least ${minimumItems} independently verifiable work item(s).`);
   const assumptions = [...new Set([...(snapshot.work_plan?.assumptions ?? []), ...declaration.assumptions])];
   kernelAssertV2(assumptions.length <= 32, "work_plan_assumption_limit", "Retain existing assumptions; the plan has reached its bounded assumption limit.");
   return { schema: "revit-operator.assignment-work-plan/v2", items: [...prior, ...added], assumptions };
@@ -79,7 +80,7 @@ export function completeWorkPlanItemV2(snapshot: AssignmentSnapshotV2, itemId: s
     && new Set(operationIds).size === operationIds.length, "work_plan_proof_missing", "Cite every applied operation for this item.");
   if (item!.kind === "inspection") {
     const completed = { ...item!, operation_ids: [...operationIds].sort(), completed_at: occurredAt, inspection };
-    kernelAssertV2(inspectionIsCurrentV2(snapshot, completed), "work_plan_inspection_unverified", "Inspect all dependent completed edits with fresh complete native connector or copied-view-detailing reads after the latest edit. This records inspection coverage, not an engineering pass.");
+    kernelAssertV2(inspectionIsCurrentV2(snapshot, completed), "work_plan_inspection_unverified", "Inspect every dependent target after the latest edit using fresh complete native element summaries, loaded-family content, connector reads, paired copied-view-detailing verification or the paired accepted saved/exported-file verification. Artifact proof covers only the exact saved paths; it cannot replace model inspection. Do not repeat edits. This records inspection coverage, not an engineering pass.");
     return { ...plan!, items: plan!.items.map(candidate => candidate.item_id === itemId ? completed : candidate) };
   }
   kernelAssertV2(!inspection, "work_plan_edit_inspection_invalid", "Read-only inspection cannot complete an edit item.");
@@ -91,7 +92,9 @@ export function completeWorkPlanItemV2(snapshot: AssignmentSnapshotV2, itemId: s
     kernelAssertV2(operation && !used.has(operationId) && sameAssignmentBindingV2(operation.binding, snapshot.current_binding)
       && operation.requested_effect === "apply" && operation.persistent_effect === "applied" && operation.settlement_state === "settled"
       && appliedOperationHasVerifiedPostconditionV2(snapshot, operationId),
-      "work_plan_operation_unverified", "Each item needs distinct current independently verified work performed after its declaration.");
+      "work_plan_operation_unverified", operation?.requested_effect === "read"
+        ? `Operation ${operationId} is read-only. For edit item ${itemId}, cite only the existing applied edit IDs from available_verified_operations; their accepted native verification reads are already associated. Read IDs belong to an inspection item. Do not repeat the edit to correct this proof submission.`
+        : "Each item needs distinct current independently verified work performed after its declaration. Use available_verified_operations for edit IDs; keep verification read IDs in inspection items. Do not repeat an applied or uncertain edit to obtain another ID.");
   }
   return { ...plan!, items: plan!.items.map(candidate => candidate.item_id !== itemId ? candidate
     : { ...candidate, operation_ids: [...operationIds].sort(), completed_at: occurredAt }) };
@@ -132,8 +135,20 @@ export function inspectionIsCurrentV2(snapshot: AssignmentSnapshotV2, item: Assi
   });
 }
 
+function workPlanItemPendingV2(snapshot: AssignmentSnapshotV2, item: AssignmentWorkPlanItemV2): boolean {
+  return !item.completed_at || (item.kind === "inspection" ? !inspectionIsCurrentV2(snapshot,item)
+    : item.operation_ids.some(id => !appliedOperationHasVerifiedPostconditionV2(snapshot,id)));
+}
+
+/** A non-success stopping condition, never a completed scope or supplied answer.
+ * Dependency-waiting items must themselves be dispositioned; an empty ready
+ * queue alone cannot terminate a task with unattempted independent work. */
+export function allRemainingWorkPlanItemsDeferredV2(snapshot: AssignmentSnapshotV2): boolean {
+  const pending = snapshot.work_plan?.items.filter(item => workPlanItemPendingV2(snapshot,item)) ?? [];
+  return pending.length > 0 && pending.every(workPlanItemDeferredV2);
+}
+
 export function workPlanPendingV2(snapshot: AssignmentSnapshotV2): boolean {
   return Boolean(snapshot.spec.work_plan_required && !snapshot.work_plan
-    || snapshot.work_plan && snapshot.work_plan.items.some(item => !item.completed_at
-      || (item.kind === "inspection" ? !inspectionIsCurrentV2(snapshot,item) : item.operation_ids.some(id => !appliedOperationHasVerifiedPostconditionV2(snapshot, id)))));
+    || snapshot.work_plan?.items.some(item => workPlanItemPendingV2(snapshot,item)));
 }

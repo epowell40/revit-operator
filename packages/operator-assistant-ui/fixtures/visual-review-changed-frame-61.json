@@ -1,0 +1,637 @@
+{
+  "provenance": {
+    "source": "Retained original61 step14 actual result and SHA-verified raw artifact; envelope reconstructed offline using unchanged current compiled projectEvidence and Sidecar modelEvidenceEnvelope because projection failed before delivery.",
+    "rawContentHash": "sha256:2697e3fc5e1c8b59fbc071547e63b26de31a215f08e38888beedbb0367574f6e",
+    "rawBytes": 61571,
+    "historicalOutcome": "failed",
+    "historicalReason": "visual_review_projection_budget_exceeded",
+    "rootNativeProviderCalls": 0
+  },
+  "result": {
+    "schema": "operator.visual_work_review.v1",
+    "authority": "supporting_visual_assessment",
+    "native_postcondition_verified": false,
+    "whole_task_verified": false,
+    "request": {
+      "view_id": 1363547,
+      "checks": [
+        {
+          "id": "titles",
+          "expected": "All three drawing titles are legible, complete and clear of nearby content."
+        }
+      ],
+      "capture_mode": "target_view",
+      "image_size": 5000
+    },
+    "owner": {
+      "assignment_id": "3c8ac41c-8210-460a-9d14-a368f9cf210f",
+      "session_id": "1d2452cd-7ce9-58a9-86cf-d1acc5ad2458",
+      "run_id": "sidecar:b93acb71-9d8e-4fe9-b35f-c01f74bbfdd8",
+      "generation": 1,
+      "principal_id": null,
+      "document_fingerprint": null
+    },
+    "ok": false,
+    "request_dispatched": true,
+    "state": "unavailable",
+    "checks": [],
+    "reason": "visual_review_visible_frame_changed_during_review",
+    "location": {
+      "process_id": 24148,
+      "document_session_id": "c9064e1382724142a6c7b5e7d8753f46",
+      "epoch": "c5fcac56e6834af183b7ed97350c6910",
+      "through_sequence": 2,
+      "view_id": 1363547,
+      "project_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17",
+      "document_title": "Snowdon HVAC - Plan Names Result61",
+      "active_view_id": 1363532,
+      "identity_authority": "authorized_native_read",
+      "sheet_render_state": {
+        "schema": "operator.sheet-render-state.v1",
+        "state": "available",
+        "scope": "sheet_and_placed_views",
+        "viewId": 1363532,
+        "viewUniqueId": "4077836e-853b-48eb-bfd2-75e039951dfc-0014ce4c",
+        "modeNames": [
+          "ExplodedView",
+          "PreviewFamilyVisibility",
+          "RevealConstraints",
+          "RevealHiddenElements",
+          "TemporaryHideIsolate",
+          "TemporaryViewProperties",
+          "WorksharingDisplay"
+        ],
+        "views": [
+          {
+            "viewId": 1363463,
+            "viewUniqueId": "37026fa4-e8cf-41db-bc86-3c9ebbec55fb-0014ce07",
+            "customizedTemporaryMode": false,
+            "temporaryModes": [
+              {
+                "name": "ExplodedView",
+                "active": false
+              },
+              {
+                "name": "PreviewFamilyVisibility",
+                "active": false
+              },
+              {
+                "name": "RevealConstraints",
+                "active": false
+              },
+              {
+                "name": "RevealHiddenElements",
+                "active": false
+              },
+              {
+                "name": "TemporaryHideIsolate",
+                "active": false
+              },
+              {
+                "name": "TemporaryViewProperties",
+                "active": false
+              },
+              {
+                "name": "WorksharingDisplay",
+                "active": false
+              }
+            ]
+          },
+          {
+            "viewId": 1363532,
+            "viewUniqueId": "4077836e-853b-48eb-bfd2-75e039951dfc-0014ce4c",
+            "customizedTemporaryMode": false,
+            "temporaryModes": [
+              {
+                "name": "ExplodedView",
+                "active": false
+              },
+              {
+                "name": "PreviewFamilyVisibility",
+                "active": false
+              },
+              {
+                "name": "RevealConstraints",
+                "active": false
+              },
+              {
+                "name": "RevealHiddenElements",
+                "active": false
+              },
+              {
+                "name": "TemporaryHideIsolate",
+                "active": false
+              },
+              {
+                "name": "TemporaryViewProperties",
+                "active": false
+              },
+              {
+                "name": "WorksharingDisplay",
+                "active": false
+              }
+            ]
+          },
+          {
+            "viewId": 1542773,
+            "viewUniqueId": "cf5bfd8a-8304-4ee2-a220-6994cb7ea6f3-00178a75",
+            "customizedTemporaryMode": false,
+            "temporaryModes": [
+              {
+                "name": "ExplodedView",
+                "active": false
+              },
+              {
+                "name": "PreviewFamilyVisibility",
+                "active": false
+              },
+              {
+                "name": "RevealConstraints",
+                "active": false
+              },
+              {
+                "name": "RevealHiddenElements",
+                "active": false
+              },
+              {
+                "name": "TemporaryHideIsolate",
+                "active": false
+              },
+              {
+                "name": "TemporaryViewProperties",
+                "active": false
+              },
+              {
+                "name": "WorksharingDisplay",
+                "active": false
+              }
+            ]
+          }
+        ],
+        "activeViewportCornersXyz": [
+          [
+            -1.0091059602648975,
+            -0.12500000000000044,
+            0
+          ],
+          [
+            4.509105960264903,
+            2.6249999999999996,
+            0
+          ]
+        ],
+        "limits": "Render-state observation only. Requires same native document epoch/sequence; no model, file, engineering or live-screen proof. Dynamic printed labels belong to the captured artifact."
+      },
+      "view_name": "Plan HVAC L1",
+      "view_unique_id": "4077836e-853b-48eb-bfd2-75e039951dfc-0014ce5b",
+      "view_type": "DrawingSheet",
+      "sheet_number": "M101"
+    },
+    "capture": {
+      "evidence_id": "ev1_bE_IxIRyTkFo_WggEnDT6a5gTSPVDCLG",
+      "content_hash": "sha256:cd5472cebfa4db930bc20b2c164f2536f2c632f577d9cd75c34db93429686906",
+      "byte_count": 1046252,
+      "frame": {
+        "schema": "operator.visual_review_target_capture.v1",
+        "kind": "native_target_view",
+        "selection_authority": "authorized_native_target_export",
+        "process_id": 24148,
+        "document_session_id": "c9064e1382724142a6c7b5e7d8753f46",
+        "view_id": 1363547,
+        "view_unique_id": "4077836e-853b-48eb-bfd2-75e039951dfc-0014ce5b",
+        "view_name": "Plan HVAC L1",
+        "view_type": "DrawingSheet",
+        "sheet_number": "M101",
+        "width": 5000,
+        "height": 3571,
+        "export_mode": "full_view",
+        "viewport": null,
+        "native_image_sha256": "cd5472cebfa4db930bc20b2c164f2536f2c632f577d9cd75c34db93429686906",
+        "captured_at_utc": "2026-10-28T12:49:16.6627712-04:00",
+        "pixel_to_model_mapping": false,
+        "sheet_render_state": {
+          "schema": "operator.sheet-render-state.v1",
+          "state": "available",
+          "scope": "sheet_and_placed_views",
+          "viewId": 1363547,
+          "viewUniqueId": "4077836e-853b-48eb-bfd2-75e039951dfc-0014ce5b",
+          "modeNames": [
+            "ExplodedView",
+            "PreviewFamilyVisibility",
+            "RevealConstraints",
+            "RevealHiddenElements",
+            "TemporaryHideIsolate",
+            "TemporaryViewProperties",
+            "WorksharingDisplay"
+          ],
+          "views": [
+            {
+              "viewId": 32,
+              "viewUniqueId": "c8923f5e-6a14-4420-9b1d-c31d7ae067d2-00000020",
+              "customizedTemporaryMode": false,
+              "temporaryModes": [
+                {
+                  "name": "ExplodedView",
+                  "active": false
+                },
+                {
+                  "name": "PreviewFamilyVisibility",
+                  "active": false
+                },
+                {
+                  "name": "RevealConstraints",
+                  "active": false
+                },
+                {
+                  "name": "RevealHiddenElements",
+                  "active": false
+                },
+                {
+                  "name": "TemporaryHideIsolate",
+                  "active": false
+                },
+                {
+                  "name": "TemporaryViewProperties",
+                  "active": false
+                },
+                {
+                  "name": "WorksharingDisplay",
+                  "active": false
+                }
+              ]
+            },
+            {
+              "viewId": 1363403,
+              "viewUniqueId": "37026fa4-e8cf-41db-bc86-3c9ebbec55fb-0014cdcb",
+              "customizedTemporaryMode": false,
+              "temporaryModes": [
+                {
+                  "name": "ExplodedView",
+                  "active": false
+                },
+                {
+                  "name": "PreviewFamilyVisibility",
+                  "active": false
+                },
+                {
+                  "name": "RevealConstraints",
+                  "active": false
+                },
+                {
+                  "name": "RevealHiddenElements",
+                  "active": false
+                },
+                {
+                  "name": "TemporaryHideIsolate",
+                  "active": false
+                },
+                {
+                  "name": "TemporaryViewProperties",
+                  "active": false
+                },
+                {
+                  "name": "WorksharingDisplay",
+                  "active": false
+                }
+              ]
+            },
+            {
+              "viewId": 1363413,
+              "viewUniqueId": "37026fa4-e8cf-41db-bc86-3c9ebbec55fb-0014cdd5",
+              "customizedTemporaryMode": false,
+              "temporaryModes": [
+                {
+                  "name": "ExplodedView",
+                  "active": false
+                },
+                {
+                  "name": "PreviewFamilyVisibility",
+                  "active": false
+                },
+                {
+                  "name": "RevealConstraints",
+                  "active": false
+                },
+                {
+                  "name": "RevealHiddenElements",
+                  "active": false
+                },
+                {
+                  "name": "TemporaryHideIsolate",
+                  "active": false
+                },
+                {
+                  "name": "TemporaryViewProperties",
+                  "active": false
+                },
+                {
+                  "name": "WorksharingDisplay",
+                  "active": false
+                }
+              ]
+            },
+            {
+              "viewId": 1363547,
+              "viewUniqueId": "4077836e-853b-48eb-bfd2-75e039951dfc-0014ce5b",
+              "customizedTemporaryMode": false,
+              "temporaryModes": [
+                {
+                  "name": "ExplodedView",
+                  "active": false
+                },
+                {
+                  "name": "PreviewFamilyVisibility",
+                  "active": false
+                },
+                {
+                  "name": "RevealConstraints",
+                  "active": false
+                },
+                {
+                  "name": "RevealHiddenElements",
+                  "active": false
+                },
+                {
+                  "name": "TemporaryHideIsolate",
+                  "active": false
+                },
+                {
+                  "name": "TemporaryViewProperties",
+                  "active": false
+                },
+                {
+                  "name": "WorksharingDisplay",
+                  "active": false
+                }
+              ]
+            },
+            {
+              "viewId": 1542778,
+              "viewUniqueId": "cf5bfd8a-8304-4ee2-a220-6994cb7ea6f3-00178a7a",
+              "customizedTemporaryMode": false,
+              "temporaryModes": [
+                {
+                  "name": "ExplodedView",
+                  "active": false
+                },
+                {
+                  "name": "PreviewFamilyVisibility",
+                  "active": false
+                },
+                {
+                  "name": "RevealConstraints",
+                  "active": false
+                },
+                {
+                  "name": "RevealHiddenElements",
+                  "active": false
+                },
+                {
+                  "name": "TemporaryHideIsolate",
+                  "active": false
+                },
+                {
+                  "name": "TemporaryViewProperties",
+                  "active": false
+                },
+                {
+                  "name": "WorksharingDisplay",
+                  "active": false
+                }
+              ]
+            }
+          ],
+          "activeViewportCornersXyz": null,
+          "limits": "Render-state observation only. Requires same native document epoch/sequence; no model, file, engineering or live-screen proof. Dynamic printed labels belong to the captured artifact."
+        }
+      }
+    },
+    "changed_capture": {
+      "evidence_id": "ev1_-MmSTtSjsU94WchFSW4iuTLXmymll7z2",
+      "content_hash": "sha256:6f2d6e508e1d3ea995770c12e91a39a48212f6ae134d244b238cb6406660da7b",
+      "byte_count": 1046326,
+      "frame": {
+        "schema": "operator.visual_review_target_capture.v1",
+        "kind": "native_target_view",
+        "selection_authority": "authorized_native_target_export",
+        "process_id": 24148,
+        "document_session_id": "c9064e1382724142a6c7b5e7d8753f46",
+        "view_id": 1363547,
+        "view_unique_id": "4077836e-853b-48eb-bfd2-75e039951dfc-0014ce5b",
+        "view_name": "Plan HVAC L1",
+        "view_type": "DrawingSheet",
+        "sheet_number": "M101",
+        "width": 5000,
+        "height": 3571,
+        "export_mode": "full_view",
+        "viewport": null,
+        "native_image_sha256": "6f2d6e508e1d3ea995770c12e91a39a48212f6ae134d244b238cb6406660da7b",
+        "captured_at_utc": "2026-10-28T12:49:51.2134804-04:00",
+        "pixel_to_model_mapping": false,
+        "sheet_render_state": {
+          "schema": "operator.sheet-render-state.v1",
+          "state": "available",
+          "scope": "sheet_and_placed_views",
+          "viewId": 1363547,
+          "viewUniqueId": "4077836e-853b-48eb-bfd2-75e039951dfc-0014ce5b",
+          "modeNames": [
+            "ExplodedView",
+            "PreviewFamilyVisibility",
+            "RevealConstraints",
+            "RevealHiddenElements",
+            "TemporaryHideIsolate",
+            "TemporaryViewProperties",
+            "WorksharingDisplay"
+          ],
+          "views": [
+            {
+              "viewId": 32,
+              "viewUniqueId": "c8923f5e-6a14-4420-9b1d-c31d7ae067d2-00000020",
+              "customizedTemporaryMode": false,
+              "temporaryModes": [
+                {
+                  "name": "ExplodedView",
+                  "active": false
+                },
+                {
+                  "name": "PreviewFamilyVisibility",
+                  "active": false
+                },
+                {
+                  "name": "RevealConstraints",
+                  "active": false
+                },
+                {
+                  "name": "RevealHiddenElements",
+                  "active": false
+                },
+                {
+                  "name": "TemporaryHideIsolate",
+                  "active": false
+                },
+                {
+                  "name": "TemporaryViewProperties",
+                  "active": false
+                },
+                {
+                  "name": "WorksharingDisplay",
+                  "active": false
+                }
+              ]
+            },
+            {
+              "viewId": 1363403,
+              "viewUniqueId": "37026fa4-e8cf-41db-bc86-3c9ebbec55fb-0014cdcb",
+              "customizedTemporaryMode": false,
+              "temporaryModes": [
+                {
+                  "name": "ExplodedView",
+                  "active": false
+                },
+                {
+                  "name": "PreviewFamilyVisibility",
+                  "active": false
+                },
+                {
+                  "name": "RevealConstraints",
+                  "active": false
+                },
+                {
+                  "name": "RevealHiddenElements",
+                  "active": false
+                },
+                {
+                  "name": "TemporaryHideIsolate",
+                  "active": false
+                },
+                {
+                  "name": "TemporaryViewProperties",
+                  "active": false
+                },
+                {
+                  "name": "WorksharingDisplay",
+                  "active": false
+                }
+              ]
+            },
+            {
+              "viewId": 1363413,
+              "viewUniqueId": "37026fa4-e8cf-41db-bc86-3c9ebbec55fb-0014cdd5",
+              "customizedTemporaryMode": false,
+              "temporaryModes": [
+                {
+                  "name": "ExplodedView",
+                  "active": false
+                },
+                {
+                  "name": "PreviewFamilyVisibility",
+                  "active": false
+                },
+                {
+                  "name": "RevealConstraints",
+                  "active": false
+                },
+                {
+                  "name": "RevealHiddenElements",
+                  "active": false
+                },
+                {
+                  "name": "TemporaryHideIsolate",
+                  "active": false
+                },
+                {
+                  "name": "TemporaryViewProperties",
+                  "active": false
+                },
+                {
+                  "name": "WorksharingDisplay",
+                  "active": false
+                }
+              ]
+            },
+            {
+              "viewId": 1363547,
+              "viewUniqueId": "4077836e-853b-48eb-bfd2-75e039951dfc-0014ce5b",
+              "customizedTemporaryMode": false,
+              "temporaryModes": [
+                {
+                  "name": "ExplodedView",
+                  "active": false
+                },
+                {
+                  "name": "PreviewFamilyVisibility",
+                  "active": false
+                },
+                {
+                  "name": "RevealConstraints",
+                  "active": false
+                },
+                {
+                  "name": "RevealHiddenElements",
+                  "active": false
+                },
+                {
+                  "name": "TemporaryHideIsolate",
+                  "active": false
+                },
+                {
+                  "name": "TemporaryViewProperties",
+                  "active": false
+                },
+                {
+                  "name": "WorksharingDisplay",
+                  "active": false
+                }
+              ]
+            },
+            {
+              "viewId": 1542778,
+              "viewUniqueId": "cf5bfd8a-8304-4ee2-a220-6994cb7ea6f3-00178a7a",
+              "customizedTemporaryMode": false,
+              "temporaryModes": [
+                {
+                  "name": "ExplodedView",
+                  "active": false
+                },
+                {
+                  "name": "PreviewFamilyVisibility",
+                  "active": false
+                },
+                {
+                  "name": "RevealConstraints",
+                  "active": false
+                },
+                {
+                  "name": "RevealHiddenElements",
+                  "active": false
+                },
+                {
+                  "name": "TemporaryHideIsolate",
+                  "active": false
+                },
+                {
+                  "name": "TemporaryViewProperties",
+                  "active": false
+                },
+                {
+                  "name": "WorksharingDisplay",
+                  "active": false
+                }
+              ]
+            }
+          ],
+          "activeViewportCornersXyz": null,
+          "limits": "Render-state observation only. Requires same native document epoch/sequence; no model, file, engineering or live-screen proof. Dynamic printed labels belong to the captured artifact."
+        }
+      }
+    },
+    "reviewer_response_id": "resp_0281a7057e1cab1e006ae22791484487d28d48cef19c5f6188",
+    "guidance": "Review unavailable; do not infer a mismatch or repeat any model change. Re-establish current control, identity and suitable evidence before checking again. Inspect both retained capture images through operator_retrieve_evidence before deciding what changed. Native sheet exports can update a plot timestamp; do not assume that is the only difference. For sheet-wide checks activate the actual sheet and use visible_work with its border visible. For local checks focus the actual note/viewport elements using showElementIds or native sheet-coordinate bboxMinXyz/bboxMaxXyz. An explicit visible_work recheck can reuse an earlier accepted native sheet review and its unchanged checks; this unavailable review itself is not an accepted baseline. Review relevant titleblock areas separately. A focused region cannot prove anything outside it. Keep native identity and pixel/viewport recheck guards; never mask differences or change the model just to stabilize a capture."
+  },
+  "modelOutput": {
+    "type": "function_call_output",
+    "call_id": "call_LpTWG34IBYNOjOXZgpqwqwG9",
+    "output": "{\"schema\":\"revit-operator.model-evidence-envelope.v1\",\"evidence_projections\":[{\"schema\":\"revit-operator.evidence-projection.v1\",\"evidence_id\":\"ev1_FHDsT-XQjKOYElrSQyEJFf9IjZhOEPwh\",\"content_hash\":\"sha256:2697e3fc5e1c8b59fbc071547e63b26de31a215f08e38888beedbb0367574f6e\",\"byte_count\":61571,\"media_type\":\"application/json\",\"source\":\"operator_desktop.function.review_current_work\",\"trust_level\":\"untrusted_caller\",\"effect_state\":\"none\",\"assignment_id\":\"3c8ac41c-8210-460a-9d14-a368f9cf210f\",\"run_id\":\"sidecar:b93acb71-9d8e-4fe9-b35f-c01f74bbfdd8\",\"attempt_id\":null,\"generation\":1,\"target_scope\":[\"1363547\",\"1363532\",\"Plan HVAC L1\",\"4077836e-853b-48eb-bfd2-75e039951dfc-0014ce5b\",\"4077836e-853b-48eb-bfd2-75e039951dfc-0014ce4c\",\"untrusted_caller\",\"1363463\",\"37026fa4-e8cf-41db-bc86-3c9ebbec55fb-0014ce07\",\"1542773\",\"cf5bfd8a-8304-4ee2-a220-6994cb7ea6f3-00178a75\",\"Plan HVAC L0 Parking\"],\"key_counts\":{\"checks.length\":0,\"capture.byte_count\":1046252,\"changed_capture.byte_count\":1046326,\"request.checks.length\":1,\"raw_review_evidence.native_identity_observations.length\":3,\"raw_review_evidence.native_target_exports.length\":2,\"location.sheet_render_state.modeNames.length\":7,\"location.sheet_render_state.views.length\":3,\"location.sheet_render_state.activeViewportCornersXyz.length\":2,\"raw_review_evidence.reviewer_response.output.$json.length\":3,\"raw_review_evidence.capture_recheck.evidence_ref.byte_count\":1046326,\"location.sheet_render_state.activeViewportCornersXyz[0].length\":3,\"location.sheet_render_state.activeViewportCornersXyz[1].length\":3,\"capture.frame.sheet_render_state.modeNames.length\":7,\"capture.frame.sheet_render_state.views.length\":5,\"changed_capture.frame.sheet_render_state.modeNames.length\":7,\"changed_capture.frame.sheet_render_state.views.length\":5,\"raw_review_evidence.native_identity_observations[0].readiness.selection_count\":0,\"raw_review_evidence.native_identity_observations[1].readiness.selection_count\":0,\"raw_review_evidence.native_identity_observations[2].readiness.selection_count\":0,\"raw_review_evidence.reviewer_response.provider_response_usage.raw_response_ids.length\":1,\"raw_review_evidence.capture_frame.sheet_render_state.modeNames.length\":7,\"raw_review_evidence.capture_frame.sheet_render_state.views.length\":5,\"raw_review_evidence.capture_recheck.evidence_ref.target_scope.length\":6},\"key_facts\":{\"state\":\"unavailable\",\"reviewer_response_id\":\"resp_0281a7057e1cab1e006ae22791484487d28d48cef19c5f6188\",\"request.view_id\":1363547,\"owner.assignment_id\":\"3c8ac41c-8210-460a-9d14-a368f9cf210f\",\"owner.session_id\":\"1d2452cd-7ce9-58a9-86cf-d1acc5ad2458\",\"owner.run_id\":\"sidecar:b93acb71-9d8e-4fe9-b35f-c01f74bbfdd8\",\"owner.principal_id\":null,\"location.process_id\":24148,\"location.document_session_id\":\"c9064e1382724142a6c7b5e7d8753f46\",\"location.view_id\":1363547,\"location.active_view_id\":1363532,\"location.view_name\":\"Plan HVAC L1\",\"location.view_unique_id\":\"4077836e-853b-48eb-bfd2-75e039951dfc-0014ce5b\",\"location.view_type\":\"DrawingSheet\",\"location.sheet_number\":\"M101\",\"capture.evidence_id\":\"ev1_bE_IxIRyTkFo_WggEnDT6a5gTSPVDCLG\",\"capture.content_hash\":\"sha256:cd5472cebfa4db930bc20b2c164f2536f2c632f577d9cd75c34db93429686906\",\"changed_capture.evidence_id\":\"ev1_-MmSTtSjsU94WchFSW4iuTLXmymll7z2\",\"changed_capture.content_hash\":\"sha256:6f2d6e508e1d3ea995770c12e91a39a48212f6ae134d244b238cb6406660da7b\",\"location.sheet_render_state.state\":\"available\",\"capture.frame.process_id\":24148,\"capture.frame.document_session_id\":\"c9064e1382724142a6c7b5e7d8753f46\",\"capture.frame.view_id\":1363547,\"capture.frame.view_unique_id\":\"4077836e-853b-48eb-bfd2-75e039951dfc-0014ce5b\",\"capture.frame.view_name\":\"Plan HVAC L1\",\"capture.frame.view_type\":\"DrawingSheet\",\"capture.frame.sheet_number\":\"M101\",\"capture.frame.native_image_sha256\":\"cd5472cebfa4db930bc20b2c164f2536f2c632f577d9cd75c34db93429686906\",\"changed_capture.frame.process_id\":24148,\"changed_capture.frame.document_session_id\":\"c9064e1382724142a6c7b5e7d8753f46\",\"changed_capture.frame.view_id\":1363547,\"changed_capture.frame.view_unique_id\":\"4077836e-853b-48eb-bfd2-75e039951dfc-0014ce5b\",\"changed_capture.frame.view_name\":\"Plan HVAC L1\",\"changed_capture.frame.view_type\":\"DrawingSheet\",\"changed_capture.frame.sheet_number\":\"M101\",\"changed_capture.frame.native_image_sha256\":\"6f2d6e508e1d3ea995770c12e91a39a48212f6ae134d244b238cb6406660da7b\",\"raw_review_evidence.reviewer_response.id\":\"resp_0281a7057e1cab1e006ae22791484487d28d48cef19c5f6188\",\"raw_review_evidence.reviewer_response.status\":\"completed\",\"raw_review_evidence.capture_frame.process_id\":24148,\"raw_review_evidence.capture_frame.document_session_id\":\"c9064e1382724142a6c7b5e7d8753f46\",\"raw_review_evidence.capture_frame.view_id\":1363547,\"raw_review_evidence.capture_frame.view_unique_id\":\"4077836e-853b-48eb-bfd2-75e039951dfc-0014ce5b\",\"raw_review_evidence.capture_frame.view_name\":\"Plan HVAC L1\",\"raw_review_evidence.capture_frame.view_type\":\"DrawingSheet\",\"raw_review_evidence.capture_frame.sheet_number\":\"M101\",\"raw_review_evidence.capture_frame.native_image_sha256\":\"cd5472cebfa4db930bc20b2c164f2536f2c632f577d9cd75c34db93429686906\",\"request.checks[0].id\":\"titles\",\"capture.frame.sheet_render_state.state\":\"available\"},\"before_hash\":null,\"after_hash\":null,\"diagnostics\":[\"reason: visual_review_visible_frame_changed_during_review\",\"raw_review_evidence.reviewer_response.model_call_receipt.reasoning_effort: medium\",\"raw_review_evidence.reviewer_response.model_call_receipt.error_code: \",\"raw_review_evidence.reviewer_response.provider_response_usage.message_id: 9c040ca1-a831-443e-8740-66da8b9a0298\",\"raw_review_evidence.native_identity_observations[0].canonical_attempt_settlement.effect_reason: read_has_no_persistent_effect\",\"raw_review_evidence.native_identity_observations[1].canonical_attempt_settlement.effect_reason: read_has_no_persistent_effect\",\"raw_review_evidence.native_identity_observations[2].canonical_attempt_settlement.effect_reason: read_has_no_persistent_effect\",\"raw_review_evidence.reviewer_response.model_call_receipt.tokens.reasoning_output_tokens: 813\"],\"artifact_ref\":\"ev1_FHDsT-XQjKOYElrSQyEJFf9IjZhOEPwh\",\"verification_relevance\":\"supporting\",\"additional_evidence\":true,\"retrieval\":{\"tool_name\":\"operator_retrieve_evidence\",\"selector_forms\":[\"EXACTLY ONE selector is required\",\"fields\",\"itemRange (optional fields selects columns per row; row_index, values, missing_fields; complete remains artifact-wide; pagination.source_rows_exhausted=true means no more source rows)\",\"textRange\",\"targetSubset (exact reviewed target identities only)\",\"image\",\"JSON payload fields: payload.<field>\",\"JSON payload arrays: payload.<array>\",\"inventory.* summary fields; pages: pagination.next_start; absent fields: missing_fields\"],\"max_bytes\":1048576},\"truncated\":true,\"projected_bytes\":6671}],\"omitted\":0,\"retrieval\":\"Read scoped helper_findings and visual_work_review first; these are supporting claims/assessments, not native proof or parent completion. Honor coverage; use a named evidence_id with exactly one focused field/item/text/target selector for missing whole findings. Target selectors match exact reviewed target identities only.\"}"
+  },
+  "evidenceId": "ev1_FHDsT-XQjKOYElrSQyEJFf9IjZhOEPwh"
+}

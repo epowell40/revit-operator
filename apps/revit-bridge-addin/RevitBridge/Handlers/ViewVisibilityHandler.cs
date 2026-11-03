@@ -398,6 +398,12 @@ namespace RevitBridge.Handlers
 
                     var ogs = view.GetCategoryOverrides(category.Id);
                     var changed = false;
+                    var detail = RevitBridge.Common.CategoryVisibilityMutationPolicy.NormalizeDetailLevelOverride(p.detailLevel);
+                    if (detail != null)
+                    {
+                        ogs.SetDetailLevel((ViewDetailLevel)Enum.Parse(typeof(ViewDetailLevel), detail));
+                        changed = true;
+                    }
                     if (p.halftone.HasValue)
                     {
                         ogs.SetHalftone(p.halftone.Value);
@@ -429,7 +435,7 @@ namespace RevitBridge.Handlers
                     }
 
                     if (!changed)
-                        throw new InvalidOperationException("visibility.set_category_override requires halftone, lineWeight and/or linePatternId|linePatternName and/or r,g,b.");
+                        throw new InvalidOperationException("visibility.set_category_override requires detailLevel, halftone, lineWeight and/or linePatternId|linePatternName and/or r,g,b.");
 
                     view.SetCategoryOverrides(category.Id, ogs);
                     return;
@@ -1765,6 +1771,7 @@ namespace RevitBridge.Handlers
                 categoryName = category.Name,
                 builtInCategory = Enum.GetName(typeof(BuiltInCategory), (int)RevitBridge.Common.ElementIdCompat.GetValue(category.Id)),
                 hidden,
+                detailLevel = ogs == null ? null : TryReadProperty(ogs, "DetailLevel"),
                 halftone,
                 lineWeight,
                 linePatternId = patternId,

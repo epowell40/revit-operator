@@ -1371,3 +1371,29 @@ test('fork and immutable serialization avoid deep clones while preserving exact 
   assert.deepEqual(smaller.stats(), {entries: 0, bytes: 0});
   assert.throws(() => new AssignmentJournalV2().serializedSnapshot(), /first V2 event/);
 });
+
+// Native236 executed successfully, but its MCP result mislabeled host authority
+// as dynamic-runtime. Keep this guard strict; the producer must bind the receipt.
+test('native code not-started results require host authority without implying task completion', () => {
+ for (const variant of ['valid', 'runtime-authority', 'affected', 'committed', 'foreign', 'undispatched']) {
+  const journal=createJournal();
+  journal.append(event(journal,{event_type:'operation_admitted',operation:operation('read')}));
+  journal.append(event(journal,{event_type:'native_dispatch_recorded',operation_id:'operation-1',native_correlation_id:'native-1'}));
+  const r: OperationResultV2={...result({program_result:'15 restrooms'}),native_transaction_state:'not_started',affected_target_identities:[]};
+  if(variant==='runtime-authority')r.authority='dynamic-runtime';
+  if(variant==='affected')r.affected_target_identities=['element_id:42'];
+  if(variant==='committed')r.persistent_effect='applied';
+  if(variant==='foreign')r.binding={...binding,session_id:'foreign'};
+  if(variant==='undispatched')r.dispatch_state='not_dispatched';
+  const before=journal.snapshot(),events=journal.events();
+  if(variant==='valid'){
+   const after=journal.append(event(journal,{event_type:'operation_result_recorded',result:r}));
+   assert.equal(after.operations['operation-1']!.settlement_state,'retaining_observation');
+   assert.notEqual(after.outcome,'complete');
+   assert.deepEqual(reduceAssignmentEventsV2(journal.events()),after);
+  }else{
+   assert.throws(()=>journal.append(event(journal,{event_type:'operation_result_recorded',result:r})));
+   assert.deepEqual(journal.snapshot(),before);assert.deepEqual(journal.events(),events);
+  }
+ }
+});

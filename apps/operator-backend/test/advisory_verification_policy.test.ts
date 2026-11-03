@@ -36,6 +36,7 @@ import { assignmentWorkBudgetStatusV2 } from "../src/assignments/assignment_work
 import {projectWorkReviewV2} from '../src/assignments/work_review_handoff.js';
 import {validLocalAdvisoryPolicyV1} from '../src/domain/assignment-kernel/execution_policy.js';
 import {ADVISORY_HANDOFF_GUIDANCE} from '../src/brains/work_continuation_guidance.js';
+import { taskDecisionContext } from '../src/brains/task_discretion_guidance.js';
 import { pathToFileURL } from 'node:url';
 
 test('shared reporting continuation reaches real advisory review after ready-item rejection without certifying claims',()=>readyWorkFixture(async f=>{
@@ -60,6 +61,27 @@ test('shared reporting continuation reaches real advisory review after ready-ite
  assert.equal(projectWorkReviewV2(f.state()).counts.reported_unverified,2);
  assert.equal(projectWorkReviewV2(f.state()).counts.checked,0);
  assert.match(ui.retainedWorkReportMessage({name:'report_work_for_review'},{output:JSON.stringify(reported)}),/not independently verified/);
+}));
+
+test('advisory owner written body reaches canonical review without strict retention or native settlement',()=>fixture(true,async f=>{
+ const uiRoot=['../packages/operator-assistant-ui','../../packages/operator-assistant-ui','../operator-desktop'].map(p=>path.resolve(p)).find(p=>fs.existsSync(path.join(p,'work_report.mjs')))!;
+ const ui=await import(pathToFileURL(path.join(uiRoot,'work_report.mjs')).href);
+ const owner={kernel_version:2,session_id:f.binding.session_id,goal_id:f.binding.assignment_id,run_id:f.binding.run_id,generation:f.binding.generation};
+ const written_findings='The connected draft is saved, but return branches and devices remain. This is not a completed reconstruction.';
+ const before=structuredClone(f.state());const actions:string[]=[];
+ const result=await ui.submitWorkReportForReview(owner,{...proposal,written_findings},async(route:string,options:any)=>{
+   assert.equal(route,'/api/assignments/v2/work-plan');const body=JSON.parse(options.body);actions.push(body.action);
+   assert.equal(body.assignment_id,f.binding.assignment_id);assert.equal(body.run_id,f.binding.run_id);
+   return manageAssignmentWorkPlan({binding:f.binding,action:body.action,completion_proposal:body.completion_proposal});
+ },{retainWrittenFindings:()=>assert.fail('strict-only callback')});
+ assert.deepEqual(actions,['status','propose_completion']);assert.equal(result.outcome,'awaiting_user_review');
+ const after=f.state();assert.equal(after.completion_proposal?.verified,false);
+ assert.equal(after.completion_proposal?.user_facing_text,written_findings);
+ assert.deepEqual(after.operations,before.operations);assert.deepEqual(after.criteria,before.criteria);
+ assert.deepEqual(after.completion_proposal?.remaining_work,proposal.remaining_work);
+ for(const message of [finalCodexAssignmentMessageV2(after,'All work complete.'),ui.retainedWorkReportMessage({name:'report_work_for_review'},{output:JSON.stringify(result)})]){
+   assert.ok(message.includes(written_findings));assert.match(message,/not independently verified/);assert.doesNotMatch(message,/All work complete/);
+ }
 }));
 
 test('retained74 omitted-reference completion reaches durable advisory claim without inventing an edit or certifying work',()=>fixture(true,f=>{
@@ -106,6 +128,14 @@ import { AssignmentJournalV2, canonicalJsonV2, decideAssignmentProgressV2, deriv
 const local = { operator_backend_auth: createOperatorBackendAuth("shared_token", "test-only", { OPERATOR_API_BASE_URL: "http://127.0.0.1:7007" }) };
 const proposal = { claimed_completed: ["Drafted a useful partial network."], remaining_work: ["Review terminal connections."], uncertainties: ["Drawing elevation is ambiguous."] };
 
+test('optional user-facing report text is delivered without certifying or dropping unfinished advisory work',()=>fixture(true,f=>{
+ const before=f.state(),answer='Review the draft connection layout; the exterior device still needs an engineering decision.';
+ const result=manageAssignmentWorkPlan({binding:f.binding,action:'propose_completion',completion_proposal:{...proposal,user_facing_text:answer}});
+ assert.equal(result.outcome,'awaiting_user_review');const after=f.state();assert.equal(after.completion_proposal?.verified,false);
+ const message=finalCodexAssignmentMessageV2(after,'Everything is complete.');assert(message.includes(answer));assert.match(message,/not independently verified/);assert.match(message,/Review terminal connections/);assert.doesNotMatch(message,/Everything is complete/);
+ assert.deepEqual(after.operations,before.operations);assert.deepEqual(after.criteria,before.criteria);
+}));
+
 test('new-task ready-work policy rejects premature handoff without stopping the dynamic worker, then preserves ordinary review after ready work is addressed',()=>fixture('installation',async legacy=>{
  const prior=process.env.OPERATOR_LOCAL_READY_WORK_HANDOFF;
  process.env.OPERATOR_LOCAL_READY_WORK_HANDOFF='continue_ready_work_v1';
@@ -143,6 +173,42 @@ async function readyWorkFixture(fn:Parameters<typeof fixture>[1]) {
  process.env.OPERATOR_LOCAL_READY_WORK_HANDOFF='continue_ready_work_v1';
  try{await fixture('installation',fn);}finally{if(previous===undefined)delete process.env.OPERATOR_LOCAL_READY_WORK_HANDOFF;else process.env.OPERATOR_LOCAL_READY_WORK_HANDOFF=previous;}
 }
+
+test('unfinished untracked drafting cannot bypass persistent-task handoff through an omitted checklist',()=>readyWorkFixture(async f=>{
+ assert.equal(f.state().work_plan?.items.length??0,0);
+ const before=structuredClone(f.state());
+ assert.throws(()=>manageAssignmentWorkPlan({binding:f.binding,action:'propose_completion',completion_proposal:proposal}),/ready_work_remaining.*one useful next work item/i);
+ const uiRoot=['../packages/operator-assistant-ui','../../packages/operator-assistant-ui','../operator-desktop'].map(p=>path.resolve(p)).find(p=>fs.existsSync(path.join(p,'work_report.mjs')))!;
+ const ui=await import(pathToFileURL(path.join(uiRoot,'work_report.mjs')).href);
+ assert.match(ui.WORK_REPORT_TOOL.description,/one useful next work item.*no exhaustive upfront inventory/i);
+ const owner={kernel_version:2,session_id:f.binding.session_id,goal_id:f.binding.assignment_id,run_id:f.binding.run_id,generation:f.binding.generation};
+ await assert.rejects(ui.submitWorkReportForReview(owner,proposal,async(_route:string,options:any)=>{
+  const body=JSON.parse(options.body);return manageAssignmentWorkPlan({binding:f.binding,action:body.action,completion_proposal:body.completion_proposal});
+ }),/ready_work_remaining/);
+ assert.deepEqual(f.state(),before,'refusal cannot create scope, certify claims or settle the task');
+ manageAssignmentWorkPlan({binding:f.binding,action:'declare',declaration:{items:[{item_id:'next-area',description:'Resolve the next observed drawing discrepancy',source_basis:'Reference and current view'}],assumptions:[]}});
+ assert.throws(()=>manageAssignmentWorkPlan({binding:f.binding,action:'propose_completion',completion_proposal:proposal}),/ready_work_remaining/);
+ manageAssignmentWorkPlan({binding:f.binding,action:'defer',item_id:'next-area',reason:'The user explicitly requires review before continuing this area.'});
+ manageAssignmentWorkPlan({binding:f.binding,action:'propose_completion',completion_proposal:proposal});
+ assert.equal(f.state().outcome,'awaiting_user_review');
+ assert.equal(f.state().completion_proposal?.verified,false);
+}));
+
+test('an untracked advisory report without remaining work retains ordinary unverified review',()=>readyWorkFixture(f=>{
+ manageAssignmentWorkPlan({binding:f.binding,action:'propose_completion',completion_proposal:{...proposal,remaining_work:[]}});
+ assert.equal(f.state().outcome,'awaiting_user_review');
+ assert.equal(f.state().completion_proposal?.verified,false);
+}));
+
+test('untracked unfinished work may still stop at a real resource checkpoint',async()=>{
+ const prior=process.env.OPERATOR_ADVISORY_MAX_PROVIDER_CALLS;process.env.OPERATOR_ADVISORY_MAX_PROVIDER_CALLS='4';
+ try{await readyWorkFixture(f=>{
+  for(let i=0;i<3;i++)recordCompletedAssignmentProviderReceiptV2({binding:f.binding,call_id:'untracked-'+i,provider:'fixture',model:'fixture',reasoning_effort:null,gap_ids:[],criterion_ids:[],expected_information:['Fixture-only prior usage'],admitted_at:new Date().toISOString(),provider_duration_ms:null,usage:{input_tokens:1,cached_input_tokens:0,cache_write_input_tokens:0,output_tokens:1,total_tokens:2,reasoning_tokens:null,estimated_cost_usd:null},success:true});
+  assert.equal(assignmentWorkBudgetStatusV2(f.state(),DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2,new Date().toISOString()).checkpoint_recommended,true);
+  manageAssignmentWorkPlan({binding:f.binding,action:'propose_completion',completion_proposal:proposal});
+  assert.equal(f.state().outcome,'awaiting_user_review');
+ });}finally{if(prior===undefined)delete process.env.OPERATOR_ADVISORY_MAX_PROVIDER_CALLS;else process.env.OPERATOR_ADVISORY_MAX_PROVIDER_CALLS=prior;}
+});
 
 test('ready-work selection and policy validation cannot opt hosted, remote, read or preview work into continued execution',()=>readyWorkFixture(f=>{
  const spec=structuredClone(f.state().spec);
@@ -317,6 +383,48 @@ test("resumed corrections retain claims but require a fresh claim before depende
   assert.equal(f.state().work_plan_claims!.length,2);
 }));
 
+test('mixed engineering scope retains a focused question while refreshed workers see independent work', () => fixture(true, f => {
+  const decision = 'Equipment duty and design airflow are absent. Which approved unit and design airflows should serve this area?';
+  manageAssignmentWorkPlan({binding:f.binding,action:'declare',declaration:{items:[
+    {item_id:'unit',description:'Add the marked recovery unit',source_basis:'M101 page 5 unit arrow'},
+    {item_id:'finish_area',description:'Finish area HVAC',source_basis:'M101 page 5 broad design note',depends_on:['unit']},
+    {item_id:'labels',description:'Correct supported duct labels',source_basis:'M203 page 13 annotations'}],assumptions:[]}});
+  manageAssignmentWorkPlan({binding:f.binding,action:'defer',item_id:'unit',reason:decision});
+  const policy=structuredClone(f.state().spec.execution_policy), operations=structuredClone(f.state().operations);
+  __testOnlyResetGoalListCache();
+  for(const concise of [false,true]) {
+    const result=prepareCodexAssignmentProgressV2(f.binding,concise);
+    assert.match(result.prompt,/SAVED WORK ORDER AND DECISIONS/);
+    assert(result.prompt.includes(decision),'Exact saved question must reach refreshed reasoning, not only final UI.');
+    const queue=JSON.parse(taskDecisionContext(result.snapshot).split('\n').slice(1).join('\n'));
+    assert.deepEqual(queue.ready_items.items,['labels']);
+    assert.deepEqual(queue.questions.items,[{question_ref:'Q1',item_id:'unit',reason:decision,status_start:0}]);
+    assert.equal(result.snapshot.outcome,'active');assert.deepEqual(result.snapshot.pending_input_variable_ids,[]);
+    assert.deepEqual(result.snapshot.operations,operations);assert.deepEqual(result.snapshot.spec.execution_policy,policy);
+    assert.equal(result.snapshot.work_plan!.items.some(item=>item.completed_at),false);
+  }
+  const questionRows=projectWorkReviewV2(f.state()).page.items;
+  assert.equal(questionRows[0]!.question,decision);assert.deepEqual(questionRows[1]!.waiting_on,['unit']);
+  manageAssignmentWorkPlan({binding:f.binding,action:'complete',item_id:'labels',operation_ids:[]});
+  manageAssignmentWorkPlan({binding:f.binding,action:'propose_completion',completion_proposal:{
+    claimed_completed:['Label review reported; independent verification remains required.'],
+    remaining_work:['Unit selection and dependent area design remain deferred.'],uncertainties:[]}});
+  assert.equal(f.state().outcome,'awaiting_user_review');
+  assert.match(finalCodexAssignmentMessageV2(f.state(),'Complete'),/Q1.*Which approved unit/s);
+}));
+
+test('scoped work-order reminders never override a real whole-assignment input stop', () => fixture(true, f => {
+  manageAssignmentWorkPlan({binding:f.binding,action:'declare',declaration:{items:[
+    {item_id:'one',description:'First change',source_basis:'Mark 1'},
+    {item_id:'two',description:'Independent change',source_basis:'Mark 2'}],assumptions:[]}});
+  requestAssignmentInputV2({binding:f.binding,clarification_id:'required-scope',variable_ids:['approved_design'],
+    new_variable_ids:['approved_design'],question:'Which approved design governs the requested work?'});
+  const stopped=prepareCodexAssignmentProgressV2(f.binding);
+  assert.equal(stopped.snapshot.outcome,'awaiting_user_input');assert.equal(stopped.prompt,'');
+  assert.deepEqual(stopped.snapshot.pending_input_variable_ids,['approved_design']);
+  assert.equal(Object.keys(stopped.snapshot.operations).length,0);
+}));
+
 test("work-plan and provider prompt expose the same host-owned remaining allowance", () => fixture(true, f => {
   const before=structuredClone(f.state().spec.execution_policy);
   const status=manageAssignmentWorkPlan({binding:f.binding,action:"status"});
@@ -340,8 +448,8 @@ async function fixture(advisory: boolean | "installation" | "progress", fn: (f: 
   try { await runWithRequestContext(local, () => fn(setup())); }
   finally { __testOnlyResetGoalListCache(); __closeForTests(); for (const [key, value] of Object.entries(old)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } fs.rmSync(root, { recursive: true, force: true }); }
 }
-function setup(effect: "apply" | "preview" = "apply", sessionId = "experiment") {
-  const goal = createGoal({ title: "Draft rooms", objective: "Draft ductwork in every room from the PDF and inspect connections.",
+function setup(effect: "apply" | "preview" = "apply", sessionId = "experiment", objective = "Draft ductwork in every room from the PDF and inspect connections.") {
+  const goal = createGoal({ title: "Draft rooms", objective,
     acceptance_criteria: ["The drawing is reconstructed."], status: "active", related_session_id: sessionId, created_by: "local-host",
     work_budget: { requested_effect: effect, document_fingerprint: "disposable-linked-model" } });
   const binding = createAssignmentKernelForGoalV2({ goal, run_id: "experiment-run" });
@@ -373,6 +481,87 @@ function settle(f: ReturnType<typeof setup>, lease: ReturnType<typeof open>, eff
 function decide(snapshot: AssignmentSnapshotV2, overrides: Record<string, number> = {}) {
   return decideAssignmentProgressV2({ snapshot, budget: { ...defaultAssignmentWorkBudgetV2(snapshot, DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2), ...overrides }, now: new Date().toISOString() });
 }
+
+// Source229 contract reuse: these are synthetic canonical receipts, not a native
+// execution or semantic verification. The new lane must retain the same review
+// boundary while allowing independent inspection and the existing save route.
+function openNativeProgram(f: ReturnType<typeof setup>, id: string) {
+  return openAssignmentKernelOperationV2({ snapshot: f.state(), provider_turn_id: "turn", controller_request_id: id,
+    capability_id: "operator_run_dynamic_revit_program", classified_effect: "apply", target_tokens: ["id:11"],
+    arguments: { mode: "apply", source: "native program fixture", native_program: { entry_type: "Program", allowed_existing_unique_ids: ["uid-11"] } } });
+}
+
+test("native program review reuse permits readback and save admission without manufacturing automatic verification", () => fixture(true, f => {
+  const write = openNativeProgram(f, "native-write");
+  settle(f, write, "applied", r => { r.authority = "dynamic-runtime"; r.result_schema_id = "dynamic-revit-worker/evidence/v0"; });
+  const committed = structuredClone(f.state().operations[write.operation_id]!);
+  assert.equal(committed.persistent_effect, "applied");
+  const read = open(f, "independent-native-read"); settle(f, read);
+  assert.equal(f.state().operations[write.operation_id]!.result?.native_transaction_state, "committed");
+  assert.equal(Object.values(f.state().observations).some(o => o.facts.some(x => x.fact_id === "verification.postcondition_satisfied" && x.value === true)), false);
+  const save = openAssignmentKernelOperationV2({ snapshot: f.state(), provider_turn_id: "turn", controller_request_id: "tracked-save",
+    capability_id: "revit_call_tool", classified_effect: "apply", arguments: { method: "POST", path: "/revit/save-as", body: { path: "C:/fixture/Result.rvt" } } });
+  settle(f, save, "applied");
+  const before = structuredClone(f.state());
+  manageAssignmentWorkPlan({ binding: f.binding, action: "propose_completion", completion_proposal: {
+    claimed_completed: ["Created a draft with native code and retained its readback."], remaining_work: [],
+    uncertainties: ["General native-code output has no automatic semantic comparator; review required."],
+    user_facing_text: "Draft saved for review; inspect the dimensions and placement." } });
+  const after = f.state();
+  assert.equal(after.outcome, "awaiting_user_review"); assert.equal(after.terminal, false);
+  assert.equal(after.completion_proposal?.verified, false);
+  assert.deepEqual(after.operations, before.operations); assert.deepEqual(after.criteria, before.criteria);
+  assert.deepEqual(after.provider_calls, before.provider_calls); assert.deepEqual(after.spec, before.spec);
+  assert.match(finalCodexAssignmentMessageV2(after, "Automatically verified."), /not independently verified/);
+  assert.doesNotMatch(finalCodexAssignmentMessageV2(after, "Automatically verified."), /Automatically verified/);
+  __testOnlyResetGoalListCache(); assert.deepEqual(f.state(), after);
+}));
+
+for (const stop of ["unknown", "pause", "pending-usage"] as const)
+test(`native program review reuse preserves ${stop} without converting it to completion`, () => fixture(true, f => {
+  const write = openNativeProgram(f, "native-write");
+  if (stop === "unknown") { markAssignmentKernelOperationDispatchStartedV2(write); failAssignmentKernelOperationV2(write, new Error("native acknowledgement missing"), "dispatched"); }
+  else settle(f, write, "applied", r => { r.authority = "dynamic-runtime"; r.result_schema_id = "dynamic-revit-worker/evidence/v0"; });
+  if (stop === "pause") controlAssignmentExecutionV2({ binding: f.binding, action: "pause", command_id: "pause-native", expected_command_id: null });
+  if (stop === "pending-usage") recordAssignmentProviderCallStateV2({ binding: f.binding, call_id: "draining-native", state: "admitted", provider: "fixture", model: "fixture", gap_ids: [], criterion_ids: [], expected_information: ["Retained native result."] });
+  const before = structuredClone(f.state());
+  if (stop === "pending-usage") {
+    manageAssignmentWorkPlan({ binding: f.binding, action: "propose_completion", completion_proposal: proposal });
+    assert.equal(f.state().terminal, false); assert.notEqual(f.state().outcome, "complete");
+    assert.deepEqual(f.state().provider_calls, before.provider_calls);
+  } else {
+    assert.throws(() => manageAssignmentWorkPlan({ binding: f.binding, action: "propose_completion", completion_proposal: proposal }));
+    assert.throws(() => openNativeProgram(f, "no-second-write"));
+    assert.deepEqual(f.state(), before);
+  }
+  assert.deepEqual(f.state().operations, before.operations);
+}));
+
+test("native program review reuse retains a failed-after-commit result as applied and unverified", () => fixture(true, f => {
+  const write = openNativeProgram(f, "committed-error");
+  settle(f, write, "applied", r => { r.authority = "dynamic-runtime"; r.result_schema_id = "dynamic-revit-worker/evidence/v0"; r.status = "failed_after_dispatch"; });
+  const before = structuredClone(f.state());
+  manageAssignmentWorkPlan({ binding: f.binding, action: "propose_completion", completion_proposal: {
+    claimed_completed: [], remaining_work: ["Inspect the committed changes before continuing."],
+    uncertainties: ["Program reported an error after commit; do not replay the write."] } });
+  const retained = f.state().operations[write.operation_id]!;
+  assert.equal(retained.result?.status, "failed_after_dispatch");
+  assert.equal(retained.persistent_effect, "applied"); assert.equal(retained.result?.native_transaction_state, "committed");
+  assert.deepEqual(f.state().operations, before.operations); assert.deepEqual(f.state().criteria, before.criteria);
+  assert.equal(f.state().completion_proposal?.verified, false); assert.equal(f.state().terminal, false);
+}));
+
+test("native program review reuse cannot change a strict task into advisory completion", () => fixture(false, () => {
+  const f = setup("apply", "strict-native", "Create one native space boundary and inspect it.");
+  manageAssignmentWorkPlan({ binding: f.binding, action: "declare", declaration: {
+    items: [{ item_id: "native", description: "Create native geometry", source_basis: "User request" }], assumptions: [] } });
+  const write = openNativeProgram(f, "strict-native-write");
+  settle(f, write, "applied", r => { r.authority = "dynamic-runtime"; r.result_schema_id = "dynamic-revit-worker/evidence/v0"; });
+  const before = structuredClone(f.state());
+  assert.throws(() => manageAssignmentWorkPlan({ binding: f.binding, action: "propose_completion", completion_proposal: proposal }));
+  assert.deepEqual(f.state(), before); assert.equal(f.state().spec.execution_policy, undefined);
+  assert.equal(Object.values(f.state().observations).some(o => o.facts.some(x => x.fact_id === "verification.postcondition_satisfied" && x.value === true)), false);
+}));
 
 test("advisory selection is exact-session local-host only and immutable after journal reload", () => fixture(true, f => {
   const stored = f.state().spec.execution_policy!;
@@ -542,6 +731,41 @@ test("authenticated new work receives a bounded allocation without resetting usa
     await steerAssignment(checkpointCommand(f,"second-idle-direction"));
     assert.equal(defaultAssignmentWorkBudgetV2(f.state(),DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2).max_provider_calls,119,"idle new direction cannot accumulate credit");
   }); } finally { if(previous===undefined)delete process.env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE;else process.env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE=previous; }
+});
+
+test('explicit resource renewal travels through authenticated checkpoint steering and durable reducer replay',async()=>{
+  const old=process.env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE;process.env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE='verified_native_changes_v1';
+  try{await fixture(true,async f=>{
+    manageAssignmentWorkPlan({binding:f.binding,action:'propose_completion',completion_proposal:proposal});
+    const before=structuredClone(f.state()),base=checkpointCommand(f,'explicit-resource-renewal');
+    const command={...base,checkpoint:{...base.checkpoint,resource_renewal:{provider_calls:64,total_tokens:16_000_000}}};
+    await steerAssignment(command);const after=f.state();
+    assert.equal(defaultAssignmentWorkBudgetV2(after,DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2).max_total_tokens,16_000_000);
+    assert.equal(after.user_followup_allocation?.resource_renewal?.command_id,command.command_id);
+    assert.equal(after.outcome,'active');assert.equal(after.terminal,false);assert.deepEqual(after.spec,before.spec);
+    assert.deepEqual(after.provider_calls,before.provider_calls);assert.deepEqual(after.operations,before.operations);
+    __testOnlyResetGoalListCache();assert.deepEqual(f.state(),after);
+    await steerAssignment(command);assert.equal(f.state().assignment_version,after.assignment_version);
+    await assert.rejects(steerAssignment({...command,checkpoint:{...command.checkpoint,resource_renewal:{provider_calls:64,total_tokens:1}}}),/different content/);
+  });}finally{if(old===undefined)delete process.env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE;else process.env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE=old;}
+});
+
+test('explicit resource requests do not bypass pending input, unknown effects, Pause or stale checkpoint fences',async()=>{
+  const old=process.env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE;process.env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE='verified_native_changes_v1';
+  try{await fixture(true,f=>{
+  manageAssignmentWorkPlan({binding:f.binding,action:'propose_completion',completion_proposal:proposal});
+  const s=f.state(),command=checkpointCommand(f),c={command_id:command.command_id,expected_control_command_id:null,
+    document_fingerprint:command.checkpoint.document_fingerprint,direction_variable_id:'user_direction_'+'a'.repeat(32),
+    direction_text:command.text,resource_renewal:{provider_calls:64,total_tokens:16_000_000}};
+  assert.doesNotThrow(()=>assertAdvisoryCheckpointContinuationV1(s,command.checkpoint.review_id,c,new Date().toISOString(),true,true));
+  for(const mutate of [(x:any)=>x.unresolved_unknown_operation_ids=['unknown'],(x:any)=>x.pending_input_variable_ids=['answer'],
+    (x:any)=>x.in_flight_provider_call_ids=['provider'],(x:any)=>x.provider_usage_hold={hold_id:'usage'},
+    (x:any)=>x.execution_control={state:'paused',command_id:'new-pause'},(x:any)=>x.completion_proposal.review_id='foreign',
+    (x:any)=>x.terminal=true,(x:any)=>x.provider_budget_exhausted=true,(x:any)=>x.execution_failure_ids=['failure'],
+    (x:any)=>x.in_flight_operation_ids=['operation']]){
+    const x=structuredClone(s);mutate(x);assert.throws(()=>assertAdvisoryCheckpointContinuationV1(x,command.checkpoint.review_id,c,new Date().toISOString(),true,true));
+  }
+  });}finally{if(old===undefined)delete process.env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE;else process.env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE=old;}
 });
 
 test("checkpoint follow-up rejects stale control/document/review and conflicting retries without releasing work", () => fixture(true, async f => {

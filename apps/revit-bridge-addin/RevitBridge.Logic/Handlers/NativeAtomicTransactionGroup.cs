@@ -15,7 +15,8 @@ namespace RevitBridge.Logic.Handlers
             Func<Dictionary<string, object?>> mutate,
             Func<IEnumerable<long>> nativeCreatedElements,
             Func<IEnumerable<long>> nativeModifiedElements,
-            NativeTransactionDisposition disposition)
+            NativeTransactionDisposition disposition,
+            Func<IEnumerable<long>>? nativeDeletedElements = null)
         {
             var inventory = new OperatorNativeChangeInventory(doc);
             void Changed(object sender, DocumentChangedEventArgs args)
@@ -35,7 +36,7 @@ namespace RevitBridge.Logic.Handlers
                     var result = OperatorNativeTransactionExecution.Execute(
                         () => group.Start().ToString(), () => group.Assimilate().ToString(),
                         () => group.RollBack().ToString(), () => group.GetStatus().ToString(), mutate,
-                        inventory.CommittedReceipt, nativeCreatedElements, nativeModifiedElements, disposition);
+                        inventory.CommittedReceipt, nativeCreatedElements, nativeModifiedElements, disposition, nativeDeletedElements);
                     result["changeTracking"] = inventory.Diagnostics();
                     return result;
                 }

@@ -1,0 +1,278 @@
+{
+  "response": {
+    "version": "operator.native_api_ops.v2",
+    "ok": true,
+    "read_only": true,
+    "ephemeral_handles": true,
+    "direct_context_targets": true,
+    "static_calls": true,
+    "property_access": true,
+    "argument_references": true,
+    "geometry_cleanup_errors": [],
+    "budgets": {
+      "max_total_ms": 5000,
+      "max_operation_ms": 2000
+    },
+    "operation_count": 9,
+    "duration_ms": 34,
+    "operations": [
+      {
+        "id": "note",
+        "op": "call",
+        "member_id": "method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)",
+        "property": null,
+        "signature": "Element Document.GetElement(ElementId id)",
+        "target_type": "Autodesk.Revit.DB.Document",
+        "target_identity": null,
+        "duration_ms": 0,
+        "result_preview": {
+          "id": 1421361,
+          "unique_id": "5341c04e-b763-44b2-8cca-4f638eb81a5c-0015b031",
+          "name": "1/4\" Trebuchet MS",
+          "category": "Text Notes"
+        }
+      },
+      {
+        "id": "leaders",
+        "op": "call",
+        "member_id": "method:Autodesk.Revit.DB.TextNote.GetLeaders()",
+        "property": null,
+        "signature": "IList<Leader> TextNote.GetLeaders()",
+        "target_type": "Autodesk.Revit.DB.TextNote",
+        "target_identity": {
+          "schema": "operator.native_element_receiver.v1",
+          "element_id": 1421361,
+          "unique_id": "5341c04e-b763-44b2-8cca-4f638eb81a5c-0015b031",
+          "type_name": "Autodesk.Revit.DB.TextNote",
+          "active_document": true
+        },
+        "duration_ms": 2,
+        "result_preview": {
+          "type": "System.Collections.Generic.List`1[[Autodesk.Revit.DB.Leader, RevitAPI, Version=24.3.30.0, Culture=neutral, PublicKeyToken=null]]",
+          "deferred_enumeration": true
+        }
+      },
+      {
+        "id": "leader_count",
+        "op": "get_property",
+        "member_id": null,
+        "property": "Count",
+        "signature": "int List`1.Count { get; }",
+        "target_type": "System.Collections.Generic.List`1[[Autodesk.Revit.DB.Leader, RevitAPI, Version=24.3.30.0, Culture=neutral, PublicKeyToken=null]]",
+        "target_identity": null,
+        "duration_ms": 0,
+        "result_preview": 0
+      },
+      {
+        "id": "note_id",
+        "op": "get_property",
+        "member_id": null,
+        "property": "Id",
+        "signature": "ElementId Element.Id { get; }",
+        "target_type": "Autodesk.Revit.DB.TextNote",
+        "target_identity": {
+          "schema": "operator.native_element_receiver.v1",
+          "element_id": 1421361,
+          "unique_id": "5341c04e-b763-44b2-8cca-4f638eb81a5c-0015b031",
+          "type_name": "Autodesk.Revit.DB.TextNote",
+          "active_document": true
+        },
+        "duration_ms": 0,
+        "result_preview": {
+          "id": 1421361
+        }
+      },
+      {
+        "id": "note_unique_id",
+        "op": "get_property",
+        "member_id": null,
+        "property": "UniqueId",
+        "signature": "string Element.UniqueId { get; }",
+        "target_type": "Autodesk.Revit.DB.TextNote",
+        "target_identity": {
+          "schema": "operator.native_element_receiver.v1",
+          "element_id": 1421361,
+          "unique_id": "5341c04e-b763-44b2-8cca-4f638eb81a5c-0015b031",
+          "type_name": "Autodesk.Revit.DB.TextNote",
+          "active_document": true
+        },
+        "duration_ms": 0,
+        "result_preview": "5341c04e-b763-44b2-8cca-4f638eb81a5c-0015b031"
+      },
+      {
+        "id": "note_text",
+        "op": "get_property",
+        "member_id": null,
+        "property": "Text",
+        "signature": "string TextElement.Text { get; }",
+        "target_type": "Autodesk.Revit.DB.TextNote",
+        "target_identity": {
+          "schema": "operator.native_element_receiver.v1",
+          "element_id": 1421361,
+          "unique_id": "5341c04e-b763-44b2-8cca-4f638eb81a5c-0015b031",
+          "type_name": "Autodesk.Revit.DB.TextNote",
+          "active_document": true
+        },
+        "duration_ms": 0,
+        "result_preview": "***An Autodesk Revit sample project***\r"
+      },
+      {
+        "id": "owner_view_id",
+        "op": "get_property",
+        "member_id": null,
+        "property": "OwnerViewId",
+        "signature": "ElementId Element.OwnerViewId { get; }",
+        "target_type": "Autodesk.Revit.DB.TextNote",
+        "target_identity": {
+          "schema": "operator.native_element_receiver.v1",
+          "element_id": 1421361,
+          "unique_id": "5341c04e-b763-44b2-8cca-4f638eb81a5c-0015b031",
+          "type_name": "Autodesk.Revit.DB.TextNote",
+          "active_document": true
+        },
+        "duration_ms": 0,
+        "result_preview": {
+          "id": 1420963
+        }
+      },
+      {
+        "id": "owner_view",
+        "op": "call",
+        "member_id": "method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)",
+        "property": null,
+        "signature": "Element Document.GetElement(ElementId id)",
+        "target_type": "Autodesk.Revit.DB.Document",
+        "target_identity": null,
+        "duration_ms": 0,
+        "result_preview": {
+          "id": 1420963,
+          "unique_id": "d37b12da-a3ea-47b4-adce-c020870a5bf5-0015aea3",
+          "name": "Cover Sheet",
+          "category": "Sheets"
+        }
+      },
+      {
+        "id": "owner_view_name",
+        "op": "get_property",
+        "member_id": null,
+        "property": "Name",
+        "signature": "string Element.Name { get; }",
+        "target_type": "Autodesk.Revit.DB.ViewSheet",
+        "target_identity": {
+          "schema": "operator.native_element_receiver.v1",
+          "element_id": 1420963,
+          "unique_id": "d37b12da-a3ea-47b4-adce-c020870a5bf5-0015aea3",
+          "type_name": "Autodesk.Revit.DB.ViewSheet",
+          "active_document": true
+        },
+        "duration_ms": 0,
+        "result_preview": "Cover Sheet"
+      }
+    ],
+    "results": {
+      "note_id": {
+        "id": 1421361
+      },
+      "note_unique_id": "5341c04e-b763-44b2-8cca-4f638eb81a5c-0015b031",
+      "note_text": "***An Autodesk Revit sample project***\r",
+      "owner_view_id": {
+        "id": 1420963
+      },
+      "owner_view_name": "Cover Sheet",
+      "leaders": {
+        "count": 0,
+        "items": [],
+        "limit": 50,
+        "hasMore": false,
+        "truncated": false,
+        "complete": true,
+        "total": 0
+      },
+      "leader_count": 0
+    }
+  },
+  "request": {
+    "operations": [
+      {
+        "id": "note",
+        "op": "call",
+        "target": "doc",
+        "memberId": "method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)",
+        "args": [
+          1421361
+        ]
+      },
+      {
+        "id": "leaders",
+        "op": "call",
+        "target": "$note",
+        "memberId": "method:Autodesk.Revit.DB.TextNote.GetLeaders()",
+        "args": []
+      },
+      {
+        "id": "leader_count",
+        "op": "get_property",
+        "target": "$leaders",
+        "property": "Count"
+      },
+      {
+        "id": "note_id",
+        "op": "get_property",
+        "target": "$note",
+        "property": "Id"
+      },
+      {
+        "id": "note_unique_id",
+        "op": "get_property",
+        "target": "$note",
+        "property": "UniqueId"
+      },
+      {
+        "id": "note_text",
+        "op": "get_property",
+        "target": "$note",
+        "property": "Text"
+      },
+      {
+        "id": "owner_view_id",
+        "op": "get_property",
+        "target": "$note",
+        "property": "OwnerViewId"
+      },
+      {
+        "id": "owner_view",
+        "op": "call",
+        "target": "doc",
+        "memberId": "method:Autodesk.Revit.DB.Document.GetElement(Autodesk.Revit.DB.ElementId)",
+        "args": [
+          {
+            "$ref": "owner_view_id"
+          }
+        ]
+      },
+      {
+        "id": "owner_view_name",
+        "op": "get_property",
+        "target": "$owner_view",
+        "property": "Name"
+      }
+    ],
+    "returns": [
+      "note_id",
+      "note_unique_id",
+      "note_text",
+      "owner_view_id",
+      "owner_view_name",
+      "leaders",
+      "leader_count"
+    ]
+  },
+  "expected_model_fact": {
+    "value": true,
+    "fact_id": "model.content_observed",
+    "fact_class": "domain",
+    "dimensions": {
+      "route": "/revit/native-api-ops"
+    }
+  }
+}

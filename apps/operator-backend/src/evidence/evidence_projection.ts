@@ -2,7 +2,9 @@ import { EVIDENCE_PROJECTION_SCHEMA, MAX_RETAINED_IMAGE_BYTES_V1, type EvidenceP
 import { projectToolDocumentation } from "./tool_documentation_projection.js";
 import { projectConnectorGraph } from "./connector_graph_projection.js";
 import { projectParameterTable } from "./parameter_table_projection.js";
+import { projectTagReferences } from "./tag_reference_projection.js";
 import { projectScopedHelperFindings } from "./scoped_helper_projection.js";
+import { projectNativeProgram } from "./native_program_projection.js";
 import { viewOwnedDetailingSummaryV2 } from "../verification/view_owned_detailing_v2.js";
 import { extractMcpStructuredPayload, parseBoundedStructuredJson } from "./structured_payload.js";
 import {
@@ -393,6 +395,25 @@ export function projectEvidence(ref: EvidenceRefV1, raw: unknown, maxBytes = 8_1
           if (inventory) {
             const compact = { ...base, key_counts: {}, key_facts: {}, target_scope: ref.target_scope,
               inline_payload: inventory, truncated: true };
+            if (projectionBytes(compact) <= maxBytes) candidate = compact;
+          }
+          // These display keys duplicate identities in retained native rows.
+          // Bound them as in the generic projection loop so they cannot crowd
+          // out all later tag rows. The stored ref/scope and hash are unchanged.
+          const tagBase = { ...base, key_counts: {}, key_facts: {}, target_scope: ref.target_scope.slice(0, 4) };
+          const scopeDisplay = ref.target_scope.length > tagBase.target_scope.length
+            ? { displayed_keys: tagBase.target_scope.length, retained_keys: ref.target_scope.length, complete: false } : undefined;
+          const tags = projectTagReferences(payload, maxBytes - projectionBytes(tagBase) - (scopeDisplay ? 160 : 32));
+          if (tags) {
+            // This is a selected-field presentation. Full native bytes, scope,
+            // hashes and authority remain in the retained evidence object.
+            const compact = { ...tagBase, inline_payload: { ...tags, ...(scopeDisplay ? { evidence_scope_display: scopeDisplay } : {}) }, truncated: true };
+            if (projectionBytes(compact) <= maxBytes) candidate = compact;
+          }
+          const nativeProgramBase = { ...base, key_counts: {}, key_facts: {}, diagnostics: [], target_scope: ref.target_scope };
+          const nativeProgram = projectNativeProgram(ref, payload, maxBytes - projectionBytes(nativeProgramBase) - 32);
+          if (nativeProgram) {
+            const compact = { ...nativeProgramBase, inline_payload: nativeProgram, truncated: true };
             if (projectionBytes(compact) <= maxBytes) candidate = compact;
           }
         }

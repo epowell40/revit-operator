@@ -7,6 +7,7 @@ export type SidecarAgentCapabilityProfile = "general_agent" | "general_agent_lab
 export type SidecarAgentProfileReason =
   | "GENERAL_AGENT_DEVELOPMENT_LABORATORY_READY"
   | "GENERAL_AGENT_HOSTED_PRODUCTION_READY"
+  | "GENERAL_AGENT_LOCAL_READY"
   | "GENERAL_AGENT_UNAVAILABLE_PROVIDER_REQUIRED"
   | "GENERAL_AGENT_UNAVAILABLE_PRINCIPAL_AUTH_REQUIRED"
   | "GENERAL_AGENT_UNAVAILABLE_LABORATORY_REQUIRES_EXACT_DEVELOPMENT"
@@ -45,13 +46,18 @@ export function getSidecarAgentProfileState(env: NodeJS.ProcessEnv = process.env
   const productionBrain = env.OPERATOR_BRAIN === "codex" || env.OPERATOR_BRAIN === "auto";
   const providerReady = !!((env.OPERATOR_OPENAI_API_KEY ?? "").trim() || (env.OPENAI_API_KEY ?? "").trim());
   const hostedProductionReady = exactHostedProduction && principalAuth && productionBrain && providerReady;
-  const generalAgentReady = laboratoryReady || hostedProductionReady;
+  const localGeneralReady = (env.REVIT_OPERATOR_MODE === "local" || env.REVIT_OPERATOR_MODE === "self_hosted")
+    && env.OPERATOR_TOOL_EXPOSURE_PROFILE === "general" && !hostedRuntime
+    && configuredAuth === "shared_token" && exactGeneralBrain && providerReady;
+  const generalAgentReady = laboratoryReady || hostedProductionReady || localGeneralReady;
 
   let reasonCode: SidecarAgentProfileReason;
   if (laboratoryReady) {
     reasonCode = "GENERAL_AGENT_DEVELOPMENT_LABORATORY_READY";
   } else if (hostedProductionReady) {
     reasonCode = "GENERAL_AGENT_HOSTED_PRODUCTION_READY";
+  } else if (localGeneralReady) {
+    reasonCode = "GENERAL_AGENT_LOCAL_READY";
   } else if (exactHostedProduction && !principalAuth) {
     reasonCode = "GENERAL_AGENT_UNAVAILABLE_PRINCIPAL_AUTH_REQUIRED";
   } else if (exactHostedProduction && (!productionBrain || !providerReady)) {
@@ -72,8 +78,8 @@ export function getSidecarAgentProfileState(env: NodeJS.ProcessEnv = process.env
     schema: SIDECAR_AGENT_PROFILE_SCHEMA,
     source: "backend_environment",
     runtime_mode: runtimeMode ?? "unconfigured",
-    tool_exposure_profile: laboratoryReady ? "laboratory" : hostedProductionReady ? "general" : "unavailable",
-    capability_profile: laboratoryReady ? "general_agent_laboratory" : hostedProductionReady ? "general_agent" : "general_agent_unavailable",
+    tool_exposure_profile: laboratoryReady ? "laboratory" : (hostedProductionReady || localGeneralReady) ? "general" : "unavailable",
+    capability_profile: laboratoryReady ? "general_agent_laboratory" : (hostedProductionReady || localGeneralReady) ? "general_agent" : "general_agent_unavailable",
     general_agent_ready: generalAgentReady,
     reason_code: reasonCode
   });

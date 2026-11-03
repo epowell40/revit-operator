@@ -1,0 +1,163 @@
+{
+  "retained_failed_payload_sha256": "sha256:c6d81b60de5f57e2d808d04f0a0c89c9e8fd32f27759bd4e64e199df407a9c5c",
+  "input": {
+    "method": "POST",
+    "path": "/revit/move-elements",
+    "body": {
+      "ids": [
+        631097
+      ],
+      "mode": "vector",
+      "vectorX": 0,
+      "vectorY": 0,
+      "vectorZ": 0.55,
+      "dryRun": false,
+      "behavior": "allOrNothing",
+      "options": {
+        "failOnPinned": true
+      }
+    }
+  },
+  "native_failed": {
+    "movedIds": [
+      631097
+    ],
+    "applied": true,
+    "success": false,
+    "transaction": {
+      "status": "committed",
+      "committed": true,
+      "modified_element_ids": [
+        631097
+      ],
+      "affected_element_ids": [
+        631097
+      ],
+      "added_element_ids": [],
+      "deleted_element_ids": []
+    },
+    "changeTracking": {
+      "documentChangedObserved": true,
+      "exhaustiveChangeInventory": true,
+      "eventCount": 1,
+      "matchingEventCount": 1,
+      "distinctWrapperMatchCount": 1,
+      "captureFailureCount": 0
+    },
+    "capturedFailures": [],
+    "failureRollbackRequested": false,
+    "verified": false,
+    "ok": false,
+    "error": "Native location readback is unavailable.",
+    "status": "Committed With Errors",
+    "rolledBack": false,
+    "skipped": [],
+    "warnings": [],
+    "snapshots": [],
+    "movedTogether": false
+  },
+  "observed_native_heads": [
+    {
+      "kind": "TagHead",
+      "pointXyz": [
+        -37.181439112633825,
+        16.45734107244493,
+        4.058962391333185
+      ],
+      "ownerViewId": 624641,
+      "ownerViewUniqueId": "4aded12f-bb3e-43d3-a764-654a0a8454e4-00098801",
+      "elementUniqueId": "29941a84-1fd2-4ae3-8421-0eff7b279ba0-0009a139"
+    },
+    {
+      "kind": "TagHead",
+      "pointXyz": [
+        -37.181439112633825,
+        16.45734107244493,
+        4.6089623913331845
+      ],
+      "ownerViewId": 624641,
+      "ownerViewUniqueId": "4aded12f-bb3e-43d3-a764-654a0a8454e4-00098801",
+      "elementUniqueId": "29941a84-1fd2-4ae3-8421-0eff7b279ba0-0009a139"
+    }
+  ],
+  "synthetic_future_apply": {
+    "movedIds": [
+      631097
+    ],
+    "applied": true,
+    "success": true,
+    "transaction": {
+      "status": "committed",
+      "committed": true,
+      "modified_element_ids": [
+        631097
+      ],
+      "affected_element_ids": [
+        631097
+      ],
+      "added_element_ids": [],
+      "deleted_element_ids": []
+    },
+    "changeTracking": {
+      "documentChangedObserved": true,
+      "exhaustiveChangeInventory": true,
+      "eventCount": 1,
+      "matchingEventCount": 1,
+      "distinctWrapperMatchCount": 1,
+      "captureFailureCount": 0
+    },
+    "capturedFailures": [],
+    "failureRollbackRequested": false,
+    "verified": true,
+    "ok": true,
+    "status": "Moved",
+    "rolledBack": false,
+    "skipped": [],
+    "warnings": [],
+    "snapshots": [
+      {
+        "id": 631097,
+        "before": {
+          "kind": "TagHead",
+          "pointXyz": [
+            -37.181439112633825,
+            16.45734107244493,
+            4.058962391333185
+          ],
+          "ownerViewId": 624641,
+          "ownerViewUniqueId": "4aded12f-bb3e-43d3-a764-654a0a8454e4-00098801",
+          "elementUniqueId": "29941a84-1fd2-4ae3-8421-0eff7b279ba0-0009a139"
+        },
+        "after": {
+          "kind": "TagHead",
+          "pointXyz": [
+            -37.181439112633825,
+            16.45734107244493,
+            4.6089623913331845
+          ],
+          "ownerViewId": 624641,
+          "ownerViewUniqueId": "4aded12f-bb3e-43d3-a764-654a0a8454e4-00098801",
+          "elementUniqueId": "29941a84-1fd2-4ae3-8421-0eff7b279ba0-0009a139"
+        }
+      }
+    ],
+    "movedTogether": false
+  },
+  "synthetic_future_read": [
+    {
+      "id": 631097,
+      "found": true,
+      "uniqueId": "29941a84-1fd2-4ae3-8421-0eff7b279ba0-0009a139",
+      "className": "IndependentTag",
+      "location": {
+        "type": "tagHead",
+        "x": -37.181439112633825,
+        "y": 16.45734107244493,
+        "z": 4.6089623913331845,
+        "ownerViewId": 624641,
+        "ownerViewUniqueId": "4aded12f-bb3e-43d3-a764-654a0a8454e4-00098801"
+      }
+    }
+  ],
+  "synthetic_note": "Future producer schema over retained native before/after head values; not an actual successful native receipt."
+}

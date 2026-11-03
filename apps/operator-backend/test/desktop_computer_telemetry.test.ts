@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import {FOCUSED_EVIDENCE_TOOL_V1} from "@revitoperator/assignment-kernel-v2-contracts/focused-evidence";
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
@@ -15,6 +16,7 @@ import { modelEvidenceEnvelope } from "../src/evidence/model_context_budget.js";
 import { createGoal, __testOnlyResetGoalListCache } from "../src/goals/service.js";
 import { createAssignmentKernelForGoalV2 } from "../src/assignments/assignment_kernel_v2_factory.js";
 import { getAssignmentKernelSnapshotV2 } from "../src/assignments/assignment_kernel_v2_store.js";
+import {desktopNativeModelTools} from '../src/assignments/desktop_native_tools.js';
 
 test("bound desktop HTTP relay retains canonical in-flight and usage without verifying work", async () => {
   const previous = { key: process.env.OPERATOR_OPENAI_API_KEY, base: process.env.OPERATOR_OPENAI_BASE_URL,
@@ -47,9 +49,29 @@ test("bound desktop HTTP relay retains canonical in-flight and usage without ver
       work_budget: { requested_effect: "read" } });
     goalId = goal.id;
     const binding = createAssignmentKernelForGoalV2({ goal, run_id: "bound-desktop-run" });
-    const result = await relayBoundDesktopComputerResponse({ model: "gpt-6.1-sol", reasoning_effort: "medium", input: "Inspect PDF", message_id: "direct-request-a" },
+    const filename='desktop-native-program-contract293.json';
+    const fixture=[path.join(import.meta.dirname,'fixtures',filename),path.resolve(import.meta.dirname,'../../test/fixtures',filename)].find(p=>fs.existsSync(p));
+    assert(fixture);
+    const program=JSON.parse(fs.readFileSync(fixture,'utf8')).tool;
+    const supplementalName='desktop-owner-supplemental-tools298.json';
+    const supplementalFile=[path.join(import.meta.dirname,'fixtures',supplementalName),path.resolve(import.meta.dirname,'../../test/fixtures',supplementalName)].find(p=>fs.existsSync(p));
+    assert(supplementalFile);
+    const supplemental=JSON.parse(fs.readFileSync(supplementalFile,'utf8').replace(/^\uFEFF/,'')).tools;
+    const modelTools=[FOCUSED_EVIDENCE_TOOL_V1,...desktopNativeModelTools([program,...supplemental])];
+    const result = await relayBoundDesktopComputerResponse({ model: "gpt-6.1-sol", reasoning_effort: "medium", input: "Inspect PDF", message_id: "direct-request-a", tools:modelTools },
       { ...binding, kernelVersion: 2 });
     assert.equal(requests, 1);
+    for(const tool of supplemental)assert(!upstreamRequest.tools.some((t:any)=>t.name==='native__'+tool.name),
+      'the actual provider request must defer supplemental schemas, not just report a smaller catalog');
+    assert.deepEqual(upstreamRequest.tools,modelTools);
+    const submittedProgram=upstreamRequest.tools.find((tool:any)=>tool.name==='native__'+program.name);
+    assert(submittedProgram,'full executor SDK must reach the actual provider HTTP request');
+    assert.deepEqual(submittedProgram.parameters,program.inputSchema);
+    assert.equal(submittedProgram.description,program.description);
+    assert.equal(submittedProgram.strict,false);
+    assert.equal(upstreamRequest.tools[0].strict,false,
+      'The Responses API must preserve omitted mutually exclusive selectors, rather than normalize every selector into a required field.');
+    assert.deepEqual(upstreamRequest.tools[0].parameters.required,['evidenceId','purpose']);
     assert.match(upstreamRequest.instructions, /normally omit source revision clouds and revision tags/);
     assert.match(upstreamRequest.instructions, /actual authorized project revision/);
     assert.match(JSON.stringify(upstreamRequest.input), /operator.desktop-assignment-feedback.v1/);
@@ -354,6 +376,7 @@ test("desktop endpoint returns one content-free failed receipt for a dispatched 
   const responseText = await response.text();
   const payload = JSON.parse(responseText) as any;
   assert.equal(payload.error, "Desktop computer provider request failed.");
+  assert.deepEqual(payload.provider_diagnostic, {status:400,type:'invalid_request_error',reason:'unclassified',parameter:null,request_id:null});
   assert.equal(providerCalls, 1);
   assert.equal(payload.model_call_receipts.length, 1);
   assert.deepEqual(payload.model_call_receipts[0], {
@@ -392,6 +415,7 @@ test("desktop endpoint returns one content-free failed receipt for a dispatched 
   const saved = await recovered.json() as any;
   assert.equal(saved.status, "error");
   assert.deepEqual(saved.failure.model_call_receipts, payload.model_call_receipts);
+  assert.deepEqual(saved.failure.provider_diagnostic, payload.provider_diagnostic);
   assert.notEqual((await recover(recoveryBody, "wrong-token")).status, 200);
   assert.notEqual((await recover({ ...recoveryBody, assignment_generation: binding.generation + 1 })).status, 200);
   assert.notEqual((await recover({ ...recoveryBody, session_id: "wrong-session" })).status, 200);

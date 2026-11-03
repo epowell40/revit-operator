@@ -10,7 +10,7 @@ import { ensureAssignmentRunForTurn } from "../src/assignments/turn_journal.js";
 import { createGoal, getGoal } from "../src/goals/service.js";
 import { beginTeammateLoopOwner, endTeammateLoopOwner } from "../src/teammate_loop_runtime.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../src/contracts.js";
-import { readEvidenceRef } from "../src/evidence/evidence_store.js";
+import { readEvidenceRef, readAuthoritativeEvidence } from "../src/evidence/evidence_store.js";
 
 async function workspace(fn: () => Promise<void>): Promise<void> {
   const prior = process.env.OPERATOR_WORKSPACE_ROOT;
@@ -23,6 +23,41 @@ async function workspace(fn: () => Promise<void>): Promise<void> {
     fs.rmSync(root, { recursive: true, force: true });
   }
 }
+
+test("427 missing Legend source retains native no-transaction authority and guidance without settling historical errors", { concurrency: false }, async () => {
+  await workspace(async () => {
+    for (const variant of ["not-started", "historical-error", "pending"] as const) {
+      const known = variant === "not-started";
+      const correction = "Create the first Legend through Revit's View > Legends > Legend command. Do not substitute a Drafting view or key schedule.";
+      const result = await invokeTyped({
+        sessionId: `legend427-${variant}`, tool: "revit_call_tool", nativePath: "/revit/create-view",
+        requestedEffect: "apply", nativeRequestedEffect: "apply",
+        resultEffect: known ? "none" : "unknown", resultAuthority: known ? "native_transaction" : "native_host",
+        args: { method: "POST", path: "/revit/create-view", body: { action: "create_legend", name: "Informational Legend", scale: 1, dryRun: false } },
+        nativePayload: {
+          status: "Blocked", success: false, applied: false, verified: false, errorCode: "legend_source_required",
+          error: "No existing non-template Legend was found. No transaction was started.", correction,
+          ...(variant === "historical-error" ? {} : { transaction: { status: known ? "not_started" : "pending", committed: false,
+            modified_element_ids: [], affected_element_ids: [], added_element_ids: [], deleted_element_ids: [] } })
+        }
+      });
+      assert.equal(result.current.attempts.length, 1);
+      const attempt = result.current.attempts[0]!;
+      assert.equal(attempt.effect.state, known ? "none" : "unknown");
+      assert.equal(result.current.unresolved_unknown_attempt_ids.length, known ? 0 : 1);
+      const ref = readEvidenceRef(attempt.evidence_refs[0]!);
+      assert.equal(ref.trust_level, "authoritative_native");
+      const retained = JSON.parse(readAuthoritativeEvidence(ref, { session_id: ref.session_id, assignment_id: ref.assignment_id,
+        run_id: ref.run_id, attempt_id: ref.attempt_id, generation: ref.generation }).toString("utf8"));
+      const payload = JSON.parse(retained.content[0].text);
+      assert.equal(payload.success, false);
+      assert.equal(payload.applied, false);
+      assert.equal(payload.verified, false);
+      assert.equal(payload.correction, correction);
+      if (known) assert.equal(payload.transaction.status, "not_started");
+    }
+  });
+});
 
 function assignment(sessionId: string, requestedEffect: "read" | "apply" = "read") {
   const goal = createGoal({
@@ -72,7 +107,7 @@ function nativeSettlement(input: {
   path: string;
   method?: "GET" | "POST";
   effect?: "none" | "unknown" | "applied";
-  authority?: "native_host" | "native_transaction" | "native_rollback";
+  authority?: "native_host" | "native_transaction" | "native_rollback" | "native_receipt";
   requestedEffect?: "read" | "preview" | "apply";
 }) {
   return {
@@ -107,7 +142,8 @@ async function invokeTyped(input: {
   args?: Record<string, unknown>;
   requestedEffect?: "read" | "apply";
   resultEffect?: "none" | "unknown" | "applied";
-  resultAuthority?: "native_host" | "native_transaction" | "native_rollback";
+  resultAuthority?: "native_host" | "native_transaction" | "native_rollback" | "native_receipt";
+  nativePayload?: Record<string, unknown>;
   nativeRequestedEffect?: "read" | "preview" | "apply";
   nativeMethod?: "GET" | "POST";
 }) {
@@ -129,6 +165,7 @@ async function invokeTyped(input: {
         status: "Ok",
         count: 509,
         items: Array.from({ length: 509 }, (_, index) => ({ elementId: index + 1 })),
+        ...input.nativePayload,
         canonical_attempt_settlement: settlement
       }) }]
     })
@@ -159,6 +196,60 @@ async function invokeTyped(input: {
     endTeammateLoopOwner(owner);
   }
 }
+
+test("334 deletion candidates survive typed evidence without replacing rollback or unknown authority", { concurrency: false }, async () => {
+  const fixture=JSON.parse(fs.readFileSync('test/fixtures/tee-deletion-candidate-diagnostics334.json','utf8'));
+  await workspace(async()=>{
+    for(const variant of [
+      {name:'historical-error-projection',error:fixture.historical333ErrorOnly,effect:'none' as const,authority:'native_rollback' as const},
+      {name:'synthetic-diagnostic-rollback',error:fixture.expectedError,effect:'none' as const,authority:'native_rollback' as const},
+      {name:'synthetic-diagnostic-unsettled',error:fixture.expectedError,effect:'unknown' as const,authority:'native_host' as const}
+    ]){
+      const result=await invokeTyped({sessionId:`deletion334-${variant.name}`,tool:'revit_call_tool',
+        nativePath:'/revit/connect-existing-mep-branch',requestedEffect:'apply',nativeRequestedEffect:'preview',
+        resultEffect:variant.effect,resultAuthority:variant.authority,
+        args:{method:'POST',path:'/revit/connect-existing-mep-branch',body:{connectionMode:'replace_tee_with_takeoff',
+          kind:'duct',teeElementId:10,mainElementId:20,secondMainElementId:21,branchElementId:22,expectedTakeoffTypeId:30,dryRun:true,verify:true}},
+        nativePayload:{status:'Blocked',success:false,ok:false,applied:false,error:variant.error,items:[],count:0,
+          transaction:{status:variant.effect==='none'?'rolled_back':'pending',committed:false,addedElementIds:[],deletedElementIds:[]}}
+      });
+      assert.equal(result.current.attempts.length,1);
+      const attempt=result.current.attempts[0]!;
+      assert.equal(attempt.effect.state,variant.effect);
+      assert.equal(result.current.unresolved_unknown_attempt_ids.length,variant.effect==='unknown'?1:0);
+      const ref=readEvidenceRef(attempt.evidence_refs[0]!);
+      assert.equal(ref.trust_level,'authoritative_native');
+      const retained=JSON.parse(readAuthoritativeEvidence(ref,{session_id:ref.session_id,assignment_id:ref.assignment_id,
+        run_id:ref.run_id,attempt_id:ref.attempt_id,generation:ref.generation}).toString('utf8'));
+      assert.equal(retained.content.length,1);
+      assert.equal(retained.content[0].type,'text');
+      const payload=JSON.parse(retained.content[0].text);
+      assert.equal(payload.error,variant.error);
+      assert.equal(payload.applied,false);
+      assert.deepEqual(payload.transaction.deletedElementIds,[]);
+    }
+  });
+});
+
+test("314 family-authoring preflight rejection settles none without relaxing an unknown dispatched failure", { concurrency: false }, async () => {
+  await workspace(async () => {
+    for (const effect of ["none", "unknown", "applied"] as const) {
+      const result = await invokeTyped({sessionId: `family-create-314-${effect}`, tool: "revit_create_family_from_template",
+        nativePath: "/revit/create-family-from-template", requestedEffect: "apply", nativeRequestedEffect: "apply",
+        resultEffect: effect, resultAuthority: effect === "unknown" ? "native_host" : "native_receipt",
+        args: {templatePath: "installed:generic-model", savePath: "artifacts/families/Box.rfa", loadIntoProject: true},
+        nativePayload: effect === "none" ? {ok: false, status: "Rejected", error: "Installed family template not found",
+          family_creation_receipt: {schema: "revit-operator.family-creation.v1", status: "not_started", reason: "preflight_failed",
+            native_family_document_created: false, file_write_performed: false, project_load_invoked: false}}
+          : effect === "unknown" ? {ok: false, error: "Native authoring failed after family creation began"}
+          : {ok: true, status: "Created", filePath: "C:\\Disposable\\artifacts\\families\\Box.rfa", load: {familyId: 42}}
+      });
+      assert.equal(result.current.attempts[0]?.effect.state, effect);
+      assert.equal(result.current.attempts[0]?.lease.state, effect === "unknown" ? "effect_unknown" : "settled");
+      assert.equal(result.current.unresolved_unknown_attempt_ids.length, effect === "unknown" ? 1 : 0);
+    }
+  });
+});
 
 test("transport-bound typed find-elements retains its authoritative native route settlement", { concurrency: false }, async () => {
   await workspace(async () => {

@@ -29,6 +29,13 @@ test('actual HTTP task creation and review persist the human conversation across
  const history=async()=>{const response=await fetch(base+'/session/history?session_id='+session,{headers});assert.equal(response.status,200);return (await response.json() as any).messages;};
  assert.deepEqual((await history()).map((m:any)=>m.text),[text]);
  __testOnlyResetGoalListCache();const snapshot=getAssignmentKernelSnapshotV2(goal.goal.id)!,binding=snapshot.current_binding;
+ const repeatBody={session_id:session,title:text,objective:text,start_assignment_run:true,assignment_run_id:binding.run_id,assignment_run_actor:'operator_desktop_outer_agent'};
+ const repeat=await fetch(base+'/api/agent-goal',{method:'POST',headers,body:JSON.stringify(repeatBody)});
+ assert.equal(repeat.status,200);const repeated:any=await repeat.json();assert.equal(repeated.assignment_run.run_id,binding.run_id);
+ const refused=await fetch(base+'/api/agent-goal',{method:'POST',headers,body:JSON.stringify({...repeatBody,objective:'Use this follow-up text.',assignment_run_id:'sidecar:new-unbound-run'})});
+ assert.equal(refused.status,409,await refused.text());__testOnlyResetGoalListCache();
+ const retained=getAssignmentKernelSnapshotV2(goal.goal.id)!;assert.deepEqual(retained.current_binding,binding);assert.equal(retained.spec.source_user_request,text);
+ assert.deepEqual((await history()).map((m:any)=>m.text),[text],'a refused start must not overwrite the human conversation');
  const request:any={version:'operator.backend.v1',session_id:session,message_id:'internal-helper',assignment_id:binding.assignment_id,assignment_run_id:binding.run_id,assignment_generation:binding.generation,context:{desktop_helper_scope_v1:{schema:'operator.desktop-helper-scope.v1',binding}}};
  await runWithRequestContext({operator_backend_auth:createOperatorBackendAuth('shared_token','synthetic-desktop-history-token')},()=>appendMessage(session,{role:'user',text:'Internal delegated prompt, not a human request.'},requestConversationPersistenceV1(request,'Internal delegated prompt, not a human request.')));
  assert.deepEqual((await history()).map((m:any)=>m.text),[text]);

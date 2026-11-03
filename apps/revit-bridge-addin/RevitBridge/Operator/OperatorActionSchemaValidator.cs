@@ -2834,6 +2834,12 @@ namespace RevitBridge.Operator
                 return true;
             }
 
+            if (string.Equals(path, "/revit/place-mep-accessory-interactively", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!body.HasValue) { error = "An exact native interactive placement request is required."; return false; }
+                return NativeInteractiveAccessoryRequest.TryValidate(body.Value, out error);
+            }
+
             if (string.Equals(path, "/revit/connect-existing-mep-branch", StringComparison.OrdinalIgnoreCase))
             {
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
@@ -2842,12 +2848,17 @@ namespace RevitBridge.Operator
                     return false;
                 }
 
+                if (RevitBridge.Common.InlineAccessoryRequest.IsMode(obj.Value))
+                    return RevitBridge.Common.InlineAccessoryRequest.TryValidate(obj.Value, out error);
+
                 if (!ValidateOptionalString(obj.Value, "expectedModelPath", maxLen: 1024, out error)) return false;
                 if (!ValidateRequiredString(obj.Value, "kind", maxLen: 16, out error)) return false;
                 if (!ValidateRequiredLong(obj.Value, "mainElementId", out error)) return false;
                 if (!ValidateRequiredLong(obj.Value, "branchElementId", out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "connectionMode", maxLen: 40, out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "branchConnectorId", out error)) return false;
+                if (!ValidateOptionalLong(obj.Value, "teeElementId", out error)) return false;
+                if (!ValidateOptionalLong(obj.Value, "secondMainElementId", out error)) return false;
                 if (!ValidateOptionalXyzArray(obj.Value, "expectedBranchOriginXyz", out error)) return false;
                 if (!ValidateOptionalNumber(obj.Value, "originToleranceFt", out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "expectedTakeoffTypeId", out error)) return false;
@@ -2870,9 +2881,10 @@ namespace RevitBridge.Operator
                 {
                     var mode = (connectionMode.GetString() ?? "").Trim();
                     if (!mode.Equals("takeoff_fitting", StringComparison.OrdinalIgnoreCase) &&
-                        !mode.Equals("air_terminal_on_duct", StringComparison.OrdinalIgnoreCase))
+                        !mode.Equals("air_terminal_on_duct", StringComparison.OrdinalIgnoreCase) &&
+                        !mode.Equals("replace_tee_with_takeoff", StringComparison.OrdinalIgnoreCase))
                     {
-                        error = "connect-existing-mep-branch.connectionMode must be 'takeoff_fitting' or 'air_terminal_on_duct'.";
+                        error = "connect-existing-mep-branch.connectionMode must be 'takeoff_fitting', 'air_terminal_on_duct' or 'replace_tee_with_takeoff'.";
                         return false;
                     }
                     if (mode.Equals("air_terminal_on_duct", StringComparison.OrdinalIgnoreCase) && !kind.Equals("duct", StringComparison.OrdinalIgnoreCase))
@@ -2881,6 +2893,8 @@ namespace RevitBridge.Operator
                         return false;
                     }
                 }
+
+                if (!RevitBridge.Common.TeeTakeoffReplacementContract.TryValidate(obj.Value, out error)) return false;
 
                 var mainId = obj.Value.GetProperty("mainElementId").GetInt64();
                 var branchId = obj.Value.GetProperty("branchElementId").GetInt64();
@@ -5296,11 +5310,12 @@ namespace RevitBridge.Operator
                 { error = ex.Message; return false; }
             }
 
-            if (string.Equals(path, "/revit/import-vector-detail", StringComparison.OrdinalIgnoreCase) || string.Equals(path, "/revit/inspect-vector-detail", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(path, "/revit/import-vector-detail", StringComparison.OrdinalIgnoreCase) || string.Equals(path, "/revit/import-vector-annotations", StringComparison.OrdinalIgnoreCase) || string.Equals(path, "/revit/inspect-vector-detail", StringComparison.OrdinalIgnoreCase))
             {
                 try
                 {
                     if (string.Equals(path, "/revit/import-vector-detail", StringComparison.OrdinalIgnoreCase)) VectorDraftingImportRequest.Parse(body?.GetRawText() ?? "null");
+                    else if (string.Equals(path, "/revit/import-vector-annotations", StringComparison.OrdinalIgnoreCase)) VectorDraftingAnnotationRequest.Parse(body?.GetRawText() ?? "null");
                     else VectorDraftingInspectionRequest.Parse(body?.GetRawText() ?? "null");
                     return true;
                 }
@@ -5947,6 +5962,9 @@ namespace RevitBridge.Operator
                 var capabilityOnly = obj.Value.TryGetProperty("preflightOnly", out var cadPreflight) && cadPreflight.ValueKind == JsonValueKind.True
                     && obj.Value.TryGetProperty("dryRun", out var cadDryRun) && cadDryRun.ValueKind == JsonValueKind.True;
                 if (!capabilityOnly && !ValidateRequiredString(obj.Value, "sourcePath", maxLen: 520, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "expectedSourceSha256", maxLen: 64, out error)) return false;
+                if (obj.Value.TryGetProperty("expectedSourceSha256", out var cadHash) && cadHash.ValueKind == JsonValueKind.String
+                    && !VectorDraftingPlanCodec.IsHash(cadHash.GetString())) { error = "expectedSourceSha256 must be a lowercase SHA256."; return false; }
                 if (!ValidateOptionalString(obj.Value, "sheetNumber", maxLen: 64, out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "sheetViewId", out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "viewId", out error)) return false;
@@ -6219,6 +6237,7 @@ namespace RevitBridge.Operator
 
                 if (!ValidateOptionalLong(obj.Value, "viewId", out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "viewName", maxLen: 140, out error)) return false;
+                if (!TagElementModeContract.Validate(obj.Value, out error)) return false;
                 if (!ValidateOptionalLongArray(obj.Value, "elementIds", maxCount: 5000, out error)) return false;
                 if (!ValidateOptionalStringArray(obj.Value, "categoryNames", maxCount: 200, maxLen: 120, out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "tagTypeId", out error)) return false;
@@ -6387,7 +6406,14 @@ namespace RevitBridge.Operator
                     return false;
                 }
                 foreach (var property in inspection.Value.EnumerateObject())
-                    if (property.Name != "paths") { error = "inspect-exported-files accepts only paths."; return false; }
+                    if (property.Name != "paths" && property.Name != "familyDocumentId") { error = "inspect-exported-files accepts paths and optional familyDocumentId."; return false; }
+                if (inspection.Value.TryGetProperty("familyDocumentId", out var familySession))
+                {
+                    if (familySession.ValueKind != JsonValueKind.String || !Guid.TryParseExact(familySession.GetString(), "N", out _)
+                        || paths.GetArrayLength() != 1 || paths[0].ValueKind != JsonValueKind.String
+                        || !string.Equals(System.IO.Path.GetExtension(paths[0].GetString()), ".rfa", StringComparison.OrdinalIgnoreCase))
+                    { error = "A familyDocumentId requires an exact tracked GUIDN session and one RFA path."; return false; }
+                }
                 foreach (var item in paths.EnumerateArray())
                     if (item.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(item.GetString()) || item.GetString()!.Length > 2000)
                     { error = "Each export path must be a nonempty bounded string."; return false; }
@@ -6883,6 +6909,8 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalLong(obj.Value, "viewId", out error)) return false;
 
                 // Preferred: elementIds. Back-compat: ids.
+                try { RevitBridge.Common.Annotation.TagReferenceReadPolicy.ValidateOptionalRequest(obj.Value); }
+                catch (ArgumentException ex) { error = ex.Message; return false; }
                 if (obj.Value.TryGetProperty("elementIds", out var _) && obj.Value.GetProperty("elementIds").ValueKind != JsonValueKind.Null)
                 {
                     if (!ValidateRequiredLongArray(obj.Value, "elementIds", maxCount: 500, out error)) return false;
@@ -6911,6 +6939,7 @@ namespace RevitBridge.Operator
                 }
 
                 var hasElementId = obj.Value.TryGetProperty("elementId", out var eid) && eid.ValueKind != JsonValueKind.Null;
+                if (!ValidateOptionalLongArray(obj.Value, "preservationScheduleIds", maxCount: 32, out error)) return false;
                 var hasElementIds = obj.Value.TryGetProperty("elementIds", out var eids) && eids.ValueKind != JsonValueKind.Null;
                 if (!ValidateOptionalString(obj.Value, "category", maxLen: 96, out error)) return false;
                 if (!ValidateOptionalStringArray(obj.Value, "categories", maxCount: 20, maxLen: 96, out error)) return false;
@@ -9529,7 +9558,7 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/open-family-doc", StringComparison.OrdinalIgnoreCase))
             {
-                // { filePath?: string, familyId?: number, titleblockInstanceId?: number, elementId?: number }
+                // { filePath?: string, familyId?: number, titleblockInstanceId?: number, elementId?: number, allowNonTitleblock?: bool }
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "open-family-doc body must be an object.";
@@ -9539,6 +9568,35 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalLong(obj.Value, "familyId", out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "titleblockInstanceId", out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "elementId", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "allowNonTitleblock", out error)) return false;
+                return true;
+            }
+
+            if (string.Equals(path, "/revit/set-family-label-style", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
+                {
+                    error = "set-family-label-style body must be an object.";
+                    return false;
+                }
+                try { RevitBridge.Common.Annotation.FamilyLabelStylePolicy.Parse(obj.Value.GetRawText()); return true; }
+                catch (Exception ex) { error = ex.Message; return false; }
+            }
+
+            if (string.Equals(path, "/revit/inspect-family-label-styles", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
+                {
+                    error = "inspect-family-label-styles body must be an object.";
+                    return false;
+                }
+                if (!ValidateRequiredString(obj.Value, "familyDocumentId", maxLen: 64, out error)) return false;
+                if (!ValidateOptionalLong(obj.Value, "labelTypeId", out error)) return false;
+                if (!ValidateOptionalInt(obj.Value, "maxStyles", out error)) return false;
+                if (obj.Value.TryGetProperty("labelTypeId", out var type) && type.ValueKind != JsonValueKind.Null
+                    && (!type.TryGetInt64(out var typeId) || typeId <= 0)) { error = "labelTypeId must be positive."; return false; }
+                if (obj.Value.TryGetProperty("maxStyles", out var maximum) && maximum.ValueKind != JsonValueKind.Null
+                    && (!maximum.TryGetInt32(out var count) || count < 1 || count > 500)) { error = "maxStyles must be between 1 and 500."; return false; }
                 return true;
             }
 
@@ -9558,6 +9616,7 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalLong(obj.Value, "viewId", out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "elementId", out error)) return false;
                 if (!ValidateOptionalLongArray(obj.Value, "elementIds", maxCount: 500, out error)) return false;
+                if (!ValidateOptionalLongArray(obj.Value, "preservationScheduleIds", maxCount: 32, out error)) return false;
                 if (!ValidateOptionalInt(obj.Value, "max", out error)) return false;
                 if (obj.Value.TryGetProperty("max", out var findTextMaximum) && findTextMaximum.ValueKind != JsonValueKind.Null &&
                     (!findTextMaximum.TryGetInt32(out var findTextMaximumValue) || findTextMaximumValue < 1 || findTextMaximumValue > 500))
@@ -9630,6 +9689,7 @@ namespace RevitBridge.Operator
                 }
                 if (!ValidateOptionalBool(obj.Value, "overwrite", out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "filePath", maxLen: 1024, out error)) return false;
+                if (!OperatorFamilySavePath.TryValidateRequest(WorkspacePaths.GetWorkspaceRootPath(), obj.Value, out error)) return false;
                 return true;
             }
 
@@ -9696,7 +9756,7 @@ namespace RevitBridge.Operator
                     error = "inspect-family-content body must be an object.";
                     return false;
                 }
-                if (!ValidateRequiredLong(obj.Value, "elementId", out error)) return false;
+                if (!FamilyInspectionSource.Validate(obj.Value, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "contains", maxLen: 200, out error)) return false;
                 if (!ValidateOptionalInt(obj.Value, "maxElements", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "includeParameters", out error)) return false;

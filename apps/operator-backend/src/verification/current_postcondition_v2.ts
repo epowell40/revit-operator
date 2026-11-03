@@ -3,6 +3,7 @@ import { appliedOperationHasVerifiedPostconditionV2, verificationOperationHasVer
 import { sameAssignmentBindingV2 } from '../domain/assignment-kernel/identity.js';
 import { operationTargetIdentityAliasesV2 } from '../domain/assignment-kernel/operation_target_identity.js';
 import { hasCompleteNativeChangeInventoryV2 } from './native_change_inventory_v2.js';
+import {VECTOR_DETAIL_SOURCE_FACT_V2} from './vector_source_proof_contract_v2.js';
 
 function reviewedTargets(op: AssignmentSnapshotV2['operations'][string], read: AssignmentSnapshotV2['operations'][string]) {
   // These property verifiers check every exact requested owner. Incidental
@@ -47,6 +48,24 @@ export function checkedReadIsCurrentV2(snapshot: AssignmentSnapshotV2, readId: s
     })) return false;
   const readAt = Date.parse(read.result.completed_at), appliedAt=Date.parse(op.result?.completed_at??''), targets = new Set(reviewedTargets(op,read));
   if (!targets.size || !Number.isFinite(readAt) || !Number.isFinite(appliedAt) || readAt < appliedAt) return false;
+  // A newer backend-owned source mismatch must not be hidden by an older
+  // passing check. Incomplete page prefixes issue no such mismatch fact.
+  if(op.verification_operation_ids.some(id=>{
+    const later=snapshot.operations[id],r=later?.result;
+    if(!later||later.operation_id===readId||later.verification_of_operation_id!==op.operation_id||later.settlement_state!=='settled'
+      ||later.purpose!=='verification'||later.fulfillment_role!=='verification'||r?.authority!=='native-host'||r.status!=='succeeded'
+      ||r.persistent_effect!=='none'||r.native_transaction_state!=='not_applicable'||!r.receipt_id||!r.native_correlation_id
+      ||!sameAssignmentBindingV2(later.binding,read.binding)||!sameAssignmentBindingV2(r.binding,later.binding)
+      ||r.request_identity?.request_signature!==later.request_identity?.request_signature
+      ||!Number.isSafeInteger(later.settled_assignment_version)||!Number.isSafeInteger(read.settled_assignment_version)
+      ||later.settled_assignment_version!<=read.settled_assignment_version!)return false;
+    return later.observation_ids.some(oid=>{
+      const o=snapshot.observations[oid];
+      return o?.authority==='native-host'&&o.operation_id===later.operation_id&&o.raw_payload_hash===r.raw_payload_hash&&sameAssignmentBindingV2(o.binding,later.binding)
+        &&o.facts.some(f=>{if(f.fact_id!==VECTOR_DETAIL_SOURCE_FACT_V2||f.fact_class!=='control'||typeof f.value!=='string')return false;
+          try{return JSON.parse(f.value).state==='mismatch';}catch{return false;}});
+    });
+  }))return false;
   return !Object.values(snapshot.operations).some(later => {
     if (later.operation_id === id || later.requested_effect !== 'apply'
       || !(['applied','unknown'].includes(later.persistent_effect) || snapshot.in_flight_operation_ids.includes(later.operation_id))

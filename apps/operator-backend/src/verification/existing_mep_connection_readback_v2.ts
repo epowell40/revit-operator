@@ -69,6 +69,9 @@ function paired(a: Row, c: Row, b: Row, peer: Row): boolean {
   return near(c.origin, peer.origin) && matches(c, b, peer) && matches(peer, a, c);
 }
 
+// Reuse the same strict native graph reader; no legacy desired-state rule changes.
+export { graph as readCompletePhysicalConnectorGraphV2, paired as reciprocalPhysicalPairMatchesV2 };
+
 function retainedEdges(e: Row, prior: unknown, added: string[], tolerance: number): boolean {
   if (!Array.isArray(prior)) return false;
   const expected: string[] = [];

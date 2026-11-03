@@ -22,6 +22,23 @@ test("Sidecar general-agent profile requires exact development laboratory backen
   assert.equal(Object.isFrozen(state), true);
 });
 
+test("ordinary local general actor requires provider and shared-token configuration", () => {
+  const ready = { REVIT_OPERATOR_MODE: "local", OPERATOR_TOOL_EXPOSURE_PROFILE: "general",
+    OPERATOR_BRAIN: "codex", OPERATOR_AUTH_MODE: "shared_token", OPERATOR_OPENAI_API_KEY: "test-provider-key" };
+  for (const mode of ["local", "self_hosted"]) {
+    const state = getSidecarAgentProfileState({ ...ready, REVIT_OPERATOR_MODE: mode });
+    assert.equal(state.general_agent_ready, true);
+    assert.equal(state.tool_exposure_profile, "general");
+    assert.equal(state.capability_profile, "general_agent");
+    assert.equal(state.reason_code, "GENERAL_AGENT_LOCAL_READY");
+  }
+  for (const change of [{ OPERATOR_OPENAI_API_KEY: "" }, { OPERATOR_AUTH_MODE: "principal_jwt" },
+    { OPERATOR_BRAIN: "rule" }, { OPERATOR_HOSTED_ENABLED: "true" },
+    { REVIT_OPERATOR_MODE: "Local" }, { REVIT_OPERATOR_MODE: "local " },
+    { OPERATOR_TOOL_EXPOSURE_PROFILE: "General" }, { OPERATOR_TOOL_EXPOSURE_PROFILE: "certified" }])
+    assert.equal(getSidecarAgentProfileState({ ...ready, ...change }).general_agent_ready, false);
+});
+
 test("Sidecar refuses a rule-brain laboratory as not being the General Agent", () => {
   const state = getSidecarAgentProfileState({
     REVIT_OPERATOR_MODE: "development",

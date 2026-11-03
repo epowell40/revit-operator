@@ -25,7 +25,7 @@ namespace RevitBridge.Common
             }).ToArray();
             if (matches.Length != 1)
                 throw new InvalidOperationException("Revit image export must produce exactly one image for the unique requested target.");
-            using (var stream = File.OpenRead(matches[0]))
+            using (var stream = ExportedImageFile.OpenRead(matches[0]))
             using (var hash = SHA256.Create())
             {
                 if (stream.Length == 0) throw new InvalidOperationException("Revit image export is empty.");
@@ -70,5 +70,6 @@ namespace RevitBridge.Common
         public string Sha256 { get; }
         public ExportedImageArtifact(string path, long bytes, string sha256)
         { Path = path; Bytes = bytes; Sha256 = sha256; }
+
     }
 }

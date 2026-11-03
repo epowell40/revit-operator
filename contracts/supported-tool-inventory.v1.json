@@ -4,6 +4,26 @@
   "native_routes": [
     {
       "method": "POST",
+      "path": "/revit/place-mep-accessory-interactively"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/quantify"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/inspect-family-label-styles"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/set-family-label-style"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/import-vector-annotations"
+    },
+    {
+      "method": "POST",
       "path": "/revit/inspect-excel-import"
     },
     {
@@ -117,6 +137,10 @@
     {
       "method": "POST",
       "path": "/revit/create-family-instance"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-family-from-template"
     },
     {
       "method": "POST",
@@ -502,6 +526,7 @@
     "revit_create_drafting_view",
     "revit_create_duct",
     "revit_create_family_instance",
+    "revit_create_family_from_template",
     "revit_create_filled_region",
     "revit_create_pipe",
     "revit_create_revision_cloud",
@@ -647,6 +672,18 @@
     {
       "method": "POST",
       "path": "/revit/dynamic-runtime/snapshot"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/dynamic-runtime/native-program-prepare-v1"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/dynamic-runtime/native-program-read-v1"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/dynamic-runtime/native-program-apply-v1"
     }
   ],
   "standalone_routes": [
@@ -654,6 +691,16 @@
       "method": "POST",
       "path": "/revit/certified/sheets/count",
       "executor_id": "revit-operator.safe-read-host.v1"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/dynamic-runtime/run-native-read-v1",
+      "executor_id": "revit-operator.native-program-workstation.v1"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/dynamic-runtime/run-native-apply-v1",
+      "executor_id": "revit-operator.native-program-workstation.v1"
     }
   ],
   "evidence_note": "The four certified aliases preserve the existing EPIC-0437 observation/move and standalone SafeRead qualification lanes. Native support must never admit a standalone executor route. Editable PDF vector mutation POST /revit/import-vector-detail is intentionally withheld after live commit-normalization failures213/214. POST /revit/inspect-vector-detail remains available for honest inspection/reconciliation of retained attempts. Source extraction/preparation is not importer qualification."

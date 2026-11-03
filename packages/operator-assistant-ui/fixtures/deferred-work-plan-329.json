@@ -1,0 +1,70 @@
+{
+  "schema": "operator.deferred-work-regression-329.v1",
+  "provenance": {
+    "trial": 329,
+    "event_count": 156,
+    "source_sha256": "c42ab3b9d6d04bcaf97ba0f4107816bd920f93038e9edf04100e31cf8def69d0",
+    "original_decision": "admit_reasoning_turn",
+    "note": "Retained checklist/timestamps/reasons; result-path source basis sanitized. Native operations are not projected into this fixture. Exact unmodified snapshot/host replay retained privately."
+  },
+  "at": "2026-10-21T19:15:35.019Z",
+  "work_plan": {
+    "schema": "revit-operator.assignment-work-plan/v2",
+    "items": [
+      {
+        "item_id": "m106-wallbox",
+        "description": "Identify only M106 wall box redline in Utility 601 R2, original PDF page 10; establish actual host/link ownership and back wall. If linked or ambiguous stop without editing. If host-owned, hand back proposed bounded recess/move with geometry, equipment data, duct connection and annotation baselines before editing; preserve all nearby content and exclude TAG SIZE/other comments.",
+        "source_basis": "Snowdon-Mechanical.pdf attachment ffb7351b-10d6-4f58-8206-72ca07c33ec5 sha256 f3d528fb24a26f1d7bd7cdb6061e17f0faece8d9571bf8f7d28ab10c8780af22 page 10 M106 overview and detail crop u.34-.45 v.46-.58: leader targets north/back wall near Utility601 northwest corner.",
+        "kind": "edit",
+        "declared_at": "2026-10-21T19:08:59.639Z",
+        "operation_ids": [],
+        "deferrals": [
+          {
+            "reason": "STOP: PDF p10 M106 leader points to Utility601 north/back wall. Native M106 sheet1363658, R2 view1363483, viewport1411560. Bounded inventory ev1_P5Zx7z7lDRhxAZe1Q4MSW16r1OYJTIF0 finds linked vent cap1456396 (Air Terminal-Vent Cap-FB, 4 inch DIA) and ducts1456324/1456335 in link1364219. Terminal hostingSurface source is Snowdon Towers Sample Plumbing, linked-face hosted to architectural wall753031 via link1362429. No distinct host-owned wall box established. Linked ownership/box-versus-vent identity prevents reliable host edit. No edit/save/open-link. Desktop owner: inspect enlarged R2/M106; clarify only if needed whether intended target is this plumbing-owned assembly or another box. Exact supporting read: opv2_01feb129c1029c33e5b854ea08ce4fb1327d829c2a4065b41f22c091fee2a767.",
+            "deferred_at": "2026-10-21T19:10:41.331Z",
+            "prior_claim_count": 0
+          }
+        ]
+      },
+      {
+        "item_id": "m106-final-review",
+        "description": "Desktop owner to inspect actual R2 plan and M106 sheet, preserve geometry/data/connections/annotations and correct only confirmed in-scope discrepancies; fresh final native inspection remains pending if any edit occurs.",
+        "source_basis": "Original user request and read-only helper handoff restriction; no TAG SIZE changes.",
+        "kind": "inspection",
+        "depends_on": [
+          "m106-wallbox"
+        ],
+        "declared_at": "2026-10-21T19:08:59.639Z",
+        "operation_ids": [],
+        "deferrals": [
+          {
+            "reason": "Inspection-only closure; relocation remains blocked, not completed. Desktop owner reviewed actual R2 region ev1_bLZ5USY5KDxfeZIQ_7zBGq69to1xSKsJ: Utility601 back-wall pink assembly, 4-inch annotation and legible surrounding rooms. M106 sheet1363658 visually inspected on screen, screenshot ev1_CNjc7CVFaSMmUFAjUpQbnAr5nWijUngL: roof viewport/titleblock and utility/restroom context present. Automated sheet review ev1_g1ldfqhN3Vu46WHa5PzSvDCxjuv_PRqk unavailable after frame change; no automated sheet-match claim. No model edit occurred; no post-relocation or connection-preservation verification is possible. Retain linked ownership Q1. User directed wrap-up without further discovery, captures, edits or saves.",
+            "deferred_at": "2026-10-21T19:15:28.950Z",
+            "prior_claim_count": 0
+          }
+        ]
+      },
+      {
+        "item_id": "m106-result-save",
+        "description": "Only if actual useful edit is completed, save separate result to requested Snowdon HVAC - Wall Box Relocation Result329.rvt and independently inspect saved artifact; never save source or inspection-only RVT.",
+        "source_basis": "Separate result RVT only after a useful edit; never save an unchanged inspection-only source.",
+        "kind": "edit",
+        "depends_on": [
+          "m106-wallbox"
+        ],
+        "declared_at": "2026-10-21T19:08:59.639Z",
+        "operation_ids": [],
+        "deferrals": [
+          {
+            "reason": "Not applicable to this inspection-only stop: no useful model edit completed. User explicitly directed no saves and no unchanged result RVT. Source retained without model edit/save; requested Result329.rvt not produced. Reconsider separate-result save only after an independently authorized useful edit; linked-ownership limitation Q1 remains unresolved.",
+            "deferred_at": "2026-10-21T19:15:35.019Z",
+            "prior_claim_count": 0
+          }
+        ]
+      }
+    ],
+    "assumptions": [
+      "Only page10 M106 specified redline is in scope. Read-only discovery first; no helper edit if linked or ambiguous. Original source must remain unchanged; no inspection-only save. North/back wall intent is approximate source drafting placement, not a supplied recess dimension."
+    ]
+  }
+}

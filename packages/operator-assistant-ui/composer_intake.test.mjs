@@ -1,11 +1,24 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { selectChatSubmissionMode } from './composer_intake.mjs';
+import { selectChatSubmissionMode, routeSavedChatSubmission } from './composer_intake.mjs';
 import { excludesComputerUse } from './composer_intake.mjs';
 const capability = { schema: 'revit-operator.local-executor-capability/v1', source: 'backend_configuration',
   profile: 'codex_v2_advisory_v1', executor: 'codex', assignment_kernel: 2, execution_policy: 'local_advisory_v1' };
 const state = { localExecutor: capability, backendLocal: true, backendAuthMode: 'shared_token',
   backendAvailable: true, backendConfigStatus: 'ready', computerUseAvailable: true };
+
+test('confirmed saved executor replaces fresh/default routing without replacing task or input',()=>{
+ const submission={mode:'backend',newComputerConversation:true,text:'Continue',attachments:[{id:'source'}],assignmentBindingV2:{assignment_id:'retained'},assignmentResumeControl:{command_id:'resume'}};
+ for(const executor of ['computer','backend']){
+  const result=routeSavedChatSubmission(submission,executor);
+  assert.equal(result.mode,executor==='computer'?'computer-run':'backend');
+  assert.equal(result.newComputerConversation,false);
+  for(const key of ['text','attachments','assignmentBindingV2','assignmentResumeControl'])assert.equal(result[key],submission[key]);
+ }
+ assert.equal(submission.newComputerConversation,true,'caller input is not mutated');
+ for(const bad of [null,{...submission,transportStarted:true},{...submission,optimisticMessage:{}}])assert.throws(()=>routeSavedChatSubmission(bad,'computer'));
+ for(const owner of [null,'unknown','computer-interject'])assert.throws(()=>routeSavedChatSubmission(submission,owner));
+});
 
 test('fresh ordinary work gets the available computer-capable owner without UI keywords', () => {
   for (const prompt of ['Match this schedule to the attached example.', 'Inspect and fix the blank row; preserve text sizes. Save Schedule Correction.rvt.', 'Pick up these redlines.', 'Export this sheet to PDF']) {

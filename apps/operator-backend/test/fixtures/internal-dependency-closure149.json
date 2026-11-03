@@ -1,0 +1,120 @@
+{
+  "provenance": {
+    "case": "original149 read-only native diagnosis",
+    "receipts": [
+      {
+        "path": "baseline-native-placement/placement-state.json",
+        "sha256": "ab49c5788f6a907e1a1dba873a1d95625f2cada9a54af8807f8781e7ebf3400d"
+      },
+      {
+        "path": "failed-owner-dependencies.json",
+        "sha256": "26c1c85dff3ddf14f1f890366d18289e3a0196b06265014c6ded38958559b16d"
+      },
+      {
+        "path": "failed-dependency-identities.json",
+        "sha256": "9c8eaa61988d98da27ec1941df7824bfcc832ff18ce0de3df2cd80fd591fc1da"
+      }
+    ],
+    "scope": "Actual native identity/dependencies/classes only. Tests combine these with a labelled synthetic qualified parameter profile; no actual17 parameter snapshot was emitted."
+  },
+  "failure": {
+    "schema": "operator.native_accessory_placement_state.v1",
+    "complete": false,
+    "reason": "native_observation_unavailable",
+    "error": "InvalidOperationException",
+    "stage": "bookkeeping_dependency_closure",
+    "diagnosticCode": "bookkeeping_projection_incomplete",
+    "diagnosticOnly": true,
+    "elementId": 17
+  },
+  "owner": {
+    "id": 17,
+    "unique_id": "d3516a40-06bf-11d4-91b5-0000863f27ad-00000011",
+    "name": "",
+    "category": null
+  },
+  "dependencies": {
+    "count": 8,
+    "items": [
+      {
+        "id": 16
+      },
+      {
+        "id": 17
+      },
+      {
+        "id": 19
+      },
+      {
+        "id": 17902
+      },
+      {
+        "id": 17962
+      },
+      {
+        "id": 22072
+      },
+      {
+        "id": 43517
+      },
+      {
+        "id": 43518
+      }
+    ],
+    "limit": 50,
+    "hasMore": false,
+    "truncated": false,
+    "complete": true,
+    "total": 8
+  },
+  "identities": [
+    {
+      "id": 16,
+      "uniqueId": "933c4a06-93b8-11d3-80f8-00c04f8efc32-00000010",
+      "fullClassName": "Autodesk.Revit.DB.DimensionType",
+      "name": "Linear - 3/32\" Arial"
+    },
+    {
+      "id": 17,
+      "uniqueId": "d3516a40-06bf-11d4-91b5-0000863f27ad-00000011",
+      "fullClassName": "Autodesk.Revit.DB.Element",
+      "name": ""
+    },
+    {
+      "id": 19,
+      "uniqueId": "d3516a40-06bf-11d4-91b5-0000863f27ad-00000013",
+      "fullClassName": "Autodesk.Revit.DB.Element",
+      "name": ""
+    },
+    {
+      "id": 17902,
+      "uniqueId": "d3516a40-06bf-11d4-91b5-0000863f27ad-000045ee",
+      "fullClassName": "Autodesk.Revit.DB.GraphicsStyle",
+      "name": "Linear - 3/32\" Arial"
+    },
+    {
+      "id": 17962,
+      "uniqueId": "d3516a40-06bf-11d4-91b5-0000863f27ad-0000462a",
+      "fullClassName": "Autodesk.Revit.DB.GraphicsStyle",
+      "name": "Linear - 3/32\" Arial"
+    },
+    {
+      "id": 22072,
+      "uniqueId": "b0b76196-1902-482f-b464-0488e33408cc-00005638",
+      "fullClassName": "Autodesk.Revit.DB.Element",
+      "name": "Linear - 3/32\" Arial"
+    },
+    {
+      "id": 43517,
+      "uniqueId": "b0b76196-1902-482f-b464-0488e33408cc-0000a9fd",
+      "fullClassName": "Autodesk.Revit.DB.Element",
+      "name": ""
+    },
+    {
+      "id": 43518,
+      "uniqueId": "b0b76196-1902-482f-b464-0488e33408cc-0000a9fe",
+      "fullClassName": "Autodesk.Revit.DB.GraphicsStyle",
+      "name": "Linear - 3/32\" Arial"
+    }
+  ]
+}

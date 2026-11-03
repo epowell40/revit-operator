@@ -214,6 +214,14 @@ export function assignmentSpecFromGoalV2(input: Readonly<{
     interpretedScope?exactSource:input.goal.objective);
   const inputVariables = inputs(input.goal,interpretedScope);
   const criterionSpecs = criteria(input.goal);
+  const sourceRequiresPlan = effect === "apply" && requiresDurableWorkPlan(interpretedScope ? exactSource : input.goal.objective);
+  // A scoped helper's first verified effect must not implicitly finish its
+  // desktop owner's composite request. Require the existing durable scope even
+  // for one target; this restriction grants no write rights or extra allowance.
+  const desktopScopePlan = effect === "apply" && !sourceRequiresPlan
+    && input.goal.work_budget?.mode === "sidecar_computer"
+    && input.goal.work_budget?.source === "operator_desktop"
+    && input.goal.work_budget?.execution_substrate === "operator_desktop_outer_agent";
   return {
     schema: ASSIGNMENT_SPEC_V2_SCHEMA,
     binding,
@@ -221,7 +229,8 @@ export function assignmentSpecFromGoalV2(input: Readonly<{
     requested_effect: effect,
     ...(interpretedScope?{interpreted_scope:interpretedScope}:{}),
     ...(executionPolicy ? { execution_policy: executionPolicy } : {}),
-    ...(effect === "apply" && requiresDurableWorkPlan(input.goal.objective) ? { work_plan_required: true } : {}),
+    ...(sourceRequiresPlan || desktopScopePlan ? { work_plan_required: true,
+      ...(desktopScopePlan ? { work_plan_min_items: 1 as const } : {}) } : {}),
     semantic_evidence_contract: SEMANTIC_EVIDENCE_CONTRACT_V2,
     ...(effect === "read"
       && ["auto_goal", "sidecar_computer"].includes(String(input.goal.work_budget?.mode))

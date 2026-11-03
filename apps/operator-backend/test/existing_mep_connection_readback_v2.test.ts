@@ -7,6 +7,17 @@ import { existingMepConnectionFixture } from "./existing_mep_connection.fixtures
 const matches = (f: ReturnType<typeof existingMepConnectionFixture>) =>
   existingMepConnectionReadbackMatchesV2(f.input, f.affected, f.apply, f.scan);
 
+test("tee replacement cannot inherit an addition-only proof without absence and surviving-network evidence", () => {
+  const f = existingMepConnectionFixture();
+  Object.assign(f.input.body, { connectionMode: "replace_tee_with_takeoff", teeElementId: 60, secondMainElementId: 70 });
+  Object.assign(f.apply, { connectionMode: "replace_tee_with_takeoff", teeElementId: 60, secondMainElementId: 70,
+    createdBridgeId: 80, postChildCommitVerified: true });
+  f.affected.push("element_id:60", "element_id:70", "element_id:80");
+  assert.equal(matches(f), false, "native apply-local success cannot certify a deletion or omitted surviving owner");
+  delete (f.input.body as any).connectionMode; delete f.apply.connectionMode;
+  assert.equal(matches(f), false, "omitting the replacement mode cannot disguise replacement as an addition");
+});
+
 for (const mode of ["takeoff_fitting", "air_terminal_on_duct"] as const) {
   test(`${mode} verifies physical native pairs and retained topology, independent of enumeration order`, () => {
     const f = existingMepConnectionFixture(mode);
@@ -85,4 +96,13 @@ test("connection admission requires connector semantics and excludes connector I
   const selector = operationTargetSelectorV2({ operation: { capability_id: "revit_call_tool", path: "/revit/get-connectors" },
     value: { results: [{ id: 10, connectors: [{ connectorId: 7, physicalConnectedTo: [{ ownerId: 99, connectorId: 4 }] }] }] } });
   assert.deepEqual(selector.principal_target_tokens, ["id:10"]);
+});
+
+test("replacement target scope includes removed tee, both retained mains and created bridge without connector aliases", () => {
+  const selector = operationTargetSelectorV2({ operation: { capability_id: "revit_call_tool", path: "/revit/connect-existing-mep-branch" },
+    value: { mainElementId: 10, secondMainElementId: 11, branchElementId: 20, teeElementId: 30,
+      createdBridgeId: 40, createdFittingId: 50, mainConnectorId: 700, secondMainConnectorId: 701, branchConnectorId: 702 } });
+  assert.deepEqual(selector.principal_target_tokens.filter(token => token.startsWith("id:")).sort(),
+    [10,11,20,30,40,50].map(id => `id:${id}`).sort());
+  assert.equal(selector.principal_target_tokens.some(token => /:(700|701|702)$/.test(token)), false);
 });

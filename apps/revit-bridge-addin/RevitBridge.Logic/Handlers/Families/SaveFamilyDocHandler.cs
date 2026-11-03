@@ -31,9 +31,7 @@ namespace RevitBridge.Logic.Handlers
             var requestedPath = (p.filePath ?? "").Trim();
             if (!string.IsNullOrWhiteSpace(requestedPath))
             {
-                var saveAsPath = WorkspacePaths.ResolveFileUnderWorkspace(requestedPath);
-                if (!string.Equals(Path.GetExtension(saveAsPath), ".rfa", StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidOperationException("save-family-doc.filePath must end in .rfa.");
+                var saveAsPath = OperatorFamilySavePath.Resolve(WorkspacePaths.GetWorkspaceRootPath(), requestedPath)!;
 
                 if (OperatorFamilySaveReceipt.TryRejectExistingTarget(session.SessionId, saveAsPath, p.overwrite, out var rejected))
                     return Task.FromResult<object>(rejected!);
@@ -52,7 +50,8 @@ namespace RevitBridge.Logic.Handlers
                         ok = true,
                         saved = true,
                         family_save_receipt = OperatorFamilySaveReceipt.Saved(session.SessionId, saveAsPath,
-                            string.Equals(famDoc.PathName, saveAsPath, StringComparison.OrdinalIgnoreCase)),
+                            string.Equals(famDoc.PathName, saveAsPath, StringComparison.OrdinalIgnoreCase),
+                            requestedPath, WorkspacePaths.GetWorkspaceRoot()),
                         saveMode = "save_as",
                         filePath = saveAsPath,
                         docId = session.SessionId,

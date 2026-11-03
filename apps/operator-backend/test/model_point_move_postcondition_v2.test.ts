@@ -48,3 +48,36 @@ test('synthetic neighbors require every point in a batch and support horizontal/
  assert.equal(modelPointMoveReadbackMatchesV2(f.input,f.native_apply,items.slice(0,1)),false);
  f.native_apply.snapshots[1]=structuredClone(f.native_apply.snapshots[0]);assert.equal(modelPointMoveReadbackMatchesV2(f.input,f.native_apply,items),false);
 });
+
+
+test('typed tag-head translation needs the owning view and exact native head, never a model point or bounding box',()=>{
+ const fixture=()=>JSON.parse(fs.readFileSync('test/fixtures/tag-head-move-readback-259.json','utf8'));
+ const f=fixture();assert.equal(modelPointMoveReadbackMatchesV2(f.input,f.native_failed,f.synthetic_future_read),false,'Retained committed failure remains unverified.');
+ assert.equal(modelPointMoveReadbackMatchesV2(f.input,f.synthetic_future_apply,f.synthetic_future_read),true);
+ for(const [name,change] of [
+  ['wrong position',(n:any)=>n.synthetic_future_read[0].location.z+=.01],
+  ['wrong tag identity',(n:any)=>n.synthetic_future_read[0].uniqueId='another-tag'],
+  ['wrong class',(n:any)=>n.synthetic_future_read[0].className='FamilyInstance'],
+  ['model-point coercion',(n:any)=>n.synthetic_future_read[0].location.type='point'],
+  ['wrong view',(n:any)=>n.synthetic_future_read[0].location.ownerViewId++],
+  ['wrong view UID',(n:any)=>n.synthetic_future_read[0].location.ownerViewUniqueId='other-view'],
+  ['missing view UID',(n:any)=>delete n.synthetic_future_apply.snapshots[0].before.ownerViewUniqueId],
+  ['changed view',(n:any)=>n.synthetic_future_apply.snapshots[0].after.ownerViewId++],
+  ['changed UID',(n:any)=>n.synthetic_future_apply.snapshots[0].after.elementUniqueId='other-tag'],
+  ['bbox coercion',(n:any)=>n.synthetic_future_apply.snapshots[0].before.kind='BboxCenter'],
+  ['nonfinite',(n:any)=>n.synthetic_future_read[0].location.x=NaN],
+  ['missing tag',(n:any)=>n.synthetic_future_read=[]]
+ ] as Array<[string,(n:any)=>void]>){const n=fixture();change(n);assert.equal(modelPointMoveReadbackMatchesV2(n.input,n.synthetic_future_apply,n.synthetic_future_read),false,name);}
+});
+
+
+test('tag batches keep each tag in its own view and do not accept swapped anchor identities',()=>{
+ const f=JSON.parse(fs.readFileSync('test/fixtures/tag-head-move-readback-259.json','utf8'));
+ const second=structuredClone(f.synthetic_future_apply.snapshots[0]);second.id=999;
+ for(const at of [second.before,second.after])Object.assign(at,{elementUniqueId:'other-tag',ownerViewId:51,ownerViewUniqueId:'other-view'});
+ f.input.body.ids.push(999);f.synthetic_future_apply.movedIds.push(999);f.synthetic_future_apply.transaction.modified_element_ids.push(999);f.synthetic_future_apply.snapshots.push(second);
+ const read=structuredClone(f.synthetic_future_read[0]);Object.assign(read,{id:999,uniqueId:'other-tag'});Object.assign(read.location,{ownerViewId:51,ownerViewUniqueId:'other-view'});f.synthetic_future_read.push(read);
+ assert.equal(modelPointMoveReadbackMatchesV2(f.input,f.synthetic_future_apply,f.synthetic_future_read),true);
+ f.synthetic_future_read[1].location.ownerViewId=f.synthetic_future_read[0].location.ownerViewId;
+ assert.equal(modelPointMoveReadbackMatchesV2(f.input,f.synthetic_future_apply,f.synthetic_future_read),false);
+});

@@ -1,10 +1,27 @@
 using System;
+using System.IO;
+using System.Text.RegularExpressions;
 
 namespace RevitBridge.Common
 {
     /// <summary>Requested CAD semantics are never replaced by a different effect.</summary>
     public static class CadLinkOptionPolicy
     {
+        public static void RequireExpectedSourceHash(string? expected, string actual)
+        {
+            if (expected == null) return;
+            if (!Regex.IsMatch(expected, "^[a-f0-9]{64}$") || !string.Equals(expected, actual, StringComparison.Ordinal))
+                throw new ArgumentException("CAD source bytes differ from expectedSourceSha256; no native import/link was started.", nameof(expected));
+        }
+
+        public static string SourceFormat(string path)
+        {
+            var extension = Path.GetExtension(path ?? "").ToLowerInvariant();
+            if (extension != ".dwg" && extension != ".dxf")
+                throw new ArgumentException("link-cad supports only .dwg and .dxf files.", nameof(path));
+            return extension.Substring(1);
+        }
+
         public static bool ShouldCreateDraftingView(bool hasExistingView, bool directSheetImport,
             bool hasSheet, string? requestedViewName, bool? createDraftingView)
             => !hasExistingView && !directSheetImport && createDraftingView != false

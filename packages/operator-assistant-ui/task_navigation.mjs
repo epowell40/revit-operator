@@ -2,6 +2,15 @@ export const TASK_NAVIGATION_SCHEMA = 'revit-operator.task-navigation/v1';
 const states = new Set(['working','pausing','paused','needs_input','needs_review','ready','complete','failed','unknown','loading','stopping_after_usage_limit','waiting_for_usage']);
 const text = (value, maximum) => typeof value === 'string' && value.length > 0 && value.length <= maximum;
 
+/** Read-only relay adoption for an explicitly opened saved task. Never resumes
+ * work or treats a matching conversation alone as matching task identity. */
+export function computerStateMatchesTask(payload, binding, sessionId) {
+  if (!binding || !text(sessionId,240) || payload?.backendSessionId !== sessionId
+      || binding.session_id !== sessionId || !Number.isSafeInteger(binding.generation) || binding.generation < 1) return false;
+  if (!['assignment_id','session_id','run_id'].every(key => text(binding[key],240))) return false;
+  return ['assignment_id','session_id','run_id','generation'].every(key => payload?.assignmentBindingV2?.[key] === binding[key]);
+}
+
 /** Discovery is for navigation. Opening a row never executes or resumes work;
  * controls must subsequently load and authorize the canonical task binding. */
 export function parseTaskNavigation(value) {

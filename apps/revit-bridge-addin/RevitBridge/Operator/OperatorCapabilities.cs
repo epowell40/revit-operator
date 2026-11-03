@@ -155,10 +155,10 @@ namespace RevitBridge.Operator
                 {
                     capture_active_view = "/revit/export-image",
                     export_active_view_image = "/revit/export-image",
-                    capture_current_sheet_or_view = "/revit/export-view-frame",
+                    capture_current_sheet_or_view = "/revit/export-image",
                     get_visible_elements_with_screen_or_view_coordinates = "/revit/export-visible-elements",
                     highlight_elements_for_capture = "/revit/highlight-and-export",
-                    capture_before_after = "compose /revit/export-view-frame or /revit/export-visible-elements before and after the write",
+                    capture_before_after = "compose /revit/export-image before and after the write; use /revit/export-view-frame only for supported crop-box 2D mapping, not sheets",
                     get_spatial_context_for_room = "/revit/spatial-context",
                     model_to_view2d = "/revit/export-visible-elements mapping",
                     view2d_to_model = "/revit/pick-at-pixel or /revit/pick-candidate-cluster",

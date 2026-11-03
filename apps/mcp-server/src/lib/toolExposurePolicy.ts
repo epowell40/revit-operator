@@ -32,6 +32,31 @@ export type ToolExposureMode = "certified" | "laboratory" | "general";
  */
 export const TOOL_EXPOSURE_CANONICALIZATION = "revit-operator.canonical-json.nfc-key-sorted.v1";
 
+/** Trusted local configuration can remove capabilities for a comparative run.
+ * It cannot add a tool, alter an existing proof, or be supplied in tool args.
+ * Apply the same reduction to discovery, documentation and invocation. */
+function locallyExcluded(tool: string | undefined, method: string | undefined, toolPath: string | undefined, env: NodeJS.ProcessEnv): boolean {
+  const raw=env.OPERATOR_LOCAL_TOOL_EXCLUSIONS_JSON;
+  if(!raw?.trim())return false;
+  if(!['development','local','self_hosted'].includes(String(env.REVIT_OPERATOR_MODE??'').trim().toLowerCase()))
+    throw new Error('Local tool exclusions require an explicit local runtime.');
+  let value:any;
+  try {value=JSON.parse(raw);}catch{throw new Error('Malformed local tool exclusions JSON.');}
+  if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).some(k=>!['mcp_tools','native_routes'].includes(k)))
+    throw new Error('Invalid local tool exclusions object.');
+  for(const [key,pattern] of [['mcp_tools',/^[A-Za-z0-9_]{1,128}$/],['native_routes',/^(GET|POST|PUT|PATCH|DELETE) \/revit\/[A-Za-z0-9_/-]{1,200}$/]] as const){
+    const list=value[key]??[];
+    if(!Array.isArray(list)||list.length>32||list.some(x=>typeof x!=='string'||!pattern.test(x))||new Set(list).size!==list.length)
+      throw new Error('Invalid local tool exclusions list: '+key);
+  }
+  return Boolean((tool&&value.mcp_tools?.includes(tool))||(method&&toolPath&&value.native_routes?.includes(method+' '+toolPath)));
+}
+
+export function assertLocalNativeToolNotExcluded(method: string, toolPath: string, env: NodeJS.ProcessEnv=process.env): void {
+  if(locallyExcluded(undefined,normalizedMethod(method),toolPath,env))
+    throw new Error('LOCAL_TOOL_EXCLUDED: '+method+' '+toolPath);
+}
+
 type ChannelDecision = {
   exposed: boolean;
   required_level: string;
@@ -128,7 +153,7 @@ const POLICY_FILENAME = "tool_exposure_policy.v1.json";
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 // This is a deployment trust anchor, not a value learned from the policy file.
 // Update it only alongside a reviewed bundled policy artifact.
-const BUNDLED_POLICY_HASH = "sha256:7ca3e3025969b39f511a3a7b515b51d129d6a13805823eaa97add51bc4a26d50";
+const BUNDLED_POLICY_HASH = "sha256:88dccd842f803310dcacdfc9206973401dc042190203f58341481cdc7184602e";
 const invokedMcpAlias = new AsyncLocalStorage<string>();
 declare const certifiedCourierAdmissionBrand: unique symbol;
 export type CertifiedCourierAdmission = {
@@ -185,6 +210,11 @@ export function getToolExposureRuntimeDecision(env: NodeJS.ProcessEnv = process.
       explicitLaboratory: false,
       reason: "non-exact hosted/production runtime values cannot activate General Agent exposure"
     };
+  }
+
+  if ((rawRuntimeMode === "local" || rawRuntimeMode === "self_hosted") && rawRequestedProfile === "general") {
+    return { runtimeMode, mode: "general", certified: false, explicitLaboratory: false,
+      reason: "explicit local/self-hosted General Agent exposure is active" };
   }
 
   if (runtimeMode === "development") {
@@ -548,6 +578,10 @@ function evaluateToolExposureInternal(input: {
     return { allowed: false, mode: runtime.mode, runtimeMode: runtime.runtimeMode, method, path: input.path,
       channel, requestHash: reqHash, effectHash: effHash, knownRoute: false,
       reasonCodes: ["PRODUCT_TOOL_NOT_SUPPORTED"], ...(alias ? { alias } : {}) };
+  }
+  if(locallyExcluded(alias,method,input.path,env)){
+    return {allowed:false,mode:runtime.mode,runtimeMode:runtime.runtimeMode,method,path:input.path,
+      channel,requestHash:reqHash,effectHash:effHash,knownRoute:true,reasonCodes:['LOCAL_TOOL_EXCLUDED'],...(alias?{alias}:{})};
   }
   if (runtime.mode === "laboratory" || runtime.mode === "general") {
     return {
@@ -1041,6 +1075,7 @@ export function runWithRevitToolAlias<T>(alias: string, operation: () => T): T {
 }
 
 export function isMcpToolAliasExposed(alias: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  if(locallyExcluded(alias,undefined,undefined,env))return false;
   if (!isSupportedMcpAlias(alias)) return false;
   if (!alias.startsWith("revit_")) return true;
   if (!isCertifiedToolExposureMode(env)) return true;
@@ -1073,6 +1108,7 @@ export function isKnownToolExposureRoute(method: string, toolPath: string, env: 
 }
 
 export function isToolRouteExposedForSearch(method: string, toolPath: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  if(locallyExcluded(undefined,normalizedMethod(method),toolPath,env))return false;
   if (!isSupportedNativeTool(normalizedMethod(method), toolPath)) return false;
   if (!isCertifiedToolExposureMode(env)) return true;
   const { policy } = loadToolExposurePolicy(env);
@@ -1089,7 +1125,8 @@ export function filterRegistryEntriesForSearch<T extends { method?: unknown; pat
   entries: readonly T[],
   env: NodeJS.ProcessEnv = process.env
 ): T[] {
-  entries = entries.filter(entry => isSupportedNativeTool(normalizedMethod(String(entry.method ?? "")), String(entry.path ?? "")));
+    entries = entries.filter(entry => isSupportedNativeTool(normalizedMethod(String(entry.method ?? "")), String(entry.path ?? ""))
+      &&!locallyExcluded(undefined,normalizedMethod(String(entry.method??'')),String(entry.path??''),env));
   if (!isCertifiedToolExposureMode(env)) return [...entries];
   const { policy } = loadToolExposurePolicy(env);
   const exposed = new Set(policy.records

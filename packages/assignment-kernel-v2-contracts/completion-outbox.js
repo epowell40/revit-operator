@@ -7,6 +7,11 @@ import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from
 
 const SCHEMA = "revit-operator.assignment-completion-outbox/v2";
 const LIMIT = 64 * 1024 * 1024;
+// Leave headroom below the SDK's 10 MiB JSON-RPC stdio frame limit. This is a
+// delivery projection only: the signed canonical observation is never reduced.
+export const COMPLETION_DELIVERY_BUDGET_V2 = 8 * 1024 * 1024;
+const DELIVERY_SCHEMA = "revit-operator.assignment-completion-delivery/v2";
+function digest(value) { return createHash("sha256").update(canonical(value)).digest("hex"); }
 function canonical(value) {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   if (value && typeof value === "object") return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`;
@@ -100,6 +105,43 @@ export function retainCompletionOutboxV2(workspace, key, lease, envelope) {
       requireValue(canonical(previous) === canonical(retainedEnvelope), "result_conflict");
     }
   } finally { fs.unlinkSync(pending); }
+}
+
+/** Retain before returning a bounded reference; never turn missing storage into
+ * a lossy result. No new store, dispatch, retry or settlement authority. */
+export function deliverCompletionOutboxV2(workspace, key, lease, envelope) {
+  retainCompletionOutboxV2(workspace, key, lease, envelope);
+  if (Buffer.byteLength(JSON.stringify(envelope)) <= COMPLETION_DELIVERY_BUDGET_V2) return envelope;
+  const structuredContent = {
+    schema: DELIVERY_SCHEMA,
+    identity_sha256: digest(identity(lease)),
+    structured_sha256: digest(envelope.structuredContent)
+  };
+  const delivery = { ...envelope, structuredContent };
+  if (Buffer.byteLength(JSON.stringify(delivery)) <= COMPLETION_DELIVERY_BUDGET_V2) return delivery;
+  // Do not imply that omitted pixels were viewed. The backend restores only
+  // canonical metadata, not omitted presentation, from its authenticated store.
+  return {
+    ...(envelope.isError === true ? { isError: true } : {}),
+    content: [{ type: "text", text: "Presentation unavailable: this result exceeds the MCP delivery budget. Full canonical observation retained; no image was delivered. Use a smaller scoped capture for visual review." }],
+    structuredContent
+  };
+}
+
+/** Called only with the host's current operation lease, workspace and key.
+ * A model/child supplied path or identity can never select a recovery record. */
+export function hydrateCompletionDeliveryV2(workspace, key, lease, envelope) {
+  const reference = envelope?.structuredContent;
+  if (reference?.schema !== DELIVERY_SCHEMA) return envelope;
+  requireValue(lease, "delivery_lease_missing");
+  requireValue(Object.keys(reference).sort().join(",") === "identity_sha256,schema,structured_sha256"
+    && /^[a-f0-9]{64}$/.test(reference.identity_sha256)
+    && /^[a-f0-9]{64}$/.test(reference.structured_sha256), "delivery_reference_invalid");
+  requireValue(reference.identity_sha256 === digest(identity(lease)), "delivery_identity_mismatch");
+  const retained = readCompletionOutboxV2(workspace, key, lease);
+  requireValue(retained, "delivery_record_missing");
+  requireValue(digest(retained.structuredContent) === reference.structured_sha256, "delivery_digest_mismatch");
+  return { ...envelope, structuredContent: retained.structuredContent };
 }
 
 // Separate immutable records: a late receipt must never replace the original

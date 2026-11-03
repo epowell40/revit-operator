@@ -38,3 +38,16 @@ test("ambiguous unbound leases fail closed instead of guessing a credential", ()
   registry.begin("session-a", auth("second"));
   assert.throws(() => registry.resolve(undefined, "session-a"), /not bound/);
 });
+
+test("a successor cannot replace a still-owned turn, even with the same credential", () => {
+  const registry = new OperatorBackendAuthLeaseRegistry();
+  const first = registry.begin("session-a", auth("principal-a"));
+  registry.bindTurn(first, "active-turn");
+  const next = registry.begin("session-a", auth("principal-a"));
+  assert.throws(() => registry.bindTurn(next, "active-turn"), /already exists/);
+  registry.end(next);
+  assert.equal(registry.resolve("active-turn", "session-a"), first.auth);
+  assert.throws(() => registry.resolve("active-turn", "session-b"), /session binding/);
+  registry.end(first);
+  assert.throws(() => registry.resolve("active-turn", "session-a"), /not bound/);
+});

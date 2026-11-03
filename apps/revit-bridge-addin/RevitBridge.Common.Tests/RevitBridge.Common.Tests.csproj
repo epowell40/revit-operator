@@ -9,6 +9,18 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <None Include="..\..\operator-backend\test\fixtures\internal-dependency-closure149.json" Link="Fixtures\internal-dependency-closure149.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Fixtures\move-no-displacement114.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Fixtures\tee-preservation-failure108.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\operator-backend\test\fixtures\flex-centerline203.json" Link="Fixtures\flex-centerline203.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\operator-backend\test\fixtures\inline-accessory-bookkeeping97.json" Link="Fixtures\inline-accessory-bookkeeping97.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\operator-backend\test\fixtures\inline-split-parameters85.json" Link="Fixtures\inline-split-parameters85.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\operator-backend\test\fixtures\inline-split-parameters83.json" Link="Fixtures\inline-split-parameters83.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Fixtures\family-label-binding-observation-506.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\operator-backend\test\fixtures\tee-deletion-candidate-diagnostics334.json" Link="Fixtures\tee-deletion-candidate-diagnostics334.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\operator-backend\test\fixtures\duct-tag-category-and-placement-326.json" Link="Fixtures\duct-tag-category-and-placement-326.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\operator-backend\test\fixtures\created-tag-mixed-mode-296.json" Link="Fixtures\created-tag-mixed-mode-296.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\connected-hvac-move-terminal-drift-267.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Fixtures\native-dependency-signature-unsupported.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Fixtures\native-table-style-passive-getter-rejected.json" CopyToOutputDirectory="PreserveNewest" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
@@ -43,6 +55,7 @@
     <None Include="Fixtures\unit403-save-as-unsettled.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Fixtures\unit407-tag-elements-preview-unsettled.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Fixtures\binder-sheet-move-readback-failures.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\tag-head-move-readback-259.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Fixtures\change-type-host-modal-42.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Fixtures\set-parameter-host-type-modal-preview.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\RevitBridge\Tooling\tool_examples.json" Link="Fixtures\native-tool-examples.json" CopyToOutputDirectory="PreserveNewest" />
@@ -51,6 +64,9 @@
   <ItemGroup>
     <ProjectReference Include="..\RevitBridge.Common\RevitBridge.Common.csproj" />
     <ProjectReference Include="..\RevitBridge.Logic\RevitBridge.Logic.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\operator-backend\test\fixtures\native-placement-snapshot151.json" Link="Fixtures\native-placement-snapshot151.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFramework)'=='net48'">

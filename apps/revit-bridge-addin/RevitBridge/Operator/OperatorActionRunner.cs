@@ -84,6 +84,7 @@ namespace RevitBridge.Operator
                 { "/revit/create-mep-route", new CreateMepRouteHandler() },
                 { "/revit/connect-mep-branch", new ConnectMepBranchHandler() },
                 { "/revit/connect-existing-mep-branch", new ConnectExistingMepBranchHandler() },
+                { "/revit/place-mep-accessory-interactively", new RevitBridge.Logic.Handlers.MEP.PlaceMepAccessoryInteractivelyHandler() },
                 { "/revit/connect-mep-elements", new RevitBridge.Logic.Handlers.MEP.ConnectMepElementsHandler() },
                 { "/revit/create-pipe-between-connectors", new RevitBridge.Logic.Handlers.MEP.CreatePipeBetweenConnectorsHandler() },
                 { "/revit/existing-conditions-mep-draft-workflow", new RevitBridge.Logic.Handlers.MEP.ExistingConditionsMepDraftWorkflowHandler() },
@@ -159,6 +160,8 @@ namespace RevitBridge.Operator
                 { "/revit/close-doc", new CloseDocHandler() },
                 { "/revit/edit-family-from-instance", new EditFamilyFromInstanceHandler() },
                 { "/revit/inspect-family-content", new InspectFamilyContentHandler() },
+                { "/revit/inspect-family-label-styles", new InspectFamilyLabelStylesHandler() },
+                { "/revit/set-family-label-style", new SetFamilyLabelStyleHandler() },
                 { "/revit/find-family-text-notes", new FindFamilyTextNotesHandler() },
                 { "/revit/set-text-note-text", new SetTextNoteTextHandler() },
                 { "/revit/reload-family-edit-session", new ReloadFamilyEditSessionHandler() },
@@ -174,6 +177,7 @@ namespace RevitBridge.Operator
                 { "/revit/inspect-drawing-spec", new InspectDrawingSpecHandler() },
                 { "/revit/inspect-excel-source", new InspectExcelSourceHandler() },
                 { "/revit/import-vector-detail", new ImportVectorDetailHandler() },
+                { "/revit/import-vector-annotations", new ImportVectorAnnotationsHandler() },
                 { "/revit/inspect-vector-detail", new InspectVectorDetailHandler() },
                 { "/revit/import-excel-output", new ImportExcelOutputHandler() },
                 { "/revit/inspect-excel-import", new InspectExcelImportHandler() },
@@ -408,7 +412,9 @@ namespace RevitBridge.Operator
                     var autoGuardId = autoGuardArmed ? dialogComputerUse!.ArmRetryableWarningCancelGuard() : null;
                     try
                     {
-                        handlerResult = handler.Handle(app, jsonBody).GetAwaiter().GetResult();
+                        handlerResult = handler is IInteractiveRequestHandler interactive
+                            ? interactive.HandleInteractive(app, jsonBody, localDeadline.Token).GetAwaiter().GetResult()
+                            : handler.Handle(app, jsonBody).GetAwaiter().GetResult();
                     }
                     catch (Exception error) when (executionStart?.Phase == "apply" || laboratoryExecutionStart?.Phase == "apply")
                     {

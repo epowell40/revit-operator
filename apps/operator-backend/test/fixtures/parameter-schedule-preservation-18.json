@@ -1,0 +1,131 @@
+{
+  "provenance": "Actual candidate18 failed mixed edit and target-only verification. No schedule-before evidence. Test vectors added by tests are hypothetical future producer observations, never historical backfill.",
+  "input": {
+    "method": "POST",
+    "path": "/revit/set-parameter",
+    "body": {
+      "changes": [
+        {
+          "elementId": 1410856,
+          "parameterName": "Comments",
+          "value": "INTERNAL REVIEW - QA465",
+          "expectedOldValue": ""
+        }
+      ],
+      "apply": true,
+      "dryRun": false
+    }
+  },
+  "applied": {
+    "status": "Applied and Verified",
+    "dryRun": false,
+    "requestedCount": 1,
+    "effectiveCount": 1,
+    "excludedCount": 0,
+    "changedCount": 1,
+    "changedElementIds": [
+      1410856
+    ],
+    "transaction": {
+      "status": "committed",
+      "committed": true,
+      "modified_element_ids": [
+        1410856,
+        1420970,
+        1422218,
+        1488968,
+        1521719,
+        1521731,
+        1543793
+      ],
+      "affected_element_ids": [
+        1410856,
+        1420970,
+        1422218,
+        1488968,
+        1521719,
+        1521731,
+        1543793
+      ],
+      "added_element_ids": [],
+      "deleted_element_ids": []
+    },
+    "changeTracking": {
+      "documentChangedObserved": true,
+      "exhaustiveChangeInventory": true,
+      "eventCount": 1,
+      "matchingEventCount": 1,
+      "distinctWrapperMatchCount": 1,
+      "captureFailureCount": 0
+    },
+    "verification": [
+      {
+        "elementId": 1410856,
+        "parameterName": "Comments",
+        "expectedValue": "INTERNAL REVIEW - QA465",
+        "status": "verified",
+        "actual": {
+          "storageType": "String",
+          "value": "INTERNAL REVIEW - QA465",
+          "valueString": "INTERNAL REVIEW - QA465"
+        },
+        "error": null
+      }
+    ],
+    "diffs": [
+      {
+        "elementId": 1410856,
+        "parameterName": "Comments",
+        "ok": true,
+        "changed": true,
+        "before": {
+          "storageType": "String",
+          "value": null,
+          "valueString": null
+        },
+        "after": {
+          "storageType": "String",
+          "value": "INTERNAL REVIEW - QA465",
+          "valueString": "INTERNAL REVIEW - QA465"
+        }
+      }
+    ]
+  },
+  "readInput": {
+    "method": "POST",
+    "path": "/revit/get-parameters",
+    "body": {
+      "elementIds": [
+        1410856
+      ],
+      "names": [
+        "Comments"
+      ],
+      "limit": 500
+    }
+  },
+  "read": {
+    "items": [
+      {
+        "id": 1410856,
+        "uniqueId": "73761c14-9294-420d-aef8-02b5142638a1-00158728",
+        "name": "Electrical 201",
+        "category": "Spaces",
+        "categoryId": -2003600,
+        "parameters": {
+          "Comments": "INTERNAL REVIEW - QA465"
+        },
+        "parameterDetails": [
+          {
+            "name": "Comments",
+            "value": "INTERNAL REVIEW - QA465",
+            "valueString": "INTERNAL REVIEW - QA465",
+            "storageType": "String",
+            "isReadOnly": false,
+            "parameterId": -1010106
+          }
+        ]
+      }
+    ]
+  }
+}

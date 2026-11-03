@@ -54,6 +54,26 @@ export function appendInlineText(container, text) {
   }
 }
 
+/** Split display text only. Opening a local link remains subject to the host's
+ * existing workspace/output-path policy; this function grants no file access. */
+export function linkedTextParts(text) {
+  const source = String(text || ""), parts = [];
+  const pattern = /\[([^\]\n]{1,160})\]\s*\(\s*((?:file:\/\/\/|https?:\/\/|op:\/\/)[^)]+?)\s*\)|`([A-Za-z]:\\[^`\r\n]+?\.(?:pdf|png|jpe?g|docx?|xlsx?|csv|txt|rvt|rfa))`|((?:file:\/\/\/|https?:\/\/|op:\/\/)[^\s<>"')]+)|([A-Za-z]:\\[^\r\n<>"]+?\.(?:pdf|png|jpe?g|docx?|xlsx?|csv|txt|rvt|rfa))/gi;
+  let last = 0, match;
+  while ((match = pattern.exec(source))) {
+    if (match.index > last) parts.push({ text: source.slice(last, match.index) });
+    const rawPath = match[3] || match[5] || "";
+    let href = String(match[2] || match[4] || rawPath).trim();
+    while (/[),.;:]$/.test(href)) href = href.slice(0, -1);
+    const label = match[1] || href;
+    if (/^[A-Za-z]:\\/.test(href)) href = `file:///${href.replace(/\\/g, "/")}`;
+    parts.push({ href, label });
+    last = pattern.lastIndex;
+  }
+  if (last < source.length) parts.push({ text: source.slice(last) });
+  return parts;
+}
+
 function tableCells(line) {
   if (line.length > 12000 || !line.includes("|")) return null;
   const input = line.trim(), cells = [];

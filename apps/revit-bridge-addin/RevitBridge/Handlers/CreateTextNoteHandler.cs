@@ -322,6 +322,7 @@ namespace RevitBridge.Handlers
             }
 
             long textNoteId = 0;
+            var scheduleBaseline = RevitBridge.Logic.AnnotationSchedulePreservation.CaptureBefore(doc);
             enterNativeScope();
             var createResult = NativeSingleTransaction.Execute(app, doc, "Create Text Note", nativeCreated =>
             {
@@ -347,6 +348,8 @@ namespace RevitBridge.Handlers
                 return new Dictionary<string, object?> { ["textNote"] = CaptureTextNote(persisted, view) };
             });
             // Persisted values are evidence; this handler does not certify all requested semantics.
+            RevitBridge.Logic.AnnotationSchedulePreservation.Attach(doc, createResult, scheduleBaseline,
+                ElementIdCompat.GetValue(view.Id), textNoteId);
             createResult.Remove("verified");
             createResult.Remove("ok");
             createResult["status"] = OperatorNativeTransactionExecution.OutcomeStatus(createResult, "Success");

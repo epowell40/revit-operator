@@ -1,8 +1,13 @@
+import type { EvidenceScalarFilterV1, EvidenceNumericOrderV1 } from "@revitoperator/assignment-kernel-v2-contracts";
+import { selectScalarEvidenceItemPage } from "./scalar_item_page.js";
+
 export interface ItemPageRange {
   path: string;
   start: number;
   count: number;
   fields?: readonly string[];
+  filters?: readonly EvidenceScalarFilterV1[];
+  orderBy?: EvidenceNumericOrderV1;
 }
 
 /** A byte-bounded view of retained rows. Column projection is explicitly
@@ -13,6 +18,7 @@ export function selectEvidenceItemPage(
   maxBytes: number,
   selectPath: (row: unknown, field: string, missing: symbol) => unknown
 ) {
+  if (Object.hasOwn(range, "filters") || Object.hasOwn(range, "orderBy")) return selectScalarEvidenceItemPage(array, range, maxBytes, selectPath);
   const page: unknown[] = [];
   let usedBytes = 2;
   const missing = Symbol("missing evidence column");

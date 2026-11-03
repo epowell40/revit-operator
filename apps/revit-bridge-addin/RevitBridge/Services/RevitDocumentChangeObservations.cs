@@ -29,5 +29,8 @@ namespace RevitBridge.Services
             using var json = JsonDocument.Parse(Store.ReadJson(documentSessionId));
             return json.RootElement.Clone();
         }
+
+        public static OperatorDocumentChangeVersion CaptureVersion(string documentSessionId)
+            => Store.CaptureVersion(documentSessionId);
     }
 }

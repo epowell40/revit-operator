@@ -1,0 +1,139 @@
+{
+  "source_failure": "trial312 pinnedCLI thread/start before model turn",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "templatePath": {
+        "type": "string"
+      },
+      "savePath": {
+        "type": "string"
+      },
+      "overwriteExistingFile": {
+        "type": "boolean",
+        "default": false
+      },
+      "loadIntoProject": {
+        "type": "boolean",
+        "default": false
+      },
+      "overwriteParameterValuesOnLoad": {
+        "type": "boolean",
+        "default": false
+      },
+      "geometry": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string",
+            "enum": [
+              "Generic Models",
+              "Mechanical Equipment",
+              "Electrical Equipment",
+              "Plumbing Fixtures"
+            ],
+            "default": "Generic Models"
+          },
+          "typeName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "default": "Generic"
+          },
+          "instanceDimensions": {
+            "type": "boolean",
+            "default": true
+          },
+          "shapes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_]{0,39}$",
+                  "default": "body"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "box",
+                    "cylinder"
+                  ],
+                  "default": "box"
+                },
+                "widthFt": {
+                  "type": "number",
+                  "minimum": 0.005208333333333333,
+                  "maximum": 1000
+                },
+                "depthFt": {
+                  "$ref": "#/properties/geometry/properties/shapes/items/properties/widthFt"
+                },
+                "diameterFt": {
+                  "$ref": "#/properties/geometry/properties/shapes/items/properties/widthFt"
+                },
+                "heightFt": {
+                  "$ref": "#/properties/geometry/properties/shapes/items/properties/widthFt"
+                },
+                "originFeet": {
+                  "type": "array",
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "items": [
+                    {
+                      "type": "number",
+                      "minimum": -10000,
+                      "maximum": 10000
+                    },
+                    {
+                      "type": "number",
+                      "minimum": -10000,
+                      "maximum": 10000
+                    },
+                    {
+                      "type": "number",
+                      "minimum": -10000,
+                      "maximum": 10000
+                    }
+                  ],
+                  "default": [
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "rotationDegrees": {
+                  "type": "number",
+                  "minimum": -360,
+                  "maximum": 360,
+                  "default": 0
+                }
+              },
+              "required": [
+                "heightFt"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 1,
+            "maxItems": 16
+          }
+        },
+        "required": [
+          "shapes"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "required": [
+      "templatePath",
+      "savePath"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "failure": "dynamic tool input schema is not supported for revit_create_family_from_template: invalid type: map, expected a string",
+  "pinned_cli": "0.157.0",
+  "provider_turn_started": false,
+  "native_operation_dispatched": false
+}

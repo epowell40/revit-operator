@@ -1,8 +1,11 @@
 import {verifiedDeliverableTargetGroupsV2} from "../verification/verified_deliverable_targets_v2.js";
+import {nativeObservedPhysicalTargetsV1} from '../verification/native_observed_work_v1.js';
+import {NATIVE_OBSERVED_PHYSICAL_TARGETS_V1} from '../domain/assignment-kernel/progress/native_work_progress.js';
 import { drawingSpecImportPostconditionSatisfiedV2 } from "../verification/drawing_spec_import_v2.js";
 import {excelTableImportPostconditionSatisfiedV2} from '../verification/excel_table_import_v2.js';
-import {vectorDetailImportPostconditionSatisfiedV2,VECTOR_DETAIL_SOURCE_FACT_V2} from '../verification/vector_detail_import_v2.js';
+import {vectorDetailImportPostconditionSatisfiedV2,VECTOR_DETAIL_SOURCE_FACT_V2,vectorDetailReadSubjectMatchesV2} from '../verification/vector_detail_import_v2.js';
 import {vectorSourceProofRecordV2,type PreparedVectorSourceProofV2} from '../verification/vector_detail_source_proof_v2.js';
+import {vectorStrokeCadPostconditionSatisfiedV2,isVectorStrokeCadSourcePathV2,vectorStrokeCadReadSubjectMatchesV2} from '../verification/vector_stroke_cad_readback_v2.js';
 import { operationNeedsReadbackV2 } from '../verification/regular_schedule_recheck_v2.js';
 import {createdSchedulePostconditionSatisfiedV2,isNativeScheduleDuplicateV2} from '../verification/created_schedule_postcondition_v2.js';
 import {NATIVE_PROPERTY_COMPARISON_FACT_V2}from '../verification/native_property_comparison_v2.js';
@@ -14,23 +17,28 @@ import { familyCapacityRetryV2 } from "../domain/assignment-kernel/family_capaci
 import { COMPLETE_NATIVE_CHANGE_INVENTORY_FACT_V2, nativeChangeInventoryCompleteV2 } from "../verification/native_change_inventory_v2.js";
 import { validBoundOperationScope } from "../domain/assignment-kernel/operation_scope.js";
 import { committedTargetChangeRetryV2 } from "../domain/assignment-kernel/committed_target_retry.js";
+import { nativeCommittedReadRefreshV2 } from './native_committed_read_refresh_v2.js';
 import { templateReassignmentV1 } from "../domain/assignment-kernel/template_reassignment.js";
 import { scheduleFilterRestorationV1 } from '../domain/assignment-kernel/schedule_filter_restoration.js';
 import { documentCheckpointContinuationV2 } from "../domain/assignment-kernel/document_checkpoint.js";
-import { nativeDocumentCheckpointResultV2 } from "@revitoperator/assignment-kernel-v2-contracts";
+import { isDetachedFamilyLabelEditV2, nativeDocumentCheckpointResultV2 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { trustedLocalExperimentHost } from "./local_advisory_policy.js";
 import { advisoryVerificationV2 } from "../domain/assignment-kernel/execution_policy.js";
 import { openDuctPostconditionSatisfiedV2 } from "../verification/open_duct_postcondition_v2.js";
 import { existingMepConnectionPostconditionSatisfiedV2 } from "../verification/existing_mep_connection_readback_v2.js";
+import {inlineAccessoryIncomingPostconditionV2,inlineAccessoryReadRequestMatchesV2} from '../verification/inline_accessory_evidence_v2.js';
+import {nativeAccessoryIncomingPostconditionV2,nativeAccessoryReadRequestMatchesV2} from '../verification/native_accessory_evidence_v2.js';
+import {teeTakeoffIncomingPostconditionV2,teeTakeoffReadRequestMatchesV2} from '../verification/tee_takeoff_evidence_v2.js';
 import { familyPlacementPostconditionSatisfiedV2 } from "../verification/family_placement_postcondition_v2.js";
 import { sheetMovePostconditionSatisfiedV2 } from "../verification/sheet_move_postcondition_v2.js";
 import { nativeAnnotationPostconditionSatisfiedV2 } from "../verification/native_annotation_postcondition_v2.js";
+import {isNativeDetailLineGraphEditV2,nativeDetailLinePostconditionSatisfiedV2}from'../verification/native_detail_line_graph_v2.js';
 import { scheduleCellBackgroundPostconditionSatisfiedV2, isScheduleCellBackgroundEditV2 } from "../verification/schedule_cell_appearance_v2.js";
 import { isNativeSchedulePresentationEditV2, nativeSchedulePresentationPostconditionSatisfiedV2 } from "../verification/native_schedule_presentation_v2.js";
 import {isNativePhaseFilterEditV2,nativePhaseFilterPostconditionSatisfiedV2}from '../verification/native_phase_filter_v2.js';
 import {deletionRequestV2}from '../verification/deletion_contract_v2.js';
 import {deletedElementsPostconditionSatisfiedV2}from '../verification/deleted_elements_postcondition_v2.js';
-import {isVisibilityPhasingEditV2}from '../verification/visibility_view_contract_v2.js';
+import {isVisibilityPhasingEditV2,isVisibilityTemplateEditV2}from '../verification/visibility_view_contract_v2.js';
 import { modelPointMovePostconditionSatisfiedV2 } from "../verification/model_point_move_postcondition_v2.js";
 import { VERIFIED_DELIVERABLE_TARGETS_FACT_V2 } from "../domain/assignment-kernel/verified_work_targets.js";
 import { workPlanPendingV2 } from "../domain/assignment-kernel/work_plan.js";
@@ -91,11 +99,12 @@ import {
   getAssignmentKernelSnapshotV2
 } from "./assignment_kernel_v2_store.js";
 import { deriveAndSettleAssignmentKernelV2 } from "./assignment_kernel_v2_lifecycle.js";
+import {familySessionPostconditionSatisfiedV2} from '../verification/family_session_verification_v2.js';
 import { postconditionSatisfiedByPayloadV2 } from "../postcondition_verification_v2.js";
 import { existingTagRepairRequestV2 } from "../verification/tag_property_readback_v2.js";
 import { preDispatchReadRetryV2 } from '../domain/assignment-kernel/pre_dispatch_read_retry.js';
 
-import { generatedParameterPostconditionSatisfiedV2 } from "../verification/generated_parameter_postcondition_v2.js";
+import {dynamicProgramParameterPostconditionSatisfiedV2} from '../verification/native_program_parameter_postcondition_v2.js';
 import { duplicatedTypePostconditionSatisfiedV2 } from "../verification/duplicated_type_postcondition_v2.js";
 import { createdTagPostconditionSatisfiedV2 } from "../verification/created_tag_postcondition_v2.js";
 
@@ -261,7 +270,14 @@ function verificationSubject(snapshot: AssignmentSnapshotV2, targetTokens: reado
       && operation.settlement_state === "settled"
       && sameAssignmentBindingV2(operation.binding, snapshot.current_binding)
       && operationNeedsReadbackV2(snapshot,operation)
-      && verificationReadTargetsCovered(operation, targetTokens, identity)
+      && vectorDetailReadSubjectMatchesV2(snapshot,operation,args)
+      && vectorStrokeCadReadSubjectMatchesV2(snapshot,operation,args)
+      && (operation.request_identity?.path==='/revit/place-mep-accessory-interactively'
+        ?nativeAccessoryReadRequestMatchesV2(snapshot,operation,args)
+        :object(operation.input.body).connectionMode==='insert_inline_accessory'&&operation.request_identity?.path==='/revit/connect-existing-mep-branch'
+        ?inlineAccessoryReadRequestMatchesV2(snapshot,operation,args)
+        :object(operation.input.body).connectionMode==='replace_tee_with_takeoff'&&operation.request_identity?.path==='/revit/connect-existing-mep-branch'
+          ?teeTakeoffReadRequestMatchesV2(snapshot,operation,args):verificationReadTargetsCovered(operation, targetTokens, identity))
       && verificationCapabilityAdmissionV2({
         apply: { capability_id: operation.capability_id, method: operation.request_identity?.method,
           path: operation.request_identity?.path, tool: operation.input.tool, arguments: operation.input },
@@ -373,7 +389,7 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
     controller_request_id: String(input.controller_request_id),
     capability_id: input.capability_id
   })}`;
-  // A view comparison or circuit membership read also inspects the admitted
+  // A view, circuit, or native placement preservation read also inspects the admitted
   // source as context. Keep that full request in the input, while binding only
   // changed targets as the verification subject. The semantic comparator
   // separately checks the exact source relationship.
@@ -381,7 +397,9 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
     && currentIdentity.path === "/revit/view-owned-detailing"
     || verifies?.request_identity?.path === "/revit/assign-electrical-circuit"
       && currentIdentity.path === "/revit/get-element-summary"
-      && Number.isSafeInteger(object(verifies.input.body).sourceElementId);
+      && Number.isSafeInteger(object(verifies.input.body).sourceElementId)
+    || verifies?.request_identity?.path === "/revit/place-mep-accessory-interactively"
+      && nativeAccessoryReadRequestMatchesV2(snapshot, verifies, input.arguments);
   const boundTargetTokens = comparisonIncludesReference
     ? targetTokens.filter(token => verificationTargetMatchesAppliedOperation(verifies, [token]))
     : targetTokens;
@@ -500,7 +518,7 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
   };
   assertOperationDoesNotRepeatSchemaRejectedInputV2({ snapshot, operation });
   if (!operation.retry_of_operation_id) {
-    const correction = preDispatchReadRetryV2(snapshot, operation) ?? familyCapacityRetryV2(snapshot, operation) ?? committedTargetChangeRetryV2(snapshot, operation);
+    const correction = preDispatchReadRetryV2(snapshot, operation) ?? nativeCommittedReadRefreshV2(snapshot, operation) ?? familyCapacityRetryV2(snapshot, operation) ?? committedTargetChangeRetryV2(snapshot, operation);
     if (correction) Object.assign(operation, correction);
     const checkpoint = documentCheckpointContinuationV2(snapshot, operation, nativeDocumentCheckpointResultV2);
     if (checkpoint) Object.assign(operation, checkpoint);
@@ -702,10 +720,17 @@ function commitInput(
   }
   // Proof and inventory completeness are host-derived, never producer claims.
   const semanticFacts = [...validateFacts(envelope.observation.semantic_facts)]
-    .filter(f => f.fact_id !== COMPLETE_NATIVE_CHANGE_INVENTORY_FACT_V2 && f.fact_id !== VERIFIED_DELIVERABLE_TARGETS_FACT_V2
-      && f.fact_id !== NATIVE_PROPERTY_COMPARISON_FACT_V2 && f.fact_id !== VECTOR_DETAIL_SOURCE_FACT_V2 && f.fact_id !== 'verification.postcondition_satisfied');
+    .filter(f => f.fact_id !== NATIVE_OBSERVED_PHYSICAL_TARGETS_V1 && f.fact_id !== COMPLETE_NATIVE_CHANGE_INVENTORY_FACT_V2 && f.fact_id !== VERIFIED_DELIVERABLE_TARGETS_FACT_V2
+      && f.fact_id !== NATIVE_PROPERTY_COMPARISON_FACT_V2 && f.fact_id !== VECTOR_DETAIL_SOURCE_FACT_V2 && f.fact_id !== 'verification.postcondition_satisfied')
+    // Retain the actual child effect and its independent verification, while
+    // refusing a producer claim that it already fulfills the project task.
+    .filter(f => !isDetachedFamilyLabelEditV2(lease.request_identity.method, lease.request_identity.path)
+      || !['task.result_available','task.preview_valid'].includes(f.fact_id));
   const snapshot = getAssignmentKernelSnapshotV2(lease.assignment_id);
   const operation = snapshot?.operations[lease.operation_id];
+  const observedPhysicalTargets=nativeObservedPhysicalTargetsV1(snapshot??undefined,operation,result,envelope.observation.raw_payload);
+  if(observedPhysicalTargets.length)semanticFacts.push({fact_id:NATIVE_OBSERVED_PHYSICAL_TARGETS_V1,fact_class:'control',
+    value:observedPhysicalTargets,cardinality:'many'});
   if (nativeChangeInventoryCompleteV2(operation, result, envelope.observation.raw_payload)) {
     semanticFacts.push({ fact_id: COMPLETE_NATIVE_CHANGE_INVENTORY_FACT_V2, fact_class: 'control', value: true });
   }
@@ -743,11 +768,22 @@ function commitInput(
       && verificationSubject?.requested_effect === "apply"
       && verificationSubject.persistent_effect === "applied"
       && deterministicallyTargetBound
-      && (verificationSubject.request_identity?.path!=='/revit/visibility'||!isVisibilityPhasingEditV2(verificationSubject.input)
+      && (verificationSubject.request_identity?.path !== '/revit/set-family-label-style'
+        || (nativePropertyReadIsFreshNativeV2(verificationSubject, operation, result, '/revit/inspect-family-label-styles')
+          && Boolean(result.receipt_id && result.native_correlation_id)
+          && !snapshot?.unresolved_unknown_operation_ids.length
+          && !snapshot?.input_invalidated_operation_ids?.some(id => id === verificationSubject.operation_id || id === operation?.operation_id)))
+      && (verificationSubject.request_identity?.path!=='/revit/visibility'||!(isVisibilityPhasingEditV2(verificationSubject.input)||isVisibilityTemplateEditV2(verificationSubject.input))
         || (nativePropertyReadIsFreshNativeV2(verificationSubject,operation,result,'/revit/visibility')
           && result.native_transaction_state==='not_applicable'&&Boolean(result.receipt_id&&result.native_correlation_id)
           && !snapshot?.unresolved_unknown_operation_ids.length
           && !snapshot?.input_invalidated_operation_ids?.some(id=>id===verificationSubject.operation_id||id===operation?.operation_id)))
+      && (!isVisibilityTemplateEditV2(verificationSubject.input)
+        || object(verificationSubject.input.body).templateName?.toString().trim()===''
+        || (verificationSubject.native_template_state?.result_id===verificationSubject.result?.result_id
+          && verificationSubject.native_template_state?.raw_payload_hash===verificationSubject.result?.raw_payload_hash
+          && verificationSubject.native_template_state?.view_id===object(object(envelope.observation.raw_payload).view).id
+          && verificationSubject.native_template_state?.template_id===object(object(envelope.observation.raw_payload).view).viewTemplateId))
       && (verificationSubject.request_identity?.path !== "/revit/update-schedule-cell" || scheduleCellReadIsFreshNativeV2(verificationSubject, operation, result))
       && (verificationSubject.request_identity?.path !== "/revit/set-parameter" || parameterReadIsFreshNativeV2(verificationSubject, operation, result))
       && (verificationSubject.request_identity?.path !== "/revit/change-element-type" || parameterReadIsFreshNativeV2(verificationSubject, operation, result))
@@ -759,7 +795,7 @@ function commitInput(
       && (verificationSubject.request_identity?.path !== "/revit/tag-elements" || !existingTagRepairRequestV2(verificationSubject.input)
         || nativePropertyReadIsFreshNativeV2(verificationSubject, operation, result))
       && (verificationSubject.capability_id === "operator_run_dynamic_revit_program"
-        ? generatedParameterPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
+        ? dynamicProgramParameterPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/duplicate-type-and-swap-instance"
           ? duplicatedTypePostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/tag-elements" && !existingTagRepairRequestV2(verificationSubject.input)
@@ -774,12 +810,16 @@ function commitInput(
           ? drawingSpecImportPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === '/revit/import-excel-output'
           ? excelTableImportPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
-        : verificationSubject.request_identity?.path === '/revit/import-vector-detail'
+        : ['/revit/import-vector-detail','/revit/import-vector-annotations'].includes(verificationSubject.request_identity?.path??'')
           ? vectorDetailImportPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload, sourceProof)
+        : verificationSubject.request_identity?.path==='/revit/link-cad'&&isVectorStrokeCadSourcePathV2(object(verificationSubject.input.body).sourcePath)
+          ? vectorStrokeCadPostconditionSatisfiedV2(snapshot!,verificationSubject,result,envelope.observation.raw_payload,vectorSourceProofRecordV2(sourceProof,result))
         : deletionRequestV2(verificationSubject.input)
           ? deletedElementsPostconditionSatisfiedV2(snapshot!,verificationSubject,result,envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/project-parameters"
           ? projectParameterBindingPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
+        : verificationSubject.request_identity?.path === '/revit/native-api-mutation-ops' && isNativeDetailLineGraphEditV2(verificationSubject.input)
+          ? nativeDetailLinePostconditionSatisfiedV2(snapshot!,verificationSubject,result,envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/native-api-mutation-ops" && isNativeSchedulePresentationEditV2(verificationSubject.input)
           ? nativeSchedulePresentationPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === '/revit/create-schedule' || isNativeScheduleDuplicateV2(snapshot!,verificationSubject)
@@ -792,10 +832,18 @@ function commitInput(
           ? nativeAnnotationPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/move-elements"
           ? modelPointMovePostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
+        : verificationSubject.request_identity?.path === '/revit/place-mep-accessory-interactively'
+          ? nativeAccessoryIncomingPostconditionV2(snapshot!,verificationSubject,result,envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === "/revit/connect-existing-mep-branch"
-          ? existingMepConnectionPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
+          ? (object(verificationSubject.input.body).connectionMode==='insert_inline_accessory'
+            ?inlineAccessoryIncomingPostconditionV2(snapshot!,verificationSubject,result,envelope.observation.raw_payload)
+            :object(verificationSubject.input.body).connectionMode==='replace_tee_with_takeoff'
+              ?teeTakeoffIncomingPostconditionV2(snapshot!,verificationSubject,result,envelope.observation.raw_payload)
+            :existingMepConnectionPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload))
         : ["/revit/mep-route-workflow", "/revit/create-duct", "/revit/create-mep-route", "/revit/existing-conditions-mep-draft-workflow"].includes(verificationSubject.request_identity?.path ?? "")
           ? openDuctPostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
+        : ['/revit/save-family-doc','/revit/load-family-doc','/revit/reload-family-edit-session','/revit/load-family'].includes(verificationSubject.request_identity?.path ?? '')
+          ? familySessionPostconditionSatisfiedV2(snapshot!,verificationSubject,result,envelope.observation.raw_payload)
         : postconditionSatisfiedByPayloadV2(
         verificationSubject.input,
         envelope.observation.raw_payload,

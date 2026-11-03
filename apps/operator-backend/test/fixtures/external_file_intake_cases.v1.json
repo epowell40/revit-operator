@@ -1,0 +1,12 @@
+{
+  "schema": "revit-operator.external-file-intake-calibration/v1",
+  "cases": [
+    {"id":"external-native-family","text":"Inspect the downloaded RFA and its matching type catalog. Use native family inspection to establish the actual geometry, parameter data types, units and saved Revit format. You may temporarily open the source family, then close it without saving. Preserve the existing project and unrelated families/views/sheets. Do not load, place, select a product configuration, repair supplier data or save any file. Report only proven findings and what remains unverified.","accepted_read_evidence":["other"],"effect":"read","question_kind":"research"},
+    {"id":"external-catalog","text":"Read the type catalog in artifacts/reference and tell me the declared data type and units for its Watts column. Do not inspect or edit the project or modify the catalog.","accepted_read_evidence":["other"],"effect":"read","question_kind":"research"},
+    {"id":"loaded-positive","text":"Inspect one heater already placed in the active project and report its actual family and type parameter values. Do not edit or save anything.","accepted_read_evidence":["model_content"],"effect":"read","question_kind":"current_model"},
+    {"id":"mixed-source","text":"Compare the parameter types in the downloaded RFA with the actual heater family already loaded in the active project. Inspect both sources without loading, replacing, editing or saving anything.","accepted_read_evidence":["model_content"],"effect":"read","question_kind":"current_model"},
+    {"id":"loaded-absence","text":"Determine whether any heater instances exist in the active project. Establish absence from the complete instance collection if none are found. Do not edit anything.","accepted_read_evidence":["complete_collection"],"effect":"read","question_kind":"current_model"},
+    {"id":"external-count","text":"Count the type rows in the external catalog text file. This is a count of file rows, not project elements. Do not inspect or change the project or write an artifact.","accepted_read_evidence":["other","complete_collection"],"effect":"read","question_kind":"research"},
+    {"id":"load-request","text":"Load the downloaded family into this disposable project. Do not place instances or overwrite an existing family.","accepted_read_evidence":["not_applicable"],"effect":"apply","question_kind":"action"}
+  ]
+}

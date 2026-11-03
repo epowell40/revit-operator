@@ -43,6 +43,18 @@ function scope(value: unknown, id: number, uid: string) {
 const sameDependency = (a: Record<string, any> | undefined, b: Record<string, any> | undefined) =>
   !!a && !!b && a.id === b.id && a.uniqueId === b.uniqueId && a.className === b.className && a.ownerViewId === b.ownerViewId;
 
+/** Explicit scope projection also checks optional census data when only the target was modified. */
+export function regularScheduleUnrequestedPreservedIdsV2(scheduleId:number,uniqueId:string,applied:unknown,fresh:unknown):number[]|null {
+ const a=object(applied),r=object(fresh),before=scope(a.presentationScopeBefore,scheduleId,uniqueId),after=scope(a.presentationScopeAfter,scheduleId,uniqueId),now=scope(r.scope,scheduleId,uniqueId);
+ if(!before||!after||!now||before.cells!==after.cells||before.cells!==now.cells
+  ||before.schedules.size!==after.schedules.size||before.schedules.size!==now.schedules.size)return null;
+ for(const [id,old] of before.schedules){const post=after.schedules.get(id),current=now.schedules.get(id);
+  if(!post||!current||post.uniqueId!==old.uniqueId||current.uniqueId!==old.uniqueId
+   ||post.semanticHash!==old.semanticHash||current.semanticHash!==old.semanticHash)return null;
+ }
+ return [...before.schedules.keys()].sort((a,b)=>a-b);
+}
+
 /** A wider native event inventory needs complete unchanged schedule fingerprints AND native dependency evidence. */
 export function regularSchedulePresentationScopeMatchesV2(scheduleId: number, uniqueId: string, applied: unknown, fresh: unknown): boolean {
   const a = object(applied), r = object(fresh), tx = inventory(a.transaction);

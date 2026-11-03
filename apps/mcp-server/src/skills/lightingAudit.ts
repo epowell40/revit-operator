@@ -20,7 +20,7 @@ export const lightingAuditTools = [
         description: "Checks all lighting fixtures for valid IES files. Can optionally fix paths based on a map.",
         inputSchema: z.object({
             fix: z.boolean().optional().describe("If true, attempts to fix invalid paths using provided corrections."),
-            corrections: z.record(z.unknown()).optional().describe("Map of FamilyName -> New IES Path (optional)")
+            corrections: z.record(z.string(), z.unknown()).optional().describe("Map of FamilyName -> New IES Path (optional)")
         }).passthrough()
     },
     {

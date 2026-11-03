@@ -11,6 +11,23 @@ namespace RevitBridge.Common.Tests
     public class OperatorNativeTransactionExecutionTests
     {
         [Theory]
+        [InlineData("RolledBack","none")]
+        [InlineData("Pending","unknown")]
+        public void CandidateDeletionDiagnosticSurvivesNativeSettlementWithoutBecomingPersistentDeletion(string finalStatus,string effect)
+        {
+            using var fixture=JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory,"Fixtures","tee-deletion-candidate-diagnostics334.json")));
+            var root=fixture.RootElement;var candidates=root.GetProperty("candidateIds").EnumerateArray().Select(x=>x.GetInt64()).ToArray();
+            var state="Uninitialized";var edits=0;var rollbacks=0;
+            var response=OperatorNativeTransactionExecution.Execute(()=>state="Started",()=>throw new Exception("Must not commit"),
+                ()=>{rollbacks++;return state=finalStatus;},()=>state,
+                ()=>{edits++;TeeTakeoffReplacementGeometry.RequireOnlyRequestedDeletion(root.GetProperty("teeId").GetInt64(),candidates);return new Dictionary<string,object?>();},
+                ()=>throw new Exception("No committed receipt"));
+            Assert.Equal(1,edits);Assert.Equal(1,rollbacks);Assert.Equal(false,response["success"]);
+            Assert.Equal(root.GetProperty("expectedError").GetString(),Assert.IsType<string>(response["error"]));
+            Assert.Equal(effect,OperatorAttemptSuccessfulSettlement.Classify(response,"preview","POST","/revit/connect-existing-mep-branch").EffectState);
+            Assert.Empty(Assert.IsType<OperatorNativeTransactionReceipt>(response["transaction"]).DeletedElementIds);
+        }
+        [Theory]
         [InlineData("Committed", "applied")]
         [InlineData("RolledBack", "none")]
         [InlineData("Pending", "unknown")]

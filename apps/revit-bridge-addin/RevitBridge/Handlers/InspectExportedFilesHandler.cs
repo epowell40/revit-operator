@@ -11,11 +11,13 @@ namespace RevitBridge.Handlers
 {
     public sealed class InspectExportedFilesHandler : IRequestHandler
     {
-        public sealed class Params { public List<string>? paths { get; set; } }
+        public sealed class Params { public List<string>? paths { get; set; } public string? familyDocumentId { get; set; } }
 
         public Task<object> Handle(UIApplication app, string jsonData)
         {
             var p = JsonSerializer.Deserialize<Params>(jsonData) ?? new Params();
+            if (p.familyDocumentId != null)
+                return new RevitBridge.Logic.Handlers.InspectSavedFamilySessionHandler().Handle(app, jsonData);
             if (p.paths == null || p.paths.Count == 0 || p.paths.Count > 2000)
                 throw new ArgumentException("Provide exact exported PDF/XLSX paths or the single active saved RVT/RFA path.");
             if (p.paths.Any(value => string.Equals(Path.GetExtension(value), ".rvt", StringComparison.OrdinalIgnoreCase)

@@ -60,6 +60,11 @@ namespace RevitBridge.Logic.Handlers
                     .Concat(new[] { ElementIdCompat.GetValue(family.Id) })).ToHashSet();
             long familyId = 0;
             bool loaded = false;
+            // Observe before mutation; absence/incomplete capture cannot prove
+            // preservation. Reuse the bounded flat-schedule contract, not a
+            // blanket exemption for LoadFamily's DocumentChanged footprint.
+            var scheduleBaseline = !p.overwriteParameterValues
+                ? AnnotationSchedulePreservation.CaptureBefore(doc) : null;
             enterNativeScope();
             var result = NativeSingleTransaction.Execute(app, doc, "Load Family", nativeCreated =>
             {
@@ -82,6 +87,8 @@ namespace RevitBridge.Logic.Handlers
                 return new Dictionary<string, object?> { ["familyName"] = family.Name, ["symbols"] = symbols };
             });
             result["status"] = OperatorNativeTransactionExecution.OutcomeStatus(result, loaded ? "Loaded" : "AlreadyLoaded");
+            if (loaded && !p.overwriteParameterValues && !beforeIds.Contains(familyId) && scheduleBaseline != null)
+                return AnnotationSchedulePreservation.AttachResult(doc, result, scheduleBaseline, Array.Empty<long>());
             return result;
         }
     }

@@ -43,6 +43,7 @@ namespace RevitBridge.Logic.Handlers
             public List<QuantifyRow> rows { get; set; } = new List<QuantifyRow>();
             public string resultSetId { get; set; }
             public List<string> warnings { get; set; } = new List<string>();
+            public QuantifySourceCoverage sourceCoverage { get; set; }
         }
 
         public class QuantifySummary
@@ -105,10 +106,15 @@ namespace RevitBridge.Logic.Handlers
             var hostIdsForResultSet = new List<long>();
             var allRows = new List<QuantifyRow>();
             var roomUnresolvedCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var sourceDocuments = new List<QuantifyDocumentCoverage>();
+            var discoveredLinks = 0;
+            var unavailableLinks = 0;
 
             if (includeHost)
             {
                 CollectForDoc(doc, "host", null, null, catFilter, categoryIds, request, includeKeywords, excludeKeywords, paramFilters, hostIdsForResultSet, allRows, roomUnresolvedCounts);
+                sourceDocuments.Add(new QuantifyDocumentCoverage { source = "host",
+                    projectUniqueId = doc.ProjectInformation?.UniqueId ?? "", matchedCount = allRows.Count });
             }
 
             var linkedCount = 0;
@@ -119,22 +125,34 @@ namespace RevitBridge.Logic.Handlers
                     .Cast<RevitLinkInstance>()
                     .ToList();
 
+                discoveredLinks = links.Count;
+
                 foreach (var li in links)
                 {
                     Document linkDoc = null;
                     try { linkDoc = li.GetLinkDocument(); } catch { linkDoc = null; }
                     if (linkDoc == null)
                     {
+                        unavailableLinks++;
                         response.warnings.Add($"Link '{li.Name}' is unloaded or not accessible.");
                         continue;
                     }
 
                     linkedCount++;
+                    var beforeRows = allRows.Count;
                     CollectForDoc(linkDoc, "link", RevitBridge.Common.ElementIdCompat.GetValue(li.Id), li.Name, catFilter, categoryIds, request, includeKeywords, excludeKeywords, paramFilters, hostIdsForResultSet: null, allRows, roomUnresolvedCounts);
+                    var nestedLinks = new FilteredElementCollector(linkDoc).OfClass(typeof(RevitLinkInstance)).GetElementCount();
+                    sourceDocuments.Add(new QuantifyDocumentCoverage { source = "link",
+                        projectUniqueId = linkDoc.ProjectInformation?.UniqueId ?? "",
+                        linkInstanceId = ElementIdCompat.GetValue(li.Id), linkUniqueId = li.UniqueId,
+                        matchedCount = allRows.Count - beforeRows, nestedLinkInstances = nestedLinks });
                 }
             }
 
             response.summary.total = allRows.Count;
+            response.sourceCoverage = QuantifySourceCoverage.Build(scope, discoveredLinks, unavailableLinks, sourceDocuments);
+            if (response.sourceCoverage.nestedLinkInstances > 0)
+                response.warnings.Add("Nested linked-model instances were detected but not recursively inspected; the count is incomplete for nested sources.");
 
             // 3) Build groups (supports multi-key group_by; default Type)
             var groupKeys = (request.group_by ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).ToList();

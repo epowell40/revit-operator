@@ -238,6 +238,9 @@ namespace RevitBridge.Logic.Handlers
 
         private Task<object> HandleCore(UIApplication app, string jsonData, NativeStage runNative)
         {
+            using var requestDocument = JsonDocument.Parse(string.IsNullOrWhiteSpace(jsonData) ? "{}" : jsonData);
+            if (!TagElementModeContract.Validate(requestDocument.RootElement, out var modeError))
+                throw new ArgumentException(modeError);
             var p = string.IsNullOrWhiteSpace(jsonData)
                 ? new TagRequest()
                 : (JsonSerializer.Deserialize<TagRequest>(jsonData) ?? new TagRequest());
@@ -1904,21 +1907,15 @@ namespace RevitBridge.Logic.Handlers
 
         private static BuiltInCategory? ResolveCommonTargetTagCategory(IReadOnlyList<Element> targets)
         {
-            var categories = targets.Select(ResolveTargetTagCategory).Distinct().ToList();
-            return categories.Count == 1 ? categories[0] : null;
-        }
-
-        private static BuiltInCategory? ResolveTargetTagCategory(Element element)
-        {
-            if (element.Category == null) return null;
-            var id = ElementIdCompat.GetValue(element.Category.Id);
-            if (id == (long)BuiltInCategory.OST_DuctTerminal) return BuiltInCategory.OST_DuctTerminalTags;
-            if (id == (long)BuiltInCategory.OST_MechanicalEquipment) return BuiltInCategory.OST_MechanicalEquipmentTags;
-            if (id == (long)BuiltInCategory.OST_ElectricalEquipment) return BuiltInCategory.OST_ElectricalEquipmentTags;
-            if (id == (long)BuiltInCategory.OST_ElectricalFixtures) return BuiltInCategory.OST_ElectricalFixtureTags;
-            if (id == (long)BuiltInCategory.OST_LightingFixtures) return BuiltInCategory.OST_LightingFixtureTags;
-            if (id == (long)BuiltInCategory.OST_PlumbingFixtures) return BuiltInCategory.OST_PlumbingFixtureTags;
-            return null;
+            var token = TagTargetCategoryPolicy.ResolveCommon(targets.Select(element =>
+            {
+                if (element.Category == null) return null;
+                var id = ElementIdCompat.GetValue(element.Category.Id);
+                // Preserve exact long-ID comparisons; unknown/custom 64-bit IDs
+                // must not wrap into a known BuiltInCategory value.
+                return id < int.MinValue || id > int.MaxValue ? null : ((BuiltInCategory)id).ToString();
+            }));
+            return token != null && Enum.TryParse(token, out BuiltInCategory category) ? category : (BuiltInCategory?)null;
         }
 
         private static BuiltInCategory ResolveBuiltInCategory(string? token, BuiltInCategory fallback)

@@ -7,9 +7,33 @@ namespace RevitBridge.Common
     {
         public static string GetWorkspaceRoot()
         {
-            var baseDir = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            var root = Path.Combine(baseDir, "RevitOperator", "Workspace");
+            var root = GetWorkspaceRootPath();
             Directory.CreateDirectory(root);
+            return root;
+        }
+
+        // Admission checks must not create directories or change the filesystem.
+        public static string GetWorkspaceRootPath()
+        {
+            // Native admission, Sidecar and MCP must read the same signed grant
+            // and artifact root. The process configuration is fixed at launch.
+            var configured = Environment.GetEnvironmentVariable("OPERATOR_WORKSPACE_ROOT");
+            string root;
+            if (string.IsNullOrWhiteSpace(configured))
+            {
+                var baseDir = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                root = Path.Combine(baseDir, "RevitOperator", "Workspace");
+            }
+            else
+            {
+                var candidate = configured!.Trim();
+                var prefix = Path.GetPathRoot(candidate);
+                // A drive-relative or current-drive-relative path resolves
+                // differently in Revit and Node. Never silently fall back.
+                if (!Path.IsPathRooted(candidate) || string.IsNullOrEmpty(prefix) || prefix.Length < 3)
+                    throw new InvalidOperationException("OPERATOR_WORKSPACE_ROOT must be an absolute workspace directory.");
+                root = Path.GetFullPath(candidate);
+            }
             return root;
         }
 
@@ -38,16 +62,27 @@ namespace RevitBridge.Common
 
         public static string ResolveFileUnderWorkspace(string userProvidedFilePath)
         {
+            if (string.IsNullOrWhiteSpace(userProvidedFilePath)) throw new ArgumentException("File path is required.");
+            GetWorkspaceRoot();
+            return ResolveFileUnderWorkspaceReadOnly(userProvidedFilePath);
+        }
+
+        // Authoring preflight must not create even the workspace directory.
+        public static string ResolveFileUnderWorkspaceReadOnly(string userProvidedFilePath)
+            => ResolveFileUnderWorkspaceReadOnly(userProvidedFilePath, GetWorkspaceRootPath());
+
+        public static string ResolveFileUnderWorkspaceReadOnly(string userProvidedFilePath, string workspaceRoot)
+        {
             if (string.IsNullOrWhiteSpace(userProvidedFilePath))
                 throw new ArgumentException("File path is required.");
 
-            var root = GetWorkspaceRoot();
+            var root = Path.GetFullPath(workspaceRoot);
             var candidate = userProvidedFilePath.Trim();
             if (!Path.IsPathRooted(candidate))
                 candidate = Path.Combine(root, candidate);
 
             candidate = Path.GetFullPath(candidate);
-            EnsureUnderWorkspace(candidate);
+            EnsureUnderWorkspace(candidate, root);
             return candidate;
         }
 
@@ -59,8 +94,11 @@ namespace RevitBridge.Common
         }
 
         private static void EnsureUnderWorkspace(string fullPath)
+            => EnsureUnderWorkspace(fullPath, GetWorkspaceRootPath());
+
+        private static void EnsureUnderWorkspace(string fullPath, string workspaceRoot)
         {
-            var root = Path.GetFullPath(GetWorkspaceRoot())
+            var root = Path.GetFullPath(workspaceRoot)
                 .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             var prefix = root + Path.DirectorySeparatorChar;
 

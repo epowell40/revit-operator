@@ -49,7 +49,12 @@ namespace RevitBridge.Common.Tests
             var server = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Server", "RevitHttpServer.cs");
             Assert.Contains("body = await RequireFinalNativeAuthorizationAsync(effectiveRequest, requestBody", server);
             Assert.Contains("result = await _eventService.Run", server);
-            Assert.Contains("nativeResult = handler.Handle(app, dispatchBody).GetAwaiter().GetResult();", server);
+            var queued = server.Substring(server.IndexOf("result = await _eventService.Run", StringComparison.Ordinal));
+            var authorization = queued.IndexOf("dispatchBody = RequireFinalNativeAuthorizationAsync(", StringComparison.Ordinal);
+            var invocation = queued.IndexOf("nativeResult = handler is IInteractiveRequestHandler interactive", StringComparison.Ordinal);
+            Assert.True(authorization >= 0 && invocation > authorization);
+            Assert.Contains("? interactive.HandleInteractive(app, dispatchBody, localDeadline.Token).GetAwaiter().GetResult()", queued);
+            Assert.Contains(": handler.Handle(app, dispatchBody).GetAwaiter().GetResult();", queued);
             var direct = server.Substring(server.IndexOf("private static bool IsDirectDialogComputerUsePath", StringComparison.Ordinal));
             direct = direct.Substring(0, direct.IndexOf("private static OperatorActionRisk GetRequestRisk", StringComparison.Ordinal));
             Assert.DoesNotContain("/revit/computer-use-guard", direct);
@@ -261,6 +266,16 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void NativeCodeUsesSupportedProfileWithoutChangingHostTransportIdentity()
+        {
+            var source = ReadSharedSource("revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", "DynamicNativeProgramHandlers.cs");
+            Assert.Contains("OperatorNativeProgramExecution.RequireSupportedHost", source);
+            Assert.Contains("OPERATOR_NATIVE_PROGRAM_EXECUTION", source);
+            Assert.DoesNotContain("Environment.SetEnvironmentVariable", source);
+            Assert.Contains("DynamicNativeProgramWire.RequireSupportedHost()", source);
+        }
+
+        [Fact]
         public void DynamicRuntimeConsumesOneUseWriteGrantOnlyAtCommittedApplyBoundary()
         {
             var policy = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Operator", "OperatorApprovalPolicy.cs");
@@ -289,7 +304,13 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("Path.Combine(assemblyDirectory, \"dynamic-runtime\", packageDirectoryName)", runtime);
             Assert.Contains("DynamicRuntimePackageDirectoryIdentity.Compute(packageDirectory)", runtime);
             Assert.Contains("DynamicRuntimeTrustBoundary.LauncherPackageHash()", runtime);
-            Assert.Contains("DynamicRuntimeTrustBoundary.WorkerPackageHash()", runtime);
+            // Registration now accepts either the exact legacy image or that
+            // image plus the exact per-version host-owned compiler references. Keep
+            // both the base identity and final observed/expected equality.
+            Assert.Contains("DynamicRuntimeTrustBoundary.WorkerPackageHashForRegistration(workerRuntimePackageHash)", runtime);
+            Assert.Contains("var baseHash = WorkerPackageHash();", runtime);
+            Assert.Contains("DynamicRuntimePackageDirectoryIdentity.ComputeWithNativeTarget(packageDirectory, baseHash, NativeTargetFiles())", runtime);
+            Assert.Contains("string.Equals(workerRuntimePackageHash, trustedWorkerHash, StringComparison.Ordinal)", runtime);
             Assert.Contains("DurableCoreOperationApplyAuthorizationLedgerV1", activation);
             Assert.Contains("DynamicRetainedBuildingSystemsSnapshotAuthorityV1", activation);
             Assert.Contains("DynamicBuildingSystemsObservationContractV1.MaximumRequestBytes", activation);
@@ -686,6 +707,7 @@ namespace RevitBridge.Common.Tests
                 Assert.Contains("if (document.IsLinked) continue;", handler, StringComparison.Ordinal);
                 Assert.Contains("Already Loaded As Link", handler, StringComparison.Ordinal);
                 Assert.Contains("requiresExplicitUnloadAndOpen = true", handler, StringComparison.Ordinal);
+                Assert.Equal(2, handler.Split(new[] { "transaction = RevitBridge.Common.OperatorNativeTransactionReceipt.NotStarted()" }, StringSplitOptions.None).Length - 1);
                 Assert.Contains("FindLinkedDocumentReferences(app", handler, StringComparison.Ordinal);
                 Assert.Contains("InvokeUnload(linkType)", handler, StringComparison.Ordinal);
                 Assert.Contains("Unloaded Link and Activated", handler, StringComparison.Ordinal);

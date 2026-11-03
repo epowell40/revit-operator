@@ -2237,6 +2237,133 @@
       }
     ]
   },
+  "/revit/import-vector-annotations": {
+    "oneOf": [
+      {
+        "type": "object",
+        "properties": {
+          "sourcePath": {
+            "type": "string",
+            "pattern": "^artifacts/uploads/[^/\\\\\\r\\n]+$",
+            "maxLength": 520
+          },
+          "expectedSourceSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "nativePlanPath": {
+            "type": "string",
+            "pattern": "^artifacts/drafting-vector/source-[a-f0-9]{64}\\.json\\.gz$",
+            "maxLength": 520
+          },
+          "expectedNativePlanFileSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "expectedNativePlanSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "partIndex": {
+            "type": "integer",
+            "enum": [
+              0
+            ]
+          },
+          "dryRun": {
+            "type": "boolean"
+          },
+          "viewId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "expectedViewUniqueId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "required": [
+          "sourcePath",
+          "expectedSourceSha256",
+          "nativePlanPath",
+          "expectedNativePlanFileSha256",
+          "expectedNativePlanSha256",
+          "viewId",
+          "expectedViewUniqueId"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "sourcePath": {
+            "type": "string",
+            "pattern": "^artifacts/uploads/[^/\\\\\\r\\n]+$",
+            "maxLength": 520
+          },
+          "expectedSourceSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "nativePlanPath": {
+            "type": "string",
+            "pattern": "^artifacts/drafting-vector/source-[a-f0-9]{64}\\.json\\.gz$",
+            "maxLength": 520
+          },
+          "expectedNativePlanFileSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "expectedNativePlanSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "partIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1999
+          },
+          "dryRun": {
+            "type": "boolean"
+          },
+          "manifestElementId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "expectedImportSnapshotSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "viewId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "expectedViewUniqueId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "required": [
+          "sourcePath",
+          "expectedSourceSha256",
+          "nativePlanPath",
+          "expectedNativePlanFileSha256",
+          "expectedNativePlanSha256",
+          "partIndex",
+          "manifestElementId",
+          "expectedImportSnapshotSha256",
+          "viewId",
+          "expectedViewUniqueId"
+        ],
+        "additionalProperties": false
+      }
+    ]
+  },
   "/revit/import-vector-detail": {
     "oneOf": [
       {
@@ -2461,6 +2588,77 @@
           "manifestElementId",
           "partIndex",
           "includeItems"
+        ],
+        "additionalProperties": false
+      }
+    ]
+  },
+  "/revit/inspect-exported-files": {
+    "type": "object",
+    "properties": {
+      "paths": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 2000,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "pattern": "\\S"
+        }
+      },
+      "familyDocumentId": {
+        "type": "string",
+        "pattern": "^[A-Fa-f0-9]{32}$"
+      }
+    },
+    "required": [
+      "paths"
+    ],
+    "additionalProperties": false,
+    "oneOf": [
+      {
+        "type": "object",
+        "properties": {
+          "paths": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 2000,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000,
+              "pattern": "\\S"
+            }
+          }
+        },
+        "required": [
+          "paths"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "paths": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000,
+              "pattern": "[.][rR][fF][aA]$"
+            }
+          },
+          "familyDocumentId": {
+            "type": "string",
+            "pattern": "^[A-Fa-f0-9]{32}$"
+          }
+        },
+        "required": [
+          "paths",
+          "familyDocumentId"
         ],
         "additionalProperties": false
       }

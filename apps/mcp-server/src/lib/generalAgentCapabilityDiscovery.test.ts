@@ -58,8 +58,8 @@ test("general-agent discovery adds exactly one concise non-authorizing dynamic s
   const result = discoverGeneralAgentCapabilities({ need: "complex geometry layout" }, env, name => name === "operator_run_dynamic_revit_program");
   assert.equal(result.executionSubstrates.length, 1);
   assert.equal(result.executionSubstrates[0]?.id, "dynamic_revit_program");
-  assert.match(result.executionSubstrates[0]?.title ?? "", /Generate and preview a bounded task-specific Revit program/);
-  assert.equal(result.executionSubstrates[0]?.semantics.previewBeforeCommit, true);
+  assert.match(result.executionSubstrates[0]?.title ?? "", /Execute bounded task-specific C# reads or writes in Revit/);
+  assert.equal(result.executionSubstrates[0]?.semantics.previewBeforeCommit, false);
   assert.equal(result.executionSubstrates[0]?.semantics.machineAccess, "restricted");
   assert.equal(result.executionSubstrates[0]?.semantics.externalFileEffects, "explicit_capability_required");
   assert.equal(result.executionSubstrates[0]?.semantics.iterativeObservation, "bounded_needs_facts");

@@ -17,6 +17,8 @@ export interface NativeArtifactReceiptV1 {
   readonly print_settings_untouched?: boolean;
   readonly not_started_reason?: "interactive_printer_destination" | "printer_capability_unavailable" | "printer_unavailable" | "no_printer_configured" | "save_preflight_failed";
   readonly save_io_not_started?: boolean;
+  /** Native producing year after successful SaveAs. File-opening metadata only. */
+  readonly saved_revit_version?: string;
   readonly save_document?: {
     readonly native_save_returned: boolean;
     readonly same_document: boolean;
@@ -36,3 +38,6 @@ export interface NativeArtifactReceiptV1 {
 export function nativeArtifactReceiptEffectV1(value: unknown, method: unknown, path: unknown, requestedEffect: unknown): "none" | "applied" | null;
 export function nativeArtifactResultEffectV2(value: unknown): "none" | "applied" | null;
 export function nativeDocumentCheckpointResultV2(value: unknown): boolean;
+
+export function isNativeDocumentCheckpointRequestV2(value: unknown): boolean;
+export function nativeDocumentCheckpointRequestMatchesV2(value: unknown, fingerprint: unknown): boolean;

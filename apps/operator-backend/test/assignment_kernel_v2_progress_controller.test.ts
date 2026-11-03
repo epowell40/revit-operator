@@ -1330,6 +1330,51 @@ test("seven retained room pages progress through the real store and controller b
   }
 });
 
+test("projected retained columns progress through the real store without crediting rereads or completing work", { concurrency: false }, () => {
+  const prior=process.env.OPERATOR_WORKSPACE_ROOT;
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),"operator-column-progress-"));
+  process.env.OPERATOR_WORKSPACE_ROOT=root;
+  try {
+    const stored=storeEvidence({scope:binding,source:"regression:column-inventory",trust_level:"authoritative_native",
+      raw:{items:[{name:"Equipment",typeName:"Transformer",point:{x:1}},{name:"Device",typeName:"Sensor",point:{x:2}}]}},4096);
+    let snapshot=journal().snapshot();let index=0;
+    const step=(fields:string[]|undefined,start:number,count:number,expected:boolean)=>{
+      const retrieved=retrieveEvidence({scope:binding,evidence_id:stored.ref.evidence_id,purpose:"Inspect actual retained columns",
+        item_range:{path:"items",start,count,...(fields?{fields}:{})},max_bytes:50000});
+      const id=`column-${index++}`;
+      const obs:ObservationV2={...observation(id,`observation-${id}`),authority:"operator-evidence-store",
+        result_schema_id:"operator-capability/operator_retrieve_evidence/v2",
+        facts:assignmentKernelControlEvidenceFactsV2("operator_retrieve_evidence",{ok:true,result:retrieved}),
+        verification_relevance:["control"],fulfillment_role:"supporting_control",evidence_class:"control",
+        capability_id:"operator_retrieve_evidence",eligible_criterion_ids:[]};
+      const op:OperationV2={...operation(id),capability_id:"operator_retrieve_evidence",purpose:"evidence_read",
+        fulfillment_role:"supporting_control",delegation_authority_id:undefined,advances_criterion_ids:[],eligible_criterion_ids:[],
+        input:{evidenceId:stored.ref.evidence_id,itemRange:{path:"items",start,count,fields}},
+        dispatch_state:"dispatched",dispatch_authority:"mcp",settlement_state:"settled",observation_ids:[obs.observation_id],
+        result:{...result(id),authority:obs.authority,result_schema_id:obs.result_schema_id},settled_at:"2026-08-26T20:00:05.000Z"};
+      const after={...snapshot,operations:{...snapshot.operations,[id]:op},observations:{...snapshot.observations,[obs.observation_id]:obs},
+        observation_versions:{...snapshot.observation_versions,[obs.observation_id]:index+2},in_flight_operation_ids:[],quiescent:true};
+      const epoch=buildProgressEpochV2({before:snapshot,after,stated_gap_ids:["criterion:criterion-inventory"],
+        admitted_operation_ids:[id],recorded_at:"2026-08-26T20:00:06.000Z"});
+      assert.equal(epoch.genuine_progress,expected,`${id}:${JSON.stringify(fields)}`);
+      assert.ok(obs.facts.every(f=>f.fact_class==="control"));
+      snapshot={...after,progress_epochs:[...snapshot.progress_epochs,epoch]};
+      assert.deepEqual(snapshot.criteria,{});assert.equal(snapshot.terminal,false);
+    };
+    step(["name"],0,1,true);
+    step(["typeName"],0,1,true);
+    step(["typeName","name"],0,1,false);
+    step(["absent"],0,1,false);
+    step(undefined,0,1,true);
+    step(["point.x"],0,1,false); // Full prior row already included this cell.
+    step(["name"],0,2,true); // Overlap adds only the actual second row.
+    step(["name"],1,1,false);
+  } finally {
+    __closeForTests();if(prior===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=prior;
+    fs.rmSync(root,{recursive:true,force:true});
+  }
+});
+
 test("continued drawing task retains raw token costs without exhausting the default budget during SDK discovery", () => {
   const j = journal();
   for (let i = 0; i < 8; i++) {

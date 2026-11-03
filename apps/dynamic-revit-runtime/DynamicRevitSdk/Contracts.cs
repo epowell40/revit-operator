@@ -11,7 +11,7 @@ public static class DynamicRevitSdkVersion
 {
     public const string Value = "dynamic-revit-sdk/v0";
     public const string GraphSchema = "dynamic-revit-operation-graph/v0";
-    public static string ManifestHash => DynamicWire.Sha256(Value + "\n" + GraphSchema + "\nDynamicTaskInput\nDynamicElementDto\nMoveElement\nSetParameter\nBoundedStructuredReport\nDynamicWorkerAdmission\nCanonicalInputHashV1\nNoSystemTextJsonDependencyV1\nAuthenticatedLauncherSessionV1\n" + DynamicObservationContractV1.ManifestHash + "\n" + DynamicBuildingSystemsObservationContractV1.ManifestHash + "\n" + DynamicCoreOperationManifestV1.ManifestHash + "\n" + DynamicResultReferenceManifestV1.ManifestHash + "\n" + DynamicAnnotationOperationManifestV1.ManifestHash + "\n" + DynamicMepMutationManifestV1.ManifestHash + "\n" + DynamicExecutionProtocolV1.ContractIdentity);
+    public static string ManifestHash => DynamicWire.Sha256(Value + "\n" + GraphSchema + "\nDynamicTaskInput\nDynamicElementDto\nMoveElement\nSetParameter\nBoundedStructuredReport\nDynamicWorkerAdmission\nCanonicalInputHashV1\nOptionalAuthenticatedSnapshotCoverageV1\nNoSystemTextJsonDependencyV1\nAuthenticatedLauncherSessionV1\n" + DynamicObservationContractV1.ManifestHash + "\n" + DynamicBuildingSystemsObservationContractV1.ManifestHash + "\n" + DynamicCoreOperationManifestV1.ManifestHash + "\n" + DynamicResultReferenceManifestV1.ManifestHash + "\n" + DynamicAnnotationOperationManifestV1.ManifestHash + "\n" + DynamicMepMutationManifestV1.ManifestHash + "\n" + DynamicExecutionProtocolV1.ContractIdentity);
 }
 
 public sealed class DynamicDocumentDto
@@ -48,6 +48,7 @@ public sealed class DynamicTaskInput
     public DynamicDocumentDto Document { get; set; } = new();
     public IReadOnlyList<DynamicElementDto> Elements { get; set; } = Array.Empty<DynamicElementDto>();
     public int OperationBudget { get; set; } = 32;
+    public DynamicSnapshotCoverage? Coverage { get; set; }
 }
 
 public sealed class DynamicProgramResult
@@ -88,6 +89,7 @@ public sealed class DynamicRevitContext
     public DynamicRevitContext(DynamicTaskInput input)
     {
         Input = input ?? throw new ArgumentNullException(nameof(input));
+        input.Coverage?.Validate(input.Elements.Count);
         Plan = new DynamicOperationGraphBuilder(input.OperationBudget);
     }
     public DynamicTaskInput Input { get; }
@@ -221,6 +223,21 @@ public static class DynamicWire
             Append(builder, element.IsGrouped ? "1" : "0");
             Append(builder, element.HostUniqueId);
         }
+        // Absent metadata preserves the legacy canonical bytes exactly. New coverage is
+        // authenticated with the observations so a partial cohort cannot be relabelled complete.
+        if (input.Coverage != null)
+        {
+            var coverage = input.Coverage;
+            coverage.Validate(elements.Count);
+            Append(builder, "dynamic-snapshot-coverage/v1");
+            Append(builder, coverage.SourceScope);
+            Append(builder, coverage.Category);
+            Append(builder, coverage.Limit.ToString(CultureInfo.InvariantCulture));
+            Append(builder, coverage.ReturnedCount.ToString(CultureInfo.InvariantCulture));
+            Append(builder, coverage.HasMore ? "1" : "0");
+            Append(builder, coverage.ParameterNames.Length.ToString(CultureInfo.InvariantCulture));
+            foreach (var parameterName in coverage.ParameterNames) Append(builder, parameterName);
+        }
         return Sha256(builder.ToString());
     }
     private static void Append(StringBuilder builder, string? value)
@@ -326,3 +343,4 @@ public static class DynamicWorkerAdmissionPolicy
         if (!DynamicWire.VerifyAdmission(admission, signingKey)) throw new InvalidOperationException("Dynamic worker admission signature is invalid.");
     }
 }
+

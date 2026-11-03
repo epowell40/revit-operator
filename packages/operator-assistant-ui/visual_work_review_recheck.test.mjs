@@ -22,7 +22,7 @@ test('retained168 missing-baseline failure has a scoped recheck request with ori
  assert.deepEqual(prompt.checks,checks);assert.equal(prompt.baseline.evidence_id,request.recheck_evidence_id);assert.equal(prompt.baseline.location.through_sequence,0);assert.equal(prompt.location.through_sequence,1);assert.match(prompt.limits,/historical/);
  assert.deepEqual(f.calls[0].tools,[]);assert.equal(f.calls[0].previous_response_id,undefined);assert.equal(r.native_postcondition_verified,false);assert.equal(r.whole_task_verified,false);
  const output=visualWorkReviewModelOutput({output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{evidence_id:'ev1_after_review'}]})},r,'ev1_after_review');
- const feedback=JSON.parse(output.output).evidence_projections[0].visual_work_review;assert.equal(feedback.baseline.evidence_id,request.recheck_evidence_id);assert.equal(feedback.recheck_evidence_id,'ev1_after_review');assert(Buffer.byteLength(output.output)<=8192);
+ const feedback=readDeliveredReview(output).evidence_projections[0].visual_work_review;assert.equal(feedback.baseline.evidence_id,request.recheck_evidence_id);assert.equal(feedback.recheck_evidence_id,'ev1_after_review');assert(Buffer.byteLength(output.output[0].text)<=8192);
 });
 test('recheck cannot redefine checks or replace a source reference and requires a bounded prior-review identity',()=>{
  assert.deepEqual(normalizeVisualReviewRequest(request),request);assert(VISUAL_WORK_REVIEW_TOOL.parameters.properties.recheck_evidence_id);
@@ -43,6 +43,16 @@ test('recheck includes original source reference separately and never primes wit
  const r=await reviewCurrentWork(request,f.h);assert.equal(r.state,'matched');const content=f.calls[0].input[0].content,data=JSON.parse(content[0].text);assert.equal(content.filter(c=>c.type==='input_image').length,3);assert.equal(data.reference.filename,'office.png');assert(!content[0].text.includes('Prior judgment'));assert.equal(data.baseline.state,undefined);
 });
 
+test('PDF recheck restores retained page crop provenance and exact pixels rather than rereading or replacing the source',async()=>{
+ const f=setup(),sourceRender={source_read_call_id:'call_pdf',attachment_id:'source',source_sha256:'a'.repeat(64),page:2,visual_scope:'region',requested_region:{min_u:0.2,min_v:0.3,max_u:0.5,max_v:0.7}};
+ f.baseline.review.reference={filename:'record.pdf',evidence_id:'ev1_source',content_hash:hash,source_render:sourceRender};
+ f.baseline.reference={filename:'record.pdf',image_url:'data:image/png;base64,'+image,evidence_ref:{evidence_id:'ev1_source',content_hash:hash,byte_count:bytes.length,media_type:'image/png'}};
+ f.h.referenceAttachmentRead=async()=>{throw Error('Recheck must use retained source');};
+ const r=await reviewCurrentWork(request,f.h);assert.equal(r.state,'matched');
+ const data=JSON.parse(f.calls[0].input[0].content[0].text);assert.deepEqual(data.reference.source_render,sourceRender);
+ assert.deepEqual(r.reference.source_render,sourceRender);assert.equal(f.calls.length,1);
+});
+
 test('a plain recheck inherits prior native-target capture mode and effective resolution without an unrelated active-screen fallback',async()=>{
  const f=setup(),sizes=[];f.baseline.review.request.capture_mode='target_view';f.baseline.review.request.image_size=6000;f.baseline.review.capture_resolution={effective_width:5739};f.baseline.review.capture.frame={kind:'native_target_view'};
  f.h.readContext=async()=>{throw Error('Must not substitute current active screen');};
@@ -50,3 +60,5 @@ test('a plain recheck inherits prior native-target capture mode and effective re
  f.h.captureTarget=async(location,args)=>{sizes.push(args.image_size);return{image_base64:image,mime_type:'image/png',native_result:{processId:123,documentSessionId:'doc',projectFingerprint:'project',viewId,viewName:'M002',viewUniqueId:'target-unique',viewType:'DrawingSheet',sheetNumber:'M002',exportMode:'full_view',widthPx:40,heightPx:40,bytes:bytes.length,sha256:hash.slice(7),timestamp:new Date().toISOString(),canonical_attempt_settlement:{method:'POST',path:'/revit/export-image',requested_effect:'read',effect_state:'none'}}};};
  const r=await reviewCurrentWork(request,f.h);assert.equal(r.state,'matched');assert.equal(r.request.capture_mode,'target_view');assert.deepEqual(sizes,[5739,5739]);assert.equal(f.calls.length,1);
 });
+
+function readDeliveredReview(wire){assert(Array.isArray(wire.output));assert.equal(wire.output[0].type,"input_text");assert(wire.output.some(b=>b.type==="input_image"&&b.image_url==="data:image/png;base64,"+image));return JSON.parse(wire.output[0].text);}
