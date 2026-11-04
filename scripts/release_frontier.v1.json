@@ -362,7 +362,9 @@
     "drafting_identity_handler_v2.test.ts",
     "native_change_feedback_budget.test.ts",
     "desktop_native_tools.test.ts",
-    "sidecar_agent_profile.test.ts"
+    "sidecar_agent_profile.test.ts",
+    "task_review_policy.test.ts",
+    "desktop_execution_guidance.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -5368,6 +5370,23 @@
         "javascript:package/operator-assistant-ui/native_code_source.test.mjs",
         "javascript:package/operator-assistant-ui/native_code_review_recovery.test.mjs"
       ]
+    },
+    {
+      "id": "authenticated_single_actor_task_review_preserves_native_control_and_tenant_custody429",
+      "coverage": [
+        "backend:task_review_policy.test.ts",
+        "backend:advisory_verification_policy.test.ts",
+        "backend:desktop_execution_guidance.test.ts",
+        "javascript:package/operator-assistant-ui/checkpoint_followup.test.mjs"
+      ]
+    },
+    {
+      "id": "immutable_reference_validation_precedes_expensive_native_capture429",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/visual_work_review.test.mjs",
+        "javascript:package/operator-assistant-ui/visual_work_review_preparation.test.mjs",
+        "javascript:package/operator-assistant-ui/visual_review_image_provenance.test.mjs"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
@@ -5416,6 +5435,7 @@
     "package/operator-assistant-ui/native_view_activation.test.mjs",
     "package/operator-assistant-ui/native_code_review.test.mjs",
     "package/operator-assistant-ui/native_code_review_recovery.test.mjs",
-    "package/operator-assistant-ui/native_code_source.test.mjs"
+    "package/operator-assistant-ui/native_code_source.test.mjs",
+    "package/operator-assistant-ui/visual_review_image_provenance.test.mjs"
   ]
 }

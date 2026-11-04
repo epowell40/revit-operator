@@ -117,6 +117,30 @@ function host(status='matched'){
  return {h,calls,setOwner:b=>{owner=b;}};
 }
 
+test('unowned PDF reference is rejected before native capture or provider work',async()=>{
+ const source=attachmentReadFixture(),f=host();
+ f.h.referenceAttachmentRead=async selected=>identityReview.resolveAttachmentReviewImage(selected,source);
+ const result=await reviewCurrentWork({...request,reference_attachment_read:{call_id:'none',page:1}},f.h);
+ assert.equal(result.reason,'visual_review_attachment_read_not_owned');
+ assert.equal(f.calls.contexts,0);assert.equal(f.calls.captures,0);assert.equal(f.calls.retained,0);assert.equal(f.calls.providers.length,0);
+});
+
+test('missing named reference is rejected before native capture',async()=>{
+ const f=host();f.h.referenceImage=async()=>null;
+ const result=await reviewCurrentWork({...request,reference_filename:'missing.png'},f.h);
+ assert.equal(result.reason,'visual_review_reference_unavailable');assert.equal(f.calls.contexts,0);assert.equal(f.calls.captures,0);assert.equal(f.calls.providers.length,0);
+});
+
+test('Pause and owner changes still fence early immutable reference resolution',async()=>{
+ for(const kind of ['pause','owner']){
+  const f=host();let reads=0;
+  f.h.referenceImage=async name=>{reads++;f.setOwner({...binding,generation:2});return {filename:name,image_url:'data:image/png;base64,'+image,evidence_ref:{evidence_id:'ev1_reference',content_hash:'sha256:'+'b'.repeat(64)}};};
+  if(kind==='pause')f.h.assertControl=async()=>{throw Error('user_requested_pause');};
+  const result=await reviewCurrentWork({...request,reference_filename:'reference.png'},f.h);
+  assert.equal(result.reason,kind==='pause'?'user_requested_pause':'visual_review_owner_changed');assert.equal(reads,kind==='pause'?0:1);assert.equal(f.calls.contexts,0);assert.equal(f.calls.captures,0);assert.equal(f.calls.providers.length,0);
+ }
+});
+
 test('plan review discovery separates native connections from screen lineweight inspection and printed output',()=>{
  const d=VISUAL_WORK_REVIEW_TOOL.description;
  assert.match(d,/physical connections.*native readback/i);

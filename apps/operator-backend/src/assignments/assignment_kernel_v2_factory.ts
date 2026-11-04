@@ -1,4 +1,5 @@
-import { selectLocalAdvisoryPolicy, trustedLocalExperimentHost } from "./local_advisory_policy.js";
+import { selectLocalAdvisoryPolicy } from "./local_advisory_policy.js";
+import {selectTaskReviewPolicy,trustedTaskExecutionHost} from './task_review_policy.js';
 import type { PdfWorkAllowanceV1 } from "./pdf_work_allowance.js";
 import { createHash } from "node:crypto";
 import { requiresDurableWorkPlan } from "./work_plan_intent.js";
@@ -210,8 +211,9 @@ export function assignmentSpecFromGoalV2(input: Readonly<{
     source_message_id:messageId,source_request_sha256:operationScopeRequestHash(exactSource),scope:structuredClone(intake.operation_scope)
   }:undefined;
   if(interpretedScope&&interpretedScope.scope.requested_effect!==effect)throw Error("assignment_kernel_v2_interpreted_effect_mismatch");
-  const executionPolicy=selectLocalAdvisoryPolicy(binding,process.env,undefined,effect,input.source_work_allowance,
-    interpretedScope?exactSource:input.goal.objective);
+  const executionPolicy=selectTaskReviewPolicy(binding,effect)
+    ??selectLocalAdvisoryPolicy(binding,process.env,undefined,effect,input.source_work_allowance,
+      interpretedScope?exactSource:input.goal.objective);
   const inputVariables = inputs(input.goal,interpretedScope);
   const criterionSpecs = criteria(input.goal);
   const sourceRequiresPlan = effect === "apply" && requiresDurableWorkPlan(interpretedScope ? exactSource : input.goal.objective);
@@ -308,7 +310,7 @@ export function assignmentKernelV2ForBinding(input: Readonly<{
   const goal = getGoal(input.assignment_id);
   const snapshot = goal ? getAssignmentKernelSnapshotV2(goal.id) : null;
   if (!goal || !snapshot) return null;
-  if (snapshot.spec.execution_policy && !trustedLocalExperimentHost()) return null;
+  if (!trustedTaskExecutionHost(snapshot.spec)) return null;
   const requestPrincipalId = getRequestAssignmentPrincipalId();
   if (requestPrincipalId && !requestMatchesAssignmentPrincipalId(
     snapshot.current_binding.principal_id,

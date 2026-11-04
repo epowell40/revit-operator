@@ -37,7 +37,13 @@ export function checkpointDirectionContext(publication, goal) {
   const paused = snapshot.execution_control?.state === "paused";
   const proposal = snapshot.completion_proposal;
   if (!proposal) return { checkpoint: null, paused };
-  if (snapshot.terminal || snapshot.spec.execution_policy?.mode !== "local_advisory_v1"
+  const policy=snapshot.spec.execution_policy;
+  const reviewPolicy=policy?.mode==='local_advisory_v1'
+    ||policy?.mode==='single_actor_review_v1'&&policy.selected_by==='trusted_runtime_host'
+      &&typeof policy.principal_id==='string'&&policy.principal_id.length>0
+      &&policy.principal_id===snapshot.spec.binding.principal_id&&policy.principal_id===snapshot.current_binding.principal_id
+      &&policy.session_id===snapshot.current_binding.session_id&&policy.document_fingerprint===document;
+  if (snapshot.terminal || !reviewPolicy
       || proposal.verified !== false || typeof proposal.review_id !== "string" || !proposal.review_id
       || snapshot.pending_review_ids?.length !== 1 || snapshot.pending_review_ids[0] !== proposal.review_id) {
     throw new Error("This checkpoint cannot accept a follow-up yet. Your draft is retained.");

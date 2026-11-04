@@ -15,6 +15,23 @@ function fixture() {
   return { publication, goal };
 }
 
+test('authenticated task review uses existing follow-up and Resume without enabling resource renewal',()=>{
+ const {publication,goal}=fixture(),s=publication.snapshot;
+ s.spec.binding.principal_id=s.current_binding.principal_id='principal';
+ s.spec.execution_policy={mode:'single_actor_review_v1',selected_by:'trusted_runtime_host',principal_id:'principal',session_id:'conversation',document_fingerprint:'document'};
+ const command={...goal._bindingV2,checkpoint:checkpointDirectionContext(publication,goal).checkpoint};
+ assert.equal(command.checkpoint.review_id,'review');assert.throws(()=>checkpointTools.checkpointResourceRenewalContext(publication,goal));
+ for(const change of [{mode:'other'},{selected_by:'agent'},{principal_id:'foreign'},{session_id:'foreign'},{document_fingerprint:'foreign'}]){
+  const p=structuredClone(publication);Object.assign(p.snapshot.spec.execution_policy,change);assert.throws(()=>checkpointDirectionContext(p,goal));
+ }
+ s.execution_control=goal._executionControl={state:'paused',command_id:'pause'};assert.equal(checkpointDirectionContext(publication,goal).paused,true);assert.equal(checkpointResumeReady(publication,goal,command),false);
+ delete s.execution_control;delete goal._executionControl;delete s.completion_proposal;s.pending_review_ids=[];s.outcome='active';
+ assert.equal(checkpointResumeReady(publication,goal,command),true);
+ for(const change of [{provider_usage_hold:{hold_id:'usage'}},{unresolved_unknown_operation_ids:['unknown']},{in_flight_operation_ids:['pending'],quiescent:false}]){
+  const p=structuredClone(publication);Object.assign(p.snapshot,change);assert.equal(checkpointResumeReady(p,{...goal,_providerUsageHold:p.snapshot.provider_usage_hold},command),false);
+ }
+});
+
 test('explicit resource-renewal button uses the existing exact checkpoint fences and bounded window',()=>{
   assert.equal(typeof checkpointTools.checkpointResourceRenewalContext,'function');
   const {publication,goal}=fixture();publication.snapshot.spec.requested_effect='apply';

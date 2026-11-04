@@ -28,22 +28,8 @@ import {
   getAssignmentKernelSnapshotV2
 } from "./assignment_kernel_v2_store.js";
 
-export const DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2: AssignmentProgressBudgetV2 = Object.freeze({
-  // A continued drawing conversation can have 80k+ cached input tokens per
-  // response. Count actual provider usage, but allow a useful multi-step task.
-  // Identical-operation, no-progress, reconciliation and absolute-call limits
-  // remain independent bounds; explicit caller budgets still take precedence.
-  max_reasoning_turns: 32,
-  max_provider_calls: 32,
-  max_operations: 128,
-  max_equivalent_operations: 1,
-  // Structured PDF interpretation can require more than one distinct schema
-  // correction. Equivalent-operation and absolute-call limits still stop loops.
-  max_no_progress_epochs: 4,
-  max_reconciliation_attempts: 2,
-  max_wall_clock_ms: 30 * 60_000,
-  max_total_tokens: 4_000_000
-});
+import { DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2 } from '../domain/assignment-kernel/progress/contracts.js';
+export { DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2 } from '../domain/assignment-kernel/progress/contracts.js';
 
 function digest(value: unknown): string {
   return createHash("sha256").update(canonicalJsonV2(value), "utf8").digest("hex");

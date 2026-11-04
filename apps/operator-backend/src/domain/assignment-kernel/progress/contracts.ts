@@ -50,6 +50,14 @@ export interface AssignmentProgressBudgetV2 {
   max_total_tokens: number;
 }
 
+/** One ordinary product budget; policy selection does not create an allowance. */
+export const DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2: AssignmentProgressBudgetV2 = Object.freeze({
+  max_reasoning_turns: 32, max_provider_calls: 32, max_operations: 128,
+  max_equivalent_operations: 1, max_no_progress_epochs: 4,
+  max_reconciliation_attempts: 2, max_wall_clock_ms: 30 * 60_000,
+  max_total_tokens: 4_000_000
+});
+
 interface ProgressDecisionBaseV2 {
   schema: typeof PROGRESS_DECISION_V2_SCHEMA;
   assignment_version: number;

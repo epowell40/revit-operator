@@ -22,7 +22,7 @@ import { templateReassignmentV1 } from "../domain/assignment-kernel/template_rea
 import { scheduleFilterRestorationV1 } from '../domain/assignment-kernel/schedule_filter_restoration.js';
 import { documentCheckpointContinuationV2 } from "../domain/assignment-kernel/document_checkpoint.js";
 import { isDetachedFamilyLabelEditV2, nativeDocumentCheckpointResultV2 } from "@revitoperator/assignment-kernel-v2-contracts";
-import { trustedLocalExperimentHost } from "./local_advisory_policy.js";
+import {assertTaskExecutionHost} from './task_review_policy.js';
 import { advisoryVerificationV2 } from "../domain/assignment-kernel/execution_policy.js";
 import { openDuctPostconditionSatisfiedV2 } from "../verification/open_duct_postcondition_v2.js";
 import { existingMepConnectionPostconditionSatisfiedV2 } from "../verification/existing_mep_connection_readback_v2.js";
@@ -348,7 +348,7 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
   if (!snapshot || !sameAssignmentBindingV2(snapshot.current_binding, input.snapshot.current_binding)) {
     throw new Error("assignment_kernel_v2_binding_stale_or_mismatched");
   }
-  if (snapshot.spec.execution_policy && !trustedLocalExperimentHost()) throw new Error("advisory_execution_requires_local_host");
+  assertTaskExecutionHost(snapshot.spec);
   if (snapshot.terminal || snapshot.outcome !== "active") {
     throw new Error("assignment_kernel_v2_operation_admission_after_terminal_outcome");
   }
@@ -575,7 +575,7 @@ export function openAssignmentKernelChildOperationV2(input: Readonly<{
   if (!snapshot || !sameAssignmentBindingV2(snapshot.current_binding, input.binding)) {
     throw new Error("assignment_kernel_v2_binding_stale_or_mismatched");
   }
-  if (snapshot.spec.execution_policy && !trustedLocalExperimentHost()) throw new Error("advisory_execution_requires_local_host");
+  assertTaskExecutionHost(snapshot.spec);
   if (snapshot.terminal || snapshot.outcome !== "active") {
     throw new Error("assignment_kernel_v2_operation_admission_after_terminal_outcome");
   }
