@@ -306,9 +306,45 @@ export function prepareBoundedModelEvidenceInput(input: unknown, budget = getEvi
     if (slot.block === null) output[slot.row] = {...row, output: text};
     else {const content = row.output.slice(); content[slot.block] = {...content[slot.block], text}; output[slot.row] = {...row, output: content};}
   }
-  // No eligible summaries, or metadata alone exceeds the cap. Never raise it,
-  // drop calls/images/controls or silently truncate authoritative evidence.
-  assertBoundedModelEvidencePayload(output, budget); return output;
+  try { assertBoundedModelEvidencePayload(output, budget); return output; }
+  catch (error) {
+    if (!(error instanceof Error) || error.message !== `Projected evidence exceeds the ${budget.request_bytes}-byte model-request budget.`) throw error;
+  }
+  // Several native calls can finish in one response. Their individually bounded
+  // envelopes repeat the same wire header/guidance. Pack adjacent envelopes
+  // within each call before failing the entire drafting task. This moves no
+  // projection, image, error or control across another content block and drops
+  // no native data. Nonzero omission counts/unknown guidance remain untouched.
+  const shortRetrieval = 'operator_retrieve_evidence by evidence_id; raw_payload paths or deterministic_projection literal keys. Honor scope/paging; partial data is not absence/preservation/completion proof.';
+  const knownEnvelope = (block: any): any | null => {
+    if (!object(block) || block.type !== 'input_text' || typeof block.text !== 'string'
+      || !Object.keys(block).every(k => ['type', 'text'].includes(k))) return null;
+    let e: any; try { e = JSON.parse(block.text); } catch { return null; }
+    return object(e) && e.schema === MODEL_EVIDENCE_ENVELOPE_SCHEMA
+      && Object.keys(e).every(k => ['schema', 'evidence_projections', 'omitted', 'retrieval'].includes(k))
+      && e.omitted === 0 && e.retrieval === canonicalRetrieval
+      && Array.isArray(e.evidence_projections) && e.evidence_projections.length > 0
+      ? e : null;
+  };
+  const packed = output.map(row => {
+    if (row?.type !== 'function_call_output' || !Array.isArray(row.output)) return row;
+    const blocks: any[] = [];
+    let adjacent: any | null = null;
+    for (const block of row.output) {
+      const envelope = knownEnvelope(block);
+      if (!envelope) { blocks.push(block); adjacent = null; continue; }
+      if (adjacent) adjacent.evidence_projections.push(...envelope.evidence_projections);
+      else {
+        adjacent = {...envelope, evidence_projections: envelope.evidence_projections.slice(), retrieval: shortRetrieval};
+        blocks.push({type:'input_text', text:''});
+      }
+      blocks[blocks.length - 1] = {type:'input_text', text:JSON.stringify(adjacent)};
+    }
+    return {...row, output:blocks};
+  });
+  // Irreducible/unknown data still fails closed. Keep the existing item/request
+  // caps, all call IDs and per-projection source/hash/scope/retrieval contracts.
+  assertBoundedModelEvidencePayload(packed, budget); return packed;
 }
 
 export function assertBoundedModelEvidencePayload(input: unknown, budget = getEvidenceContextBudget()): ModelEvidencePayloadUsage {
