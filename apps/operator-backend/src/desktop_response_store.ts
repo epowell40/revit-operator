@@ -374,6 +374,51 @@ function uniqueHistoricalPixels(history: any[], fresh: any[]): { input: any[]; o
   return { input, omitted };
 }
 
+/** Bound distinct historical drawing observations, not just identical pixels.
+ * The latest source group and model group stay literal (including every image
+ * in a paired review). All fresh results stay literal. Call/output identities,
+ * text, native metadata, opaque reasoning and the immutable raw journal remain.
+ * This is input packing only: no image digest proves drawing state or absence.
+ */
+function boundedHistoricalVisuals(history: any[], fresh: any[], computer: boolean): { input: any[]; omitted: number } {
+  if (!computer) return { input: history, omitted: 0 };
+  const calls = new Map<string, any>();
+  const groups: { item: any; index: number; kind: 'reference' | 'model'; fresh: boolean }[] = [];
+  for (const [index, item] of [...history, ...fresh].entries()) {
+    if (item?.type === 'function_call' && typeof item.call_id === 'string') calls.set(item.call_id, item);
+    if (item?.type !== 'function_call_output' || !Array.isArray(item.output)) continue;
+    const call = calls.get(item.call_id);
+    const kind = ['native__operator_read_attachment', 'operator_read_attachment'].includes(call?.name) ? 'reference'
+      : call?.name === 'review_current_work' ? 'model' : null;
+    const images = item.output.filter((part: any) => part?.type === 'input_image');
+    // Unknown tools, remote/file identities, malformed blocks and future image
+    // contracts are deliberately not retired by this narrow known-group rule.
+    if (!kind || !images.length || images.some((part: any) => {
+      if (Object.keys(part).some(k => !['type','image_url','detail'].includes(k))
+          || part.detail !== undefined && !['auto','low','high','original'].includes(part.detail)
+          || typeof part.image_url !== 'string') return true;
+      const match = /^data:image\/(?:png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/.exec(part.image_url);
+      return !match || Buffer.from(match[1]!, 'base64').toString('base64') !== match[1];
+    })) continue;
+    groups.push({ item, index, kind, fresh: index >= history.length });
+  }
+  const latest = new Map(groups.map(group => [group.kind, group.index]));
+  const retired = new Map(groups.filter(group => !group.fresh && latest.get(group.kind) !== group.index)
+    .map(group => [group.index, group]));
+  let omitted = 0;
+  const input = history.map((item, index) => !retired.has(index) ? item : { ...item,
+    output: item.output.map((part: any) => {
+      if (part?.type !== 'input_image') return part;
+      omitted++;
+      return { type: 'input_text', text: 'Superseded historical drawing image omitted from live input. Image-part SHA256: '
+        + contextItemHash(part) + '. Original pixels, tool call and source/native metadata remain in retained evidence. '
+        + 'The latest reference and model observation groups remain literal in this input. Re-read the source attachment '
+        + 'or retrieve the corresponding model view if this older region is needed. This digest is not visual proof, '
+        + 'freshness, absence, verification or permission to execute.' };
+    }) });
+  return { input, omitted };
+}
+
 /** Content-free measurements of the actual API envelope, not token estimates
  * or billing. Pixel strings and instructions are hashed/counted, never copied. */
 export function desktopModelInputPackage(body: any) {
@@ -417,7 +462,7 @@ export function prepareDesktopProviderInput(binding: Binding, messageId: unknown
   // This argument is supplied only by the authenticated host producer. A text
   // prefix/schema in caller input is never sufficient to mark or delete it.
   const latestFeedback = hostFeedback(binding, body.input, internal.hostFeedback);
-  let markers: FeedbackMarker[] = [], omittedFeedback = 0, omittedImages = 0, omittedStartupImages = 0;
+  let markers: FeedbackMarker[] = [], omittedFeedback = 0, omittedImages = 0, omittedStartupImages = 0, omittedVisuals = 0;
   let prepared = body;
   if (current.predecessor) {
     const prior = current.predecessor;
@@ -436,7 +481,9 @@ export function prepareDesktopProviderInput(binding: Binding, messageId: unknown
     omittedStartupImages = startup.omitted;
     const retained = startup.input.filter((_item: any, i: number) => !superseded.has(i));
     omittedFeedback = superseded.size;
-    const pixels = uniqueHistoricalPixels(retained, body.input);
+    const visuals = boundedHistoricalVisuals(retained, body.input, Boolean(body.tools?.some((tool: any) => tool?.type === 'computer')));
+    omittedVisuals = visuals.omitted;
+    const pixels = uniqueHistoricalPixels(visuals.input, body.input);
     omittedImages = pixels.omitted;
     if (!latestFeedback) markers = known;
     const input = [...pixels.input, ...body.input];
@@ -456,6 +503,7 @@ export function prepareDesktopProviderInput(binding: Binding, messageId: unknown
     provider_input: providerInput, continuation_transport: providerInput ? 'durable_input_array' : 'previous_response_id',
     feedback_markers: markers, host_feedback_item: latestFeedback,
     context_packing: { superseded_host_snapshots: omittedFeedback, duplicate_historical_images: omittedImages,
+      ...(omittedVisuals ? { superseded_historical_visuals: omittedVisuals } : {}),
       ...(omittedStartupImages ? { superseded_startup_images: omittedStartupImages } : {}) } });
   return prepared;
 }
