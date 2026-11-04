@@ -154,6 +154,11 @@ export const SUPPORTED_STANDALONE_ROUTES: readonly string[] = Object.freeze([
   "POST /revit/dynamic-runtime/run-native-apply-v1",
   "POST /revit/dynamic-runtime/run-native-read-v1"
 ]);
+const standaloneExecutors: Readonly<Record<string, string>> = Object.freeze({
+  "POST /revit/certified/sheets/count": "revit-operator.safe-read-host.v1",
+  "POST /revit/dynamic-runtime/run-native-apply-v1": "revit-operator.native-program-workstation.v1",
+  "POST /revit/dynamic-runtime/run-native-read-v1": "revit-operator.native-program-workstation.v1"
+});
 export const SUPPORTED_MCP_ALIASES: readonly string[] = Object.freeze([
   "operator_discover_capabilities",
   "operator_evaluate_assignment_criteria",
@@ -260,6 +265,7 @@ const standalone = new Set(SUPPORTED_STANDALONE_ROUTES), aliases = new Set(SUPPO
 export function isSupportedNativeTool(method: string, path: string): boolean { return native.has(method + ' ' + path); }
 export function isSupportedToolRoute(method: string, path: string): boolean { return isSupportedNativeTool(method, path) || standalone.has(method + ' ' + path); }
 export function isSupportedNativeTransport(method: string, path: string): boolean { return isSupportedNativeTool(method, path) || internal.has(method + ' ' + path); }
+export function isSupportedStandaloneExecutorTool(method: string, path: string, executorId: string): boolean { return standalone.has(method + ' ' + path) && standaloneExecutors[method + ' ' + path] === executorId; }
 export function isSupportedMcpAlias(alias: string): boolean { return aliases.has(alias); }
 export class UnsupportedProductToolError extends Error {
   readonly code = 'PRODUCT_TOOL_NOT_SUPPORTED'; readonly phase = 'pre_dispatch';

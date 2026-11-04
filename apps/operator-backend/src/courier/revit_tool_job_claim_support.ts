@@ -1,4 +1,4 @@
-import { isSupportedNativeTool } from "../capabilities/supported_tool_inventory.js";
+import { isSupportedNativeTool, isSupportedStandaloneExecutorTool } from "../capabilities/supported_tool_inventory.js";
 import { isRevitCourierDevelopmentLaboratory, RevitCourierCertificationError } from "./revit_tool_job_certification.js";
 
 type ClaimCandidate = {
@@ -15,7 +15,11 @@ export function admitCourierJobClaim(
   legacyVersion: string,
   reject: (error: RevitCourierCertificationError) => void
 ): boolean {
-  if (!isSupportedNativeTool(job.method, job.path)) {
+  // Workstation-owned C# routes are registered standalone executors, not raw
+  // native handlers. Admission and request binding are still checked by the
+  // caller before a job can be claimed.
+  if (!isSupportedNativeTool(job.method, job.path)
+    && !isSupportedStandaloneExecutorTool(job.method, job.path, "revit-operator.native-program-workstation.v1")) {
     // A running operation may already have committed. Do not manufacture a
     // not-dispatched terminal receipt when its route is later withdrawn.
     if (job.status === "pending") reject(new RevitCourierCertificationError(

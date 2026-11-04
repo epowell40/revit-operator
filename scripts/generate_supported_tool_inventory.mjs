@@ -17,6 +17,10 @@ function keys(rows) {
   return result;
 }
 const native = keys(inventory.native_routes), internal = keys(inventory.internal_routes), standalone = keys(inventory.standalone_routes);
+const standaloneExecutors = Object.fromEntries(inventory.standalone_routes.map(row => {
+  if (typeof row.executor_id !== 'string' || !/^[a-z][a-z0-9.-]{0,127}$/.test(row.executor_id)) throw new Error('Invalid standalone executor identity.');
+  return [`${row.method} ${row.path}`, row.executor_id];
+}).sort(([a], [b]) => a.localeCompare(b)));
 const aliases = [...inventory.mcp_aliases].sort();
 if (new Set([...native, ...internal, ...standalone]).size !== native.length + internal.length + standalone.length) throw new Error('Overlapping executor inventory.');
 if (new Set(aliases).size !== aliases.length) throw new Error('Duplicate MCP alias.');
@@ -25,12 +29,14 @@ export const SUPPORTED_TOOL_INVENTORY_HASH = ${JSON.stringify(hash)};
 export const SUPPORTED_NATIVE_ROUTES: readonly string[] = Object.freeze(${JSON.stringify(native, null, 2)});
 export const SUPPORTED_INTERNAL_ROUTES: readonly string[] = Object.freeze(${JSON.stringify(internal, null, 2)});
 export const SUPPORTED_STANDALONE_ROUTES: readonly string[] = Object.freeze(${JSON.stringify(standalone, null, 2)});
+const standaloneExecutors: Readonly<Record<string, string>> = Object.freeze(${JSON.stringify(standaloneExecutors, null, 2)});
 export const SUPPORTED_MCP_ALIASES: readonly string[] = Object.freeze(${JSON.stringify(aliases, null, 2)});
 const native = new Set(SUPPORTED_NATIVE_ROUTES), internal = new Set(SUPPORTED_INTERNAL_ROUTES);
 const standalone = new Set(SUPPORTED_STANDALONE_ROUTES), aliases = new Set(SUPPORTED_MCP_ALIASES);
 export function isSupportedNativeTool(method: string, path: string): boolean { return native.has(method + ' ' + path); }
 export function isSupportedToolRoute(method: string, path: string): boolean { return isSupportedNativeTool(method, path) || standalone.has(method + ' ' + path); }
 export function isSupportedNativeTransport(method: string, path: string): boolean { return isSupportedNativeTool(method, path) || internal.has(method + ' ' + path); }
+export function isSupportedStandaloneExecutorTool(method: string, path: string, executorId: string): boolean { return standalone.has(method + ' ' + path) && standaloneExecutors[method + ' ' + path] === executorId; }
 export function isSupportedMcpAlias(alias: string): boolean { return aliases.has(alias); }
 export class UnsupportedProductToolError extends Error {
   readonly code = 'PRODUCT_TOOL_NOT_SUPPORTED'; readonly phase = 'pre_dispatch';

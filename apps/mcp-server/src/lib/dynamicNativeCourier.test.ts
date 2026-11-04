@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { runNativeProgramViaCourier } from "./dynamicNativeCourier.js";
 import { runWithRevitToolAlias } from "./toolExposurePolicy.js";
+import { isSupportedNativeTransport, isSupportedStandaloneExecutorTool } from "./supportedToolInventory.js";
 
 test("hosted native C# ships source and native scope to the existing target courier, not cloud filesystem commands", () => runWithRevitToolAlias("operator_run_dynamic_revit_program", async () => {
   const prior = { ...process.env };
@@ -13,6 +14,8 @@ test("hosted native C# ships source and native scope to the existing target cour
       let calls=0;
       const result = await runNativeProgramViaCourier(body, mode, "current-operation", (async (path: string, method: string, sent: unknown, options: any) => {
         calls++; assert.equal(path, `/revit/dynamic-runtime/run-native-${mode}-v1`); assert.equal(method,"POST");
+        assert.equal(isSupportedStandaloneExecutorTool(method,path,'revit-operator.native-program-workstation.v1'),true,"The producer must target its registered workstation executor.");
+        assert.equal(isSupportedNativeTransport(method,path),false,"Workstation compilation must not become raw native forwarding.");
         assert.equal(sent,body); assert.equal(options.canonicalOperationId,"current-operation");
         assert.equal(Object.hasOwn(body,"sourceFile"),false); assert.equal(Object.hasOwn(body,"operatorTokenFile"),false);
         return {schema:"operator.native-program-workstation-result.v1",exitCode:0,evidence:{ok:true}};
