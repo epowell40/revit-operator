@@ -5361,6 +5361,13 @@
         "dynamic:NativeProgramCompilerTests",
         "dynamic:NativeCompileTransportTests"
       ]
+    },
+    {
+      "id": "own_native_csharp_source_recovery_survives_compaction_without_provider_or_foreign_read427",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/native_code_source.test.mjs",
+        "javascript:package/operator-assistant-ui/native_code_review_recovery.test.mjs"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
@@ -5406,6 +5413,9 @@
     "package/operator-assistant-ui/mixed_followup_scope_guidance.test.mjs",
     "package/operator-assistant-ui/visual_work_review_preparation.test.mjs",
     "package/operator-assistant-ui/reviewed_inspection_closeout.test.mjs",
-    "package/operator-assistant-ui/native_view_activation.test.mjs"
+    "package/operator-assistant-ui/native_view_activation.test.mjs",
+    "package/operator-assistant-ui/native_code_review.test.mjs",
+    "package/operator-assistant-ui/native_code_review_recovery.test.mjs",
+    "package/operator-assistant-ui/native_code_source.test.mjs"
   ]
 }
