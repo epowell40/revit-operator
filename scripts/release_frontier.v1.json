@@ -1,6 +1,7 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "isolation_lifecycle.test.ts",
     "postedit_preservation_progress.test.ts",
     "pending_inspection_requirements.test.ts",
     "postsave_note_inspection.test.ts",
@@ -5395,6 +5396,14 @@
         "backend:conversation_intake_timing.test.ts",
         "backend:conversation_intake_recovery.test.ts",
         "backend:conversation_intake.test.ts"
+      ]
+    },
+    {
+      "id": "isolation_metadata_probe_preserves_ancestor_custody_and_intake_cleanup435",
+      "coverage": [
+        "backend:isolation_lifecycle.test.ts",
+        "backend:conversation_intake_timing.test.ts",
+        "backend:conversation_intake_recovery.test.ts"
       ]
     }
   ],

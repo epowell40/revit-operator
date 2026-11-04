@@ -7,6 +7,52 @@ import {acquireCodexIsolation,pruneCodexIsolation,CODEX_ISOLATION_RETENTION} fro
 import {prepareCertifiedCodexIsolation} from '../src/codex/config.js';
 import {ModelConversationIntake} from '../src/brains/conversation_intake_model.js';
 
+test('actual isolation preparation tolerates an ancestor disappearing before its metadata observation',async t=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-isolation-metadata-'));
+ const absent=path.join(root,'new-base'),exists=fs.existsSync;
+ // Reproduce a stale existence answer without deleting another process's path.
+ // The atomic metadata observation should see ENOENT and permit mkdir below it.
+ t.mock.method(fs,'existsSync',(p:any)=>path.resolve(String(p))===absent||exists(p));
+ t.mock.method(os,'homedir',()=>root); // Never copy the developer's auth into this fixture.
+ try {
+  const lease=prepareCertifiedCodexIsolation({workspaceRoot:path.join(root,'workspace'),isolationRoot:absent,ephemeral:true});
+  assert.match(fs.readFileSync(path.join(lease.codexHome,'config.toml'),'utf8'),/MCP servers are intentionally absent/);
+  assert(!exists(path.join(lease.codexHome,'auth.json')));
+  await lease.release!();assert(!exists(lease.cwd));
+ } finally {t.mock.restoreAll();fs.rmSync(root,{recursive:true,force:true});}
+});
+
+test('ancestor junctions and metadata permission errors still fail closed',async t=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-isolation-ancestor-'));
+ try {
+  const target=path.join(root,'protected'),alias=path.join(root,'alias');fs.mkdirSync(target);
+  fs.writeFileSync(path.join(target,'keep'),'unchanged');
+  fs.symlinkSync(target,alias,process.platform==='win32'?'junction':'dir');
+  assert.throws(()=>acquireCodexIsolation(path.join(alias,'nested'),'a'.repeat(24)),/reparse_path/);
+  assert.deepEqual(fs.readdirSync(target),['keep']);
+  const stat=fs.lstatSync;
+  t.mock.method(fs,'lstatSync',((p:any,opts:any)=>{
+   if(path.resolve(String(p))===root)throw Object.assign(Error('fixture metadata denied'),{code:'EPERM'});
+   return stat(p,opts);
+  }) as typeof fs.lstatSync);
+  assert.throws(()=>acquireCodexIsolation(path.join(root,'denied'),'b'.repeat(24)),/fixture metadata denied/);
+  assert(!fs.existsSync(path.join(root,'denied')));
+ } finally {t.mock.restoreAll();fs.rmSync(root,{recursive:true,force:true});}
+});
+
+test('closing leases remain protected and release refuses changed ownership',async()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-isolation-owner-'));
+ try {
+  const lease=acquireCodexIsolation(root,'a'.repeat(24)),marker=path.join(lease.root,'isolation.json');
+  const meta=JSON.parse(fs.readFileSync(marker,'utf8'));
+  fs.writeFileSync(marker,JSON.stringify({...meta,closedAt:Date.now()-48*3600_000,closing:true}));
+  assert.equal(pruneCodexIsolation(root,{...CODEX_ISOLATION_RETENTION,maxEntries:0,maxBytes:0}).removed,0);
+  fs.writeFileSync(marker,JSON.stringify({...meta,workspaceHash:'b'.repeat(24)}));
+  await assert.rejects(lease.release(),/release_owner_changed/);
+  assert(fs.existsSync(marker),'an altered lease must not be deleted');
+ } finally {fs.rmSync(root,{recursive:true,force:true});}
+});
+
 test('ephemeral homes clean on release; retained homes keep legacy continuity',async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-isolation-lifecycle-'));
  try {

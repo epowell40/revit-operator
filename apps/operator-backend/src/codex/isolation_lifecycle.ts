@@ -4,7 +4,9 @@ import {randomUUID} from 'node:crypto';
 
 export const CODEX_ISOLATION_RETENTION = {maxAgeMs:24*3600_000,maxEntries:4,maxBytes:512*1024*1024,minFreeBytes:1024*1024*1024} as const;
 type Policy={maxAgeMs:number;maxEntries:number;maxBytes:number;minFreeBytes:number};
-function direct(p:string):void {for(let current=path.resolve(p);;){if(fs.existsSync(current)&&fs.lstatSync(current).isSymbolicLink())throw Error('codex_isolation_reparse_path');const parent=path.dirname(current);if(parent===current)break;current=parent;}}
+// Observe every ancestor once, including absent paths; avoid an exists/stat race
+// and redundant metadata round trips. Permission and other I/O errors still throw.
+function direct(p:string):void {for(let current=path.resolve(p);;){if(fs.lstatSync(current,{throwIfNoEntry:false})?.isSymbolicLink())throw Error('codex_isolation_reparse_path');const parent=path.dirname(current);if(parent===current)break;current=parent;}}
 function child(base:string,p:string):boolean {const r=path.relative(base,p);return !!r&&r!=='..'&&!r.startsWith('..'+path.sep)&&!path.isAbsolute(r);}
 function alive(pid:number):boolean {if(!Number.isSafeInteger(pid)||pid<1)return true;try{process.kill(pid,0);return true;}catch(e:any){return e.code!=='ESRCH';}}
 function size(p:string):number {const st=fs.lstatSync(p);if(st.isSymbolicLink())return 0;if(st.isFile())return st.size;return fs.readdirSync(p).reduce((n,k)=>n+size(path.join(p,k)),0);}
