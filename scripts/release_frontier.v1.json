@@ -364,7 +364,8 @@
     "desktop_native_tools.test.ts",
     "sidecar_agent_profile.test.ts",
     "task_review_policy.test.ts",
-    "desktop_execution_guidance.test.ts"
+    "desktop_execution_guidance.test.ts",
+    "conversation_intake_timing.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -5386,6 +5387,14 @@
         "javascript:package/operator-assistant-ui/visual_work_review.test.mjs",
         "javascript:package/operator-assistant-ui/visual_work_review_preparation.test.mjs",
         "javascript:package/operator-assistant-ui/visual_review_image_provenance.test.mjs"
+      ]
+    },
+    {
+      "id": "intake_timeout_retains_bounded_host_stage_without_authority_or_usage_inference",
+      "coverage": [
+        "backend:conversation_intake_timing.test.ts",
+        "backend:conversation_intake_recovery.test.ts",
+        "backend:conversation_intake.test.ts"
       ]
     }
   ],
