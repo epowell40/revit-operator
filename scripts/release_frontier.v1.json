@@ -143,6 +143,7 @@
     "registered_stage_handoff_http.test.ts",
     "c110_stage_handoff_failure.test.ts",
     "revit_courier_contract.test.ts",
+    "native_csharp_courier_claim.test.ts",
     "dynamic_program_admission.test.ts",
     "codex_instruction_binding.test.ts",
     "codex_app_server_lifecycle.test.ts",
@@ -5348,6 +5349,7 @@
     {
       "id": "first_class_native_csharp_hosted_version_binding",
       "coverage": [
+        "backend:native_csharp_courier_claim.test.ts",
         "backend:desktop_native_tools.test.ts",
         "backend:sidecar_agent_profile.test.ts",
         "mcp:lib/dynamicNativeProgram.test.ts",
