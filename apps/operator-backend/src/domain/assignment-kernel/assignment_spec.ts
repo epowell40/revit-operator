@@ -64,7 +64,7 @@ export interface AssignmentSpecV2 {
   work_plan_required?: boolean;
   /** Host-required desktop scope may be one item. Legacy broad plans default to two. */
   work_plan_min_items?: 1 | 2;
-  execution_policy?: import("./execution_policy.js").LocalAdvisoryExecutionPolicyV1;
+  execution_policy?: import("./execution_policy.js").AssignmentExecutionPolicyV1;
   criteria: readonly AssignmentCriterionSpecV2[];
   input_variables: readonly AssignmentInputVariableV2[];
   work_units: readonly AssignmentWorkUnitSpecV2[];

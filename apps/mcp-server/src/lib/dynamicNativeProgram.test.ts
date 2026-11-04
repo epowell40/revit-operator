@@ -105,6 +105,70 @@ test("authenticated native rollback reports its actual cause without inventing a
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test("authenticated warning rollback exposes bounded native cause to the actor without retry authority", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "native-warning-rollback-"));
+  try {
+    const supervisor = path.join(root, "supervisor.exe"), worker = path.join(root, "worker"), token = path.join(root, "token");
+    fs.writeFileSync(supervisor, "stub"); fs.mkdirSync(worker); fs.writeFileSync(token, "0123456789abcdef");
+    const runtime = { ...env, OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH: supervisor,
+      OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY: worker, OPERATOR_TOKEN_FILE: token };
+    const warning = "Instance origin does not lie on host face. Instance will lose association to host.";
+    const e = fixture("apply", "rolled_back", false), receipt = JSON.parse(e.nativeExecutionReceipt);
+    receipt.error = "Native program inner transaction did not commit: RolledBack";
+    receipt.native_failures = Array.from({ length: 12 }, (_, index) => ({ severity: "warning", message: warning + " ".repeat(index),
+      elementIds: [71], failureDefinitionId: "c4e32a23-52e6-455b-949d-89e0c4eb78ab" }));
+    e.nativeExecutionReceipt = JSON.stringify(receipt); authenticate(e);
+    await runWithAssignmentKernelV2(metadata("apply"), async () => {
+      const result = await runDynamicRevitProgram({ source, mode: "apply", native_program: { entry_type: "Query", allow_create: true,
+        allowed_existing_unique_ids: [], max_affected_elements: 20 } }, runtime, async (_exe, args) => {
+        fs.writeFileSync(JSON.parse(fs.readFileSync(args[1]!, "utf8")).evidencePath, JSON.stringify(e));
+        return { exitCode: 1, stdout: "", stderr: "" };
+      });
+      const visible: any = presentDynamicProgramResult(result);
+      assert.equal(result.canonical_attempt_settlement?.effect_state, "none");
+      assert.equal(visible.native_outcome.native_transaction_state, "rolled_back");
+      assert.equal(visible.native_outcome.task_verified, false);
+      assert.equal(visible.diagnostics.filter((d: any) => d.code === "NATIVE_MODEL_WARNING").length, 6);
+      assert.match(visible.diagnostics.find((d: any) => d.code === "NATIVE_MODEL_WARNING").message, /Instance origin does not lie on host face/);
+      assert.match(visible.diagnostics.find((d: any) => d.code === "NATIVE_FAILURES_OMITTED").message, /6 additional/);
+      assert.equal(result.iteration.retryable, false);
+      assert.deepEqual((result.evidence as RecordValue).nativeExecutionReceipt, e.nativeExecutionReceipt);
+    });
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("warning details cannot override committed or unknown native effects and stay receipt-bound", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "native-warning-effects-"));
+  try {
+    const supervisor = path.join(root, "supervisor.exe"), worker = path.join(root, "worker"), token = path.join(root, "token");
+    fs.writeFileSync(supervisor, "stub"); fs.mkdirSync(worker); fs.writeFileSync(token, "0123456789abcdef");
+    const runtime = { ...env, OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH: supervisor,
+      OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY: worker, OPERATOR_TOKEN_FILE: token };
+    for (const [state, effect] of [["committed", "applied"], ["pending", "unknown"]]) {
+      const e = fixture("apply", state, state === "committed"), receipt = JSON.parse(e.nativeExecutionReceipt);
+      receipt.native_failures = [{ severity: "warning", message: "W".repeat(5000) }, null];
+      e.nativeExecutionReceipt = JSON.stringify(receipt); authenticate(e);
+      await runWithAssignmentKernelV2(metadata("apply"), async () => {
+        const execute = async (_exe: string, args: string[]) => {
+          fs.writeFileSync(JSON.parse(fs.readFileSync(args[1]!, "utf8")).evidencePath, JSON.stringify(e));
+          return { exitCode: state === "committed" ? 0 : 1, stdout: "", stderr: "" };
+        };
+        const input = { source, mode: "apply" as const, native_program: { entry_type: "Query", allow_create: true,
+          allowed_existing_unique_ids: [], max_affected_elements: 20 } };
+        const result = await runDynamicRevitProgram(input, runtime, execute);
+        const visible: any = presentDynamicProgramResult(result);
+        assert.equal(result.canonical_attempt_settlement?.effect_state, effect);
+        assert.equal(visible.diagnostics.find((d: any) => d.code === "NATIVE_MODEL_WARNING").message.length, 1000);
+        assert.match(visible.diagnostics.find((d: any) => d.code === "NATIVE_MODEL_FAILURE").message, /detail unavailable/);
+        assert.doesNotMatch(visible.guidance, /Confirmed rollback/);
+        receipt.native_failures[0].message = "Substituted warning text";
+        e.nativeExecutionReceipt = JSON.stringify(receipt); // Deliberately do not authenticate changed bytes.
+        assert.throws(() => readNativeProgramEvidence(e, sourceHash, "apply", fingerprint), /authenticated receipt/);
+      });
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test("native correction guidance never turns unknown, committed, missing or read outcomes into rollback recovery", () => {
   for (const [mode, state, effect] of [["apply", "unknown", "unknown"], ["apply", "committed", "applied"],
     ["apply", "rolled_back", "unknown"], ["read", "not_started", "none"], ["apply", "not_started", "none"]]) {

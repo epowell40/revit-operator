@@ -18,7 +18,7 @@ export class Archive {
   if(!this.verified.has(h)){const data=this.get(h);assert.equal(data.length,bytes.length);assert.equal(sha(data),h);this.verified.add(h);}return h;
  }
  get(h){const e=this.index.get(h);assert(e&&e.codec==='gzip'&&path.basename(e.pack)===e.pack);const packed=Buffer.alloc(e.length),fd=fs.openSync(path.join(this.store,e.pack),'r');try{assert.equal(fs.readSync(fd,packed,0,e.length,e.offset),e.length);}finally{fs.closeSync(fd);}const raw=zlib.gunzipSync(packed);assert.equal(raw.length,e.bytes);assert.equal(sha(raw),h);return raw;}
- archiveTree(root,{allowedRoots,protectedPaths=[],excludeCredentials=false,remove=false}={}){
+ archiveTree(root,{allowedRoots,protectedPaths=[],excludeCredentials=false,remove=false,beforeRemove}={}){
   root=path.resolve(root);assert(allowedRoots.some(b=>under(b,root)&&path.resolve(b).toLowerCase()!==root.toLowerCase()),'Explicit child of an approved root required');direct(root);
   const protectedHere=protectedPaths.filter(b=>under(root,b)||under(b,root));
   const protectedAt=p=>protectedHere.some(b=>under(b,p));assert(!protectedAt(root),'Protected work');const records=[],dirs=[],todo=[root];
@@ -36,19 +36,39 @@ export class Archive {
   for(const r of records){const p=path.resolve(root,r.p);assert(under(root,p)&&!protectedAt(p));const st=fs.lstatSync(p);assert(!st.isSymbolicLink());assert.equal(st.size,r.bytes);assert.equal(st.mtimeMs,r.mtime);if(r.h)assert(this.verified.has(r.h));}
   const catalog={id,root,manifest:manifestFile,manifestSha256:sha(raw),files:records.length,bytes:records.reduce((a,r)=>a+r.bytes,0),verified:true,removed:false,at:new Date().toISOString()};
   fs.appendFileSync(this.catalog,JSON.stringify(catalog)+'\n');
-  if(remove){direct(root);for(const folder of dirs)assert(!fs.lstatSync(folder).isSymbolicLink());for(const r of records){const p=path.resolve(root,r.p);assert(under(root,p)&&!protectedAt(p));const st=fs.lstatSync(p);assert(!st.isSymbolicLink());assert.equal(st.size,r.bytes);assert.equal(st.mtimeMs,r.mtime);try{fs.unlinkSync(p);}catch(e){if(e.code!=='EPERM')throw e;if(st.nlink>1){catalog.retainedReadonlyHardlinks=(catalog.retainedReadonlyHardlinks??0)+1;continue;}fs.chmodSync(p,0o666);fs.unlinkSync(p);}this.stats.deletedFiles++;this.stats.deletedLogicalBytes+=r.bytes;if(r.credentialCopy)this.stats.credentialsRemoved++;}
+  if(remove){if(beforeRemove!==undefined){assert.equal(typeof beforeRemove,'function');const checked=beforeRemove(manifest);assert(!checked||typeof checked.then!=='function','Removal guard must be synchronous');}direct(root);for(const folder of dirs)assert(!fs.lstatSync(folder).isSymbolicLink());for(const r of records){const p=path.resolve(root,r.p);assert(under(root,p)&&!protectedAt(p));const st=fs.lstatSync(p);assert(!st.isSymbolicLink());assert.equal(st.size,r.bytes);assert.equal(st.mtimeMs,r.mtime);try{fs.unlinkSync(p);}catch(e){if(e.code!=='EPERM')throw e;if(st.nlink>1){catalog.retainedReadonlyHardlinks=(catalog.retainedReadonlyHardlinks??0)+1;continue;}fs.chmodSync(p,0o666);fs.unlinkSync(p);}this.stats.deletedFiles++;this.stats.deletedLogicalBytes+=r.bytes;if(r.credentialCopy)this.stats.credentialsRemoved++;}
    for(const dir of dirs.sort((a,b)=>b.length-a.length))try{fs.rmdirSync(dir);}catch(e){if(!['ENOTEMPTY','EEXIST'].includes(e.code))throw e;}
    catalog.removed=true;catalog.fullyRemoved=!fs.existsSync(root);catalog.at=new Date().toISOString();fs.appendFileSync(this.catalog,JSON.stringify(catalog)+'\n');}
   return catalog;
  }
  close(){fs.fsyncSync(this.fd);fs.fsyncSync(this.idx);fs.closeSync(this.fd);fs.closeSync(this.idx);if(!this.offset)fs.unlinkSync(this.pack);}
 }
-export function restoreFile(store,source,{allowedRoots}={}){
+function restoreMappedFile(source,r,bytes,group){
+ if(fs.existsSync(source)){assert.equal(sha(fs.readFileSync(source)),r.h,'Existing restore target differs');return{source,alreadyPresent:true,sha256:r.h};}
+ fs.mkdirSync(path.dirname(source),{recursive:true});direct(path.dirname(source));const tmp=source+'.restore-'+randomUUID();fs.writeFileSync(tmp,bytes,{flag:'wx'});try{fs.linkSync(tmp,source);}finally{fs.unlinkSync(tmp);}fs.chmodSync(source,r.mode&0o777);fs.utimesSync(source,r.mtime/1000,r.mtime/1000);assert.equal(sha(fs.readFileSync(source)),r.h);return{source,sha256:r.h,bytes:r.bytes,group};
+}
+/** One verified manifest and object index for a complete recovery. Individual
+ * restores remain available; bulk recovery must not parse the whole catalog,
+ * manifest and object index again for each of thousands of small files. */
+export function restoreArchiveGroup(store,group,{allowedRoots}={}){
+ direct(store);assert(group&&typeof group.manifest==='string'&&path.basename(group.manifest)===group.manifest);
+ const catalog=fs.readFileSync(path.join(store,'groups.jsonl'),'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
+ assert(catalog.some(g=>g.verified&&g.id===group.id&&g.root===group.root&&g.manifest===group.manifest&&g.manifestSha256===group.manifestSha256),'Unknown archive group');
+ const raw=zlib.gunzipSync(fs.readFileSync(path.join(store,group.manifest)));assert.equal(sha(raw),group.manifestSha256);const m=JSON.parse(raw),root=path.resolve(m.root);
+ assert.equal(root,path.resolve(group.root));assert(allowedRoots.some(b=>under(b,root)),'Restore outside approved roots');direct(root);
+ const seen=new Set();for(const r of m.records){const target=path.resolve(root,r.p);assert(under(root,target)&&target!==root&&allowedRoots.some(b=>under(b,target)),'Restore outside approved roots');direct(target);assert(!seen.has(target.toLowerCase()),'Duplicate restore path');seen.add(target.toLowerCase());}
+ const archive=new Archive(store);try{
+  for(const r of m.records)if(!r.credentialCopy){assert(Number.isSafeInteger(r.bytes)&&r.bytes>=0);assert.equal(archive.get(r.h).length,r.bytes);const target=path.resolve(root,r.p);if(fs.existsSync(target))assert.equal(sha(fs.readFileSync(target)),r.h,'Existing restore target differs');}
+  let files=0,bytes=0;for(const r of m.records){if(r.credentialCopy)continue;restoreMappedFile(path.resolve(root,r.p),r,archive.get(r.h),group.id);files++;bytes+=r.bytes;}
+  return{group:group.id,root,files,bytes,credentialsRestored:false};
+ }finally{archive.close();}
+}
+export function restoreFile(store,source,{allowedRoots,groupId}={}){
  source=path.resolve(source);assert(allowedRoots.some(b=>under(b,source)),'Restore outside approved roots');direct(source);
- const groups=fs.readFileSync(path.join(store,'groups.jsonl'),'utf8').trim().split('\n').filter(Boolean).map(JSON.parse).filter(g=>under(g.root,source)).reverse();
+ if(groupId!==undefined)assert(typeof groupId==='string'&&/^[a-f0-9]{24}-\d{10,20}$/.test(groupId),'Exact archive group identity required');
+ const groups=fs.readFileSync(path.join(store,'groups.jsonl'),'utf8').trim().split('\n').filter(Boolean).map(JSON.parse).filter(g=>under(g.root,source)&&(groupId===undefined||g.id===groupId)).reverse();
  for(const group of groups){const raw=zlib.gunzipSync(fs.readFileSync(path.join(store,group.manifest)));assert.equal(sha(raw),group.manifestSha256);const m=JSON.parse(raw),r=m.records.find(x=>path.resolve(m.root,x.p).toLowerCase()===source.toLowerCase());if(!r)continue;if(r.credentialCopy)throw Error('Expired credential copies are intentionally not archived');
   const index=new Map(fs.readFileSync(path.join(store,'objects.jsonl'),'utf8').trim().split('\n').filter(Boolean).map(l=>{const x=JSON.parse(l);return[x.h,x];})),e=index.get(r.h);assert(e&&path.basename(e.pack)===e.pack);const b=Buffer.alloc(e.length),fd=fs.openSync(path.join(store,e.pack),'r');try{assert.equal(fs.readSync(fd,b,0,b.length,e.offset),b.length);}finally{fs.closeSync(fd);}const bytes=zlib.gunzipSync(b);assert.equal(bytes.length,r.bytes);assert.equal(sha(bytes),r.h);
-  if(fs.existsSync(source)){assert.equal(sha(fs.readFileSync(source)),r.h,'Existing restore target differs');return {source,alreadyPresent:true,sha256:r.h};}
-  fs.mkdirSync(path.dirname(source),{recursive:true});direct(path.dirname(source));const tmp=source+'.restore-'+randomUUID();fs.writeFileSync(tmp,bytes,{flag:'wx'});try{fs.linkSync(tmp,source);}finally{fs.unlinkSync(tmp);}fs.chmodSync(source,r.mode&0o777);fs.utimesSync(source,r.mtime/1000,r.mtime/1000);assert.equal(sha(fs.readFileSync(source)),r.h);return{source,sha256:r.h,bytes:r.bytes,group:group.id};
+  return restoreMappedFile(source,r,bytes,group.id);
  }throw Error('No archived mapping for '+source);
 }

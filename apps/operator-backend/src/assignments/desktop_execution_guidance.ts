@@ -10,6 +10,8 @@ import {projectDraftingFrontier} from './drafting_frontier.js';
 export function desktopNativeInitialContext(snapshot:AssignmentSnapshotV2):string {
  const frontier=projectDraftingFrontier(snapshot);
  const context={assignment_version:snapshot.assignment_version,requested_effect:snapshot.spec.requested_effect,
+  verification_policy:advisoryVerificationV2(snapshot)?'agent_report_pending_independent_review':'strict_native',
+  execution_policy:snapshot.spec.execution_policy?.mode??null,
   work_plan_required:!advisoryVerificationV2(snapshot)&&snapshot.spec.work_plan_required===true,work_plan_declared:Boolean(snapshot.work_plan),
   declared_items:snapshot.work_plan?.items.length??0,...(frontier?{drafting_frontier:frontier}:{}),
   resume_regions:(snapshot.work_plan?.items??[]).filter(i=>i.location_history?.at(-1)?.drafting)
@@ -20,6 +22,7 @@ export function desktopNativeInitialContext(snapshot:AssignmentSnapshotV2):strin
    ?'Declare the compact requested scope once alongside needed independent reads; no separate status request is needed just to discover that no plan exists. '
    :context.work_plan_declared?'Use the existing plan; request its current details only if needed. ':'')
   +'Later tool/control results supersede this snapshot. It is not native model data or write authority. '
+  +(advisoryVerificationV2(snapshot)?'Continue useful authorized work within the frozen host budget. Keep lightweight progress and source/model checks; finish with report_work_for_review, retaining completed, remaining and uncertain work. A checklist claim or successful program is not completion; the report requests independent review. ':'')
   +'On recovery reopen the saved reference crop and corresponding model region; reconcile linked elements and interrupted work before editing. Never replay construction merely because provider context was compacted or unavailable.';
 }
 export const DESKTOP_EXECUTION_EFFICIENCY_GUIDANCE = [

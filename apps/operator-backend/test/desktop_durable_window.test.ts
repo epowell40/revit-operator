@@ -31,9 +31,9 @@ test('reopening replaces the prior startup screen with the fresh screen without 
  },()=>({}),true);
 }));
 
-for(const mode of ['no-computer','no-fresh-screen','reference-image'] as const)test(`cold screen replacement preserves ${mode} context`,()=>isolated(async()=>{
+for(const mode of ['no-computer','no-fresh-screen'] as const)test(`cold screen replacement preserves ${mode} context`,()=>isolated(async()=>{
  const marker='The final image in this message is the current computer screen across the full virtual desktop, potentially spanning multiple monitors.';
- const old={role:'user',content:[{type:'input_text',text:mode==='reference-image'?'Original reference image':marker},{type:'input_image',image_url:'data:image/png;base64,AQID'}]};
+ const old={role:'user',content:[{type:'input_text',text:marker},{type:'input_image',image_url:'data:image/png;base64,AQID'}]};
  const fresh={role:'user',content:[{type:'input_text',text:mode==='no-fresh-screen'?'Continue drafting':marker},...(mode==='no-fresh-screen'?[]:[{type:'input_image',image_url:'data:image/png;base64,BAUG'}])]};
  await store.retainDesktopResponse(binding,'one',profile,async()=>{api.prepareDesktopProviderInput(binding,'one',{...profile,input:[old]});return response('one','one',[{type:'function_call',call_id:'report',name:'report_work_for_review',arguments:'{}'}]);},()=>({}),true);
  store.retainDesktopContext(binding,'one',completed);

@@ -1,6 +1,7 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "isolation_lifecycle.test.ts",
     "postedit_preservation_progress.test.ts",
     "pending_inspection_requirements.test.ts",
     "postsave_note_inspection.test.ts",
@@ -362,7 +363,10 @@
     "drafting_identity_handler_v2.test.ts",
     "native_change_feedback_budget.test.ts",
     "desktop_native_tools.test.ts",
-    "sidecar_agent_profile.test.ts"
+    "sidecar_agent_profile.test.ts",
+    "task_review_policy.test.ts",
+    "desktop_execution_guidance.test.ts",
+    "conversation_intake_timing.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -5361,6 +5365,46 @@
         "dynamic:NativeProgramCompilerTests",
         "dynamic:NativeCompileTransportTests"
       ]
+    },
+    {
+      "id": "own_native_csharp_source_recovery_survives_compaction_without_provider_or_foreign_read427",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/native_code_source.test.mjs",
+        "javascript:package/operator-assistant-ui/native_code_review_recovery.test.mjs"
+      ]
+    },
+    {
+      "id": "authenticated_single_actor_task_review_preserves_native_control_and_tenant_custody429",
+      "coverage": [
+        "backend:task_review_policy.test.ts",
+        "backend:advisory_verification_policy.test.ts",
+        "backend:desktop_execution_guidance.test.ts",
+        "javascript:package/operator-assistant-ui/checkpoint_followup.test.mjs"
+      ]
+    },
+    {
+      "id": "immutable_reference_validation_precedes_expensive_native_capture429",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/visual_work_review.test.mjs",
+        "javascript:package/operator-assistant-ui/visual_work_review_preparation.test.mjs",
+        "javascript:package/operator-assistant-ui/visual_review_image_provenance.test.mjs"
+      ]
+    },
+    {
+      "id": "intake_timeout_retains_bounded_host_stage_without_authority_or_usage_inference",
+      "coverage": [
+        "backend:conversation_intake_timing.test.ts",
+        "backend:conversation_intake_recovery.test.ts",
+        "backend:conversation_intake.test.ts"
+      ]
+    },
+    {
+      "id": "isolation_metadata_probe_preserves_ancestor_custody_and_intake_cleanup435",
+      "coverage": [
+        "backend:isolation_lifecycle.test.ts",
+        "backend:conversation_intake_timing.test.ts",
+        "backend:conversation_intake_recovery.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
@@ -5406,6 +5450,10 @@
     "package/operator-assistant-ui/mixed_followup_scope_guidance.test.mjs",
     "package/operator-assistant-ui/visual_work_review_preparation.test.mjs",
     "package/operator-assistant-ui/reviewed_inspection_closeout.test.mjs",
-    "package/operator-assistant-ui/native_view_activation.test.mjs"
+    "package/operator-assistant-ui/native_view_activation.test.mjs",
+    "package/operator-assistant-ui/native_code_review.test.mjs",
+    "package/operator-assistant-ui/native_code_review_recovery.test.mjs",
+    "package/operator-assistant-ui/native_code_source.test.mjs",
+    "package/operator-assistant-ui/visual_review_image_provenance.test.mjs"
   ]
 }

@@ -187,6 +187,24 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
     message: String(nativeEvidence.receipt.error ?? "Native execution failed; inspect retained transaction outcome.").slice(0, 2000),
     phase: "native", severity: "error", repair_action: "inspect_native_outcome_before_correction", line: null, column: null,
     end_line: null, end_column: null, step_id: null, assertion_id: null, retryable: false });
+  // Only the authenticated native receipt supplies model warnings. Preserve
+  // the full receipt and expose a bounded cause so source correction does not
+  // require rediscovering a modal that the unattended host rolled back.
+  if (nativeEvidence && Array.isArray(nativeEvidence.receipt.native_failures)) {
+    const failures = nativeEvidence.receipt.native_failures;
+    for (const value of failures.slice(0, 6)) {
+      const failure = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+      const warning = failure.severity === "warning", message = typeof failure.message === "string" ? failure.message : "Native failure detail unavailable; inspect retained receipt.";
+      structuredDiagnostics.push({ code: warning ? "NATIVE_MODEL_WARNING" : "NATIVE_MODEL_FAILURE",
+        message: message.slice(0, 1000), phase: "native", severity: warning ? "warning" : "error",
+        repair_action: "inspect_native_outcome_before_correction", line: null, column: null,
+        end_line: null, end_column: null, step_id: null, assertion_id: null, retryable: false });
+    }
+    if (failures.length > 6) structuredDiagnostics.push({ code: "NATIVE_FAILURES_OMITTED",
+      message: `${failures.length - 6} additional native failure details remain in the authenticated retained receipt.`,
+      phase: "native", severity: "info", repair_action: "inspect_native_outcome_before_correction", line: null, column: null,
+      end_line: null, end_column: null, step_id: null, assertion_id: null, retryable: false });
+  }
   const stepPlan = executionStepPlan(evidence);
   const iteration = createIterationReceipt({ runId, sourceHash, requestedMode: input.mode,
     lane: native ? "native" : resultReference ? "result_reference" : "legacy", executionStatus, evidenceSha256,

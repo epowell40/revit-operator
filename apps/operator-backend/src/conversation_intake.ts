@@ -3,6 +3,7 @@ import { appendEvent, getConversationHistory, getConversationTurn, latestMessage
 import { appendMessage } from "./session_store.js";
 import { conversationDisplay } from "./conversation_history.js";
 import { createHash } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import { IDENTITY_FIELDS, QUESTION_KINDS, renderIdentityAnswer, type IdentityField } from "./conversation_identity_answer.js";
 import { OPERATION_SCOPE_JSON_SCHEMA, operationScopeIssues, validOperationScope, type OperationScopeIssue, type InterpretedOperationScopeV1 } from "./domain/assignment-kernel/operation_scope.js";
 
@@ -27,8 +28,14 @@ export type IntakeInput = {
   ui_observation: ReturnType<typeof compactUiObservation>;
   attachment_count?: number;
 };
+// Internal host diagnostics only. Never model input, routing evidence or usage.
+export const INTAKE_HOST_PHASES=["preparing_input","requesting_response","response_received","awaiting_previous_close",
+  "preparing_isolation","creating_client","starting_client","starting_thread","starting_turn","waiting_for_model",
+  "decoding_decision","decision_decoded"] as const;
+export type IntakeHostPhase=typeof INTAKE_HOST_PHASES[number];
+export type IntakePhaseObserver=(phase:IntakeHostPhase)=>void;
 export interface ConversationIntakeInterpreter {
-  interpret(input: IntakeInput, signal: AbortSignal, correction?:IntakeCorrection): Promise<{value:unknown; telemetry?:Record<string, unknown>; acknowledge?:()=>void}>;
+  interpret(input: IntakeInput, signal: AbortSignal, correction?:IntakeCorrection, observePhase?:IntakePhaseObserver): Promise<{value:unknown; telemetry?:Record<string, unknown>; acknowledge?:()=>void}>;
 }
 export type IntakeCorrection={attempt:2;rejection:{candidate:BoundedIntakeValue;issues:OperationScopeIssue[]}};
 export type BoundedIntakeValue={json:string;byte_count:number;sha256:string;truncated:boolean};
@@ -200,6 +207,16 @@ export async function routeConversation(body:Partial<ChatRequest>&Record<string,
   if(!appendEvent(sessionId,"assistant","conversation.intake",{message_id:messageId,request_sha256:requestHash,
     attachment_count:attachments,state:"pending",accepted:false,decision:null}))throw Error("Conversation classification could not be saved.");
   const start=Date.now(),expiresAt=start+(options.timeoutMs??30_000),controller=new AbortController();
+  const clockStart=performance.now(),phases:Array<{attempt:number;phase:IntakeHostPhase;elapsed_ms:number}>=[];
+  let routingClosed=false,phaseAttempt=1,phaseCount=0,lastPhase:IntakeHostPhase|null=null;
+  const observePhase:IntakePhaseObserver=phase=>{
+    if(routingClosed||controller.signal.aborted||Date.now()>=expiresAt||!INTAKE_HOST_PHASES.includes(phase))return;
+    lastPhase=phase;phaseCount++;
+    if(phases.length<24)phases.push({attempt:phaseAttempt,phase,elapsed_ms:Math.round((performance.now()-clockStart)*1000)/1000});
+  };
+  const hostTiming=()=>({schema:"operator.intake-host-timing/v1",clock:"host_monotonic_elapsed_ms",entries:[...phases],
+    elapsed_ms:Math.round((performance.now()-clockStart)*1000)/1000,last_phase:lastPhase,
+    observed_count:phaseCount,dropped_count:phaseCount-phases.length,provider_usage:"not_established_by_host_timing"});
   const checkDeadline=()=>{
     if(Date.now()>=expiresAt&&!controller.signal.aborted)controller.abort(Error("Conversation intake timed out"));
     controller.signal.throwIfAborted();
@@ -229,9 +246,10 @@ export async function routeConversation(body:Partial<ChatRequest>&Record<string,
     let correction:IntakeCorrection|undefined;
     for(const attempt of [1,2] as const){
       checkDeadline();
+      phaseAttempt=attempt;
       // Exceptions (including transport/auth/quota/parse/tool failures) leave
       // through the outer catch. Only a returned, rejected value is correctable.
-      const result=await Promise.race([interpreter.interpret(input,controller.signal,correction),deadline]);
+      const result=await Promise.race([interpreter.interpret(input,controller.signal,correction,observePhase),deadline]);
       checkDeadline();
       const issues=intakeDecisionIssues(result.value,input);
       checkDeadline();
@@ -239,7 +257,7 @@ export async function routeConversation(body:Partial<ChatRequest>&Record<string,
         const rejection={candidate:boundedIntakeValue(result.value),issues};
         if(!appendEvent(sessionId,"assistant","conversation.intake",{message_id:messageId,request_sha256:requestHash,elapsed_ms:Date.now()-start,
           attachment_count:attachments,attempt,state:attempt===1?"rejected":"unavailable",decision:null,accepted:false,
-          rejection,telemetry:boundedIntakeValue(result.telemetry??null)}))throw Error("Conversation intake rejection could not be saved");
+          rejection,telemetry:boundedIntakeValue(result.telemetry??null),host_timing:hostTiming()}))throw Error("Conversation intake rejection could not be saved");
         // An ephemeral provider binding is released only after its rejected
         // value and validator diagnostics are durable. Rejection grants nothing.
         result.acknowledge?.();checkDeadline();
@@ -248,7 +266,7 @@ export async function routeConversation(body:Partial<ChatRequest>&Record<string,
       }
       const decision=result.value as IntakeDecision;
       if(!appendEvent(sessionId,"assistant","conversation.intake",{message_id:messageId,request_sha256:requestHash,elapsed_ms:Date.now()-start,
-        attachment_count:attachments,attempt,state:"accepted",decision,telemetry:result.telemetry??null,accepted:true}))throw Error("Conversation intake receipt could not be saved");
+        attachment_count:attachments,attempt,state:"accepted",decision,telemetry:result.telemetry??null,accepted:true,host_timing:hostTiming()}))throw Error("Conversation intake receipt could not be saved");
       checkDeadline();result.acknowledge?.();checkDeadline();
       if(decision.route!=="answer")return {...handoff,route:decision.route};
       if(!previous.some(row=>row.role==="user"))appendMessage(sessionId,{role:"user",text:userText},
@@ -261,10 +279,10 @@ export async function routeConversation(body:Partial<ChatRequest>&Record<string,
     return unavailable;
   } catch(error) {
     try {appendEvent(sessionId,"assistant","conversation.intake",{message_id:messageId,request_sha256:requestHash,elapsed_ms:Date.now()-start,
-      attachment_count:attachments,state:options.signal?.aborted?"cancelled":"unavailable",accepted:false,decision:null});}catch{}
+      attachment_count:attachments,state:options.signal?.aborted?"cancelled":"unavailable",accepted:false,decision:null,host_timing:hostTiming()});}catch{}
     if(options.signal?.aborted)throw error;
     try {appendEvent(sessionId,"assistant","conversation.intake.fallback",{message_id:messageId,elapsed_ms:Date.now()-start,
       reason:error instanceof Error?error.message.slice(0,500):"intake_unavailable"});}catch{}
     return unavailable;
-  } finally {clearTimeout(timer);clearTimeout(softTimer);controller.signal.removeEventListener("abort",rejectAborted);options.signal?.removeEventListener("abort",abort);}
+  } finally {routingClosed=true;clearTimeout(timer);clearTimeout(softTimer);controller.signal.removeEventListener("abort",rejectAborted);options.signal?.removeEventListener("abort",abort);}
 }

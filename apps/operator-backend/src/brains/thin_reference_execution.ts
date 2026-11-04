@@ -1,5 +1,5 @@
 import { assignmentDirections } from "../assignments/task_steering.js";
-import { trustedLocalExperimentHost } from "../assignments/local_advisory_policy.js";
+import {assertTaskExecutionHost} from '../assignments/task_review_policy.js';
 import { getAssignmentKernelSnapshotV2 } from "../assignments/assignment_kernel_v2_store.js";
 import { DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2 } from "../assignments/assignment_kernel_v2_progress.js";
 import { defaultAssignmentWorkBudgetV2 } from "../assignments/assignment_work_allowance_v2.js";
@@ -50,7 +50,7 @@ export function localThinReferenceLimits(
   const retained = req.assignment_id ? getAssignmentKernelSnapshotV2(req.assignment_id) : null;
   const policy = retained?.spec.execution_policy;
   if (policy) {
-    if (!trustedLocalExperimentHost(env, context)) throw new Error("advisory_execution_requires_local_host");
+    assertTaskExecutionHost(retained!.spec,env,context);
     if (retained!.current_binding.session_id !== req.session_id
         || retained!.current_binding.run_id !== req.assignment_run_id || retained!.current_binding.generation !== req.assignment_generation) return null;
     return { max_turns: policy.max_turns, max_wall_ms: policy.max_wall_clock_ms };

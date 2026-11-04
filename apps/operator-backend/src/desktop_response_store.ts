@@ -283,22 +283,27 @@ function assertWindowImages(input: unknown): void {
  * when its literal window exists, the provider receives input-array chaining.
  * Missing legacy windows keep the supported cursor route, never reconstructed
  * images or a fabricated compaction. No network recovery or hidden retry. */
-// A cold computer-tool request may carry only one top-level screen image.
-// Supersede only the host's earlier startup-screen blocks when this request
-// supplies a fresh one. Literal reference/model tool-image pairs stay intact;
-// the original pixels remain in the immutable response journal/evidence.
-function supersededDesktopScreens(window: any[], body: any): any[] {
-  const isScreen = (item: any) => item?.role === 'user' && Array.isArray(item.content)
-    && item.content.filter((c: any) => c?.type === 'input_image').length === 1
-    && item.content.some((c: any) => c?.type === 'input_text' && typeof c.text === 'string'
-      && c.text.startsWith('The final image in this message is the current computer screen across the full virtual desktop,'));
+// Cold computer replay must not append a new startup image to historical
+// top-level user pixels (including inline references, not just desktop screens).
+// Retire only those historical pixels from the live window; keep the original
+// attachment text, literal tool-image pairs and immutable raw journals intact.
+function supersededStartupImages(window: any[], body: any): { input: any[]; omitted: number } {
+  const hasUserImage = (item: any) => item?.role === 'user' && Array.isArray(item.content)
+    && item.content.some((c: any) => c?.type === 'input_image');
   if (!body.tools?.some((t: any) => t?.type === 'computer') || !Array.isArray(body.input)
-      || !body.input.some(isScreen)) return window;
-  return window.map(item => !isScreen(item) ? item : { ...item, content: item.content.map((part: any) =>
-    part?.type !== 'input_image' ? part : { type: 'input_text', text:
-      'Historical desktop screenshot omitted from replay because this request supplies a fresh screen. '
-      + 'Original image SHA256: ' + createHash('sha256').update(canonicalJsonV2(part)).digest('hex')
-      + '. Raw pixels and evidence remain retained; this is not current visual proof. Refresh a focused view if needed.' }) });
+      || !body.input.some(hasUserImage)) return { input: window, omitted: 0 };
+  assertWindowImages(window); // Retirement must not hide malformed image identities.
+  let omitted = 0;
+  const input = window.map(item => !hasUserImage(item) ? item : { ...item, content: item.content.map((part: any) => {
+    if (part?.type !== 'input_image') return part;
+    omitted++;
+    return { type: 'input_text', text:
+      'Historical desktop screenshot or inline reference image omitted from replay because this request supplies a fresh screen/image input. '
+      + 'Original image-input SHA256: ' + createHash('sha256').update(canonicalJsonV2(part)).digest('hex')
+      + '. Original pixels, source attachment references and raw evidence remain retained. This digest is not visual proof. '
+      + 'Re-read the retained source attachment or retrieve a focused current model view when those pixels are needed; do not infer image details from this placeholder.' };
+  }) });
+  return { input, omitted };
 }
 
 type FeedbackMarker = { index: number; sha256: string };
@@ -369,6 +374,51 @@ function uniqueHistoricalPixels(history: any[], fresh: any[]): { input: any[]; o
   return { input, omitted };
 }
 
+/** Bound distinct historical drawing observations, not just identical pixels.
+ * The latest source group and model group stay literal (including every image
+ * in a paired review). All fresh results stay literal. Call/output identities,
+ * text, native metadata, opaque reasoning and the immutable raw journal remain.
+ * This is input packing only: no image digest proves drawing state or absence.
+ */
+function boundedHistoricalVisuals(history: any[], fresh: any[], computer: boolean): { input: any[]; omitted: number } {
+  if (!computer) return { input: history, omitted: 0 };
+  const calls = new Map<string, any>();
+  const groups: { item: any; index: number; kind: 'reference' | 'model'; fresh: boolean }[] = [];
+  for (const [index, item] of [...history, ...fresh].entries()) {
+    if (item?.type === 'function_call' && typeof item.call_id === 'string') calls.set(item.call_id, item);
+    if (item?.type !== 'function_call_output' || !Array.isArray(item.output)) continue;
+    const call = calls.get(item.call_id);
+    const kind = ['native__operator_read_attachment', 'operator_read_attachment'].includes(call?.name) ? 'reference'
+      : call?.name === 'review_current_work' ? 'model' : null;
+    const images = item.output.filter((part: any) => part?.type === 'input_image');
+    // Unknown tools, remote/file identities, malformed blocks and future image
+    // contracts are deliberately not retired by this narrow known-group rule.
+    if (!kind || !images.length || images.some((part: any) => {
+      if (Object.keys(part).some(k => !['type','image_url','detail'].includes(k))
+          || part.detail !== undefined && !['auto','low','high','original'].includes(part.detail)
+          || typeof part.image_url !== 'string') return true;
+      const match = /^data:image\/(?:png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/.exec(part.image_url);
+      return !match || Buffer.from(match[1]!, 'base64').toString('base64') !== match[1];
+    })) continue;
+    groups.push({ item, index, kind, fresh: index >= history.length });
+  }
+  const latest = new Map(groups.map(group => [group.kind, group.index]));
+  const retired = new Map(groups.filter(group => !group.fresh && latest.get(group.kind) !== group.index)
+    .map(group => [group.index, group]));
+  let omitted = 0;
+  const input = history.map((item, index) => !retired.has(index) ? item : { ...item,
+    output: item.output.map((part: any) => {
+      if (part?.type !== 'input_image') return part;
+      omitted++;
+      return { type: 'input_text', text: 'Superseded historical drawing image omitted from live input. Image-part SHA256: '
+        + contextItemHash(part) + '. Original pixels, tool call and source/native metadata remain in retained evidence. '
+        + 'The latest reference and model observation groups remain literal in this input. Re-read the source attachment '
+        + 'or retrieve the corresponding model view if this older region is needed. This digest is not visual proof, '
+        + 'freshness, absence, verification or permission to execute.' };
+    }) });
+  return { input, omitted };
+}
+
 /** Content-free measurements of the actual API envelope, not token estimates
  * or billing. Pixel strings and instructions are hashed/counted, never copied. */
 export function desktopModelInputPackage(body: any) {
@@ -412,7 +462,7 @@ export function prepareDesktopProviderInput(binding: Binding, messageId: unknown
   // This argument is supplied only by the authenticated host producer. A text
   // prefix/schema in caller input is never sufficient to mark or delete it.
   const latestFeedback = hostFeedback(binding, body.input, internal.hostFeedback);
-  let markers: FeedbackMarker[] = [], omittedFeedback = 0, omittedImages = 0;
+  let markers: FeedbackMarker[] = [], omittedFeedback = 0, omittedImages = 0, omittedStartupImages = 0, omittedVisuals = 0;
   let prepared = body;
   if (current.predecessor) {
     const prior = current.predecessor;
@@ -427,9 +477,13 @@ export function prepareDesktopProviderInput(binding: Binding, messageId: unknown
       throw Error('desktop_context_window_predecessor_mismatch');
     const known = feedbackMarkers(prior.window, prior.feedback_markers);
     const superseded = new Set(latestFeedback ? known.map(x => x.index) : []);
-    const retained = supersededDesktopScreens(prior.window, body).filter((_item: any, i: number) => !superseded.has(i));
+    const startup = supersededStartupImages(prior.window, body);
+    omittedStartupImages = startup.omitted;
+    const retained = startup.input.filter((_item: any, i: number) => !superseded.has(i));
     omittedFeedback = superseded.size;
-    const pixels = uniqueHistoricalPixels(retained, body.input);
+    const visuals = boundedHistoricalVisuals(retained, body.input, Boolean(body.tools?.some((tool: any) => tool?.type === 'computer')));
+    omittedVisuals = visuals.omitted;
+    const pixels = uniqueHistoricalPixels(visuals.input, body.input);
     omittedImages = pixels.omitted;
     if (!latestFeedback) markers = known;
     const input = [...pixels.input, ...body.input];
@@ -448,7 +502,9 @@ export function prepareDesktopProviderInput(binding: Binding, messageId: unknown
   replaceContext(binding, { ...current, model: body.model, reasoning_effort: body.reasoning_effort,
     provider_input: providerInput, continuation_transport: providerInput ? 'durable_input_array' : 'previous_response_id',
     feedback_markers: markers, host_feedback_item: latestFeedback,
-    context_packing: { superseded_host_snapshots: omittedFeedback, duplicate_historical_images: omittedImages } });
+    context_packing: { superseded_host_snapshots: omittedFeedback, duplicate_historical_images: omittedImages,
+      ...(omittedVisuals ? { superseded_historical_visuals: omittedVisuals } : {}),
+      ...(omittedStartupImages ? { superseded_startup_images: omittedStartupImages } : {}) } });
   return prepared;
 }
 /** Host transport state only. Retaining completed outputs proves no model work,

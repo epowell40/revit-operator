@@ -1,6 +1,7 @@
 import type { AssignmentSpecV2 } from "./assignment_spec.js";
 import type { AssignmentSnapshotV2 } from "./snapshot.js";
 import {utf8TextSha256V2} from './canonical.js';
+import {DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2} from './progress/contracts.js';
 
 export type PdfWorkAllowanceV1 = {
   mode: "marked_pdf_sheets_v1";
@@ -40,6 +41,15 @@ export interface LocalAdvisoryExecutionPolicyV1 {
   };
 }
 
+/** Product selection is explicit and separately authenticated. Legacy local
+ * experiment provenance must never be relabelled as authenticated product work. */
+export interface SingleActorReviewExecutionPolicyV1 extends Omit<LocalAdvisoryExecutionPolicyV1,'mode'|'selected_by'> {
+  mode: 'single_actor_review_v1';
+  selected_by: 'trusted_runtime_host';
+  principal_id: string;
+}
+export type AssignmentExecutionPolicyV1 = LocalAdvisoryExecutionPolicyV1 | SingleActorReviewExecutionPolicyV1;
+
 export interface AdvisoryCompletionProposalV1 {
   claimed_completed: readonly string[];
   remaining_work: readonly string[];
@@ -49,7 +59,8 @@ export interface AdvisoryCompletionProposalV1 {
 }
 
 export function advisoryVerificationV2(snapshot: Pick<AssignmentSnapshotV2, "spec">): boolean {
-  return snapshot.spec.execution_policy?.mode === "local_advisory_v1";
+  return snapshot.spec.execution_policy?.mode === "local_advisory_v1"
+    || snapshot.spec.execution_policy?.mode === 'single_actor_review_v1';
 }
 
 export function validLocalAdvisoryPolicyV1(spec: AssignmentSpecV2): boolean {
@@ -66,7 +77,19 @@ export function validLocalAdvisoryPolicyV1(spec: AssignmentSpecV2): boolean {
         && Number.isSafeInteger(p.comments) && p.comments>=0 && p.units===Math.max(1,Math.ceil(p.comments/5))))
     && source.units===source.sources.reduce((n,s)=>n+s.sheets.reduce((sum,p)=>sum+p.units,0),0));
   const callCeiling=source?2048:256,operationCeiling=source?8192:1024,tokenCeiling=source?256_000_000:32_000_000;
-  return policy.mode === "local_advisory_v1" && policy.selected_by === "trusted_local_host"
+  const product = policy.mode === 'single_actor_review_v1';
+  const selectionValid = product
+    ? policy.selected_by === 'trusted_runtime_host' && Boolean(policy.principal_id)
+      && policy.principal_id === spec.binding.principal_id && spec.requested_effect === 'apply'
+      && policy.ready_work_handoff === 'continue_ready_work_v1'
+      && policy.source_work_allowance === undefined && policy.native_scope_planning === undefined
+      && policy.progress_allowance === undefined && policy.max_turns <= 8
+      && policy.max_provider_calls <= DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2.max_provider_calls
+      && policy.max_operations <= DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2.max_operations
+      && policy.max_total_tokens <= DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2.max_total_tokens
+      && policy.max_wall_clock_ms <= DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2.max_wall_clock_ms
+    : policy.mode === 'local_advisory_v1' && policy.selected_by === 'trusted_local_host';
+  return selectionValid
     && policy.session_id === spec.binding.session_id && Boolean(policy.document_fingerprint)
     && policy.document_fingerprint === spec.binding.document_fingerprint
     && sourceValid && bounded(policy.max_turns, 16) && bounded(policy.max_provider_calls, callCeiling)

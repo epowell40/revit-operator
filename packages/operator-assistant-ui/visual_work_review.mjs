@@ -476,7 +476,14 @@ export async function reviewCurrentWork(input,host){
   };
   const retained=result=>{Object.defineProperty(result,'raw_review_evidence',{value:raw,enumerable:false});return result;};
   const control=async()=>{await host.assertControl();if(!sameVisualReviewOwner(owner,host.owner()))throw Error('visual_review_owner_changed');};
+  let reference=null;
   try{
+    // Resolve immutable owned reference pixels before navigation or native capture.
+    // Existing source/hash/receipt validation and subsequent current-scene guards remain.
+    await control();
+    if(request.reference_attachment_read){reference=await host.referenceAttachmentRead(request.reference_attachment_read);if(reference?.source_render?.source_read_call_id!==request.reference_attachment_read.call_id||reference?.source_render?.page!==request.reference_attachment_read.page||!safeId(reference?.evidence_ref?.evidence_id)||reference.evidence_ref.content_hash!=='sha256:'+reference.source_render.image_sha256||!/^data:image\/png;base64,[A-Za-z0-9+/=\r\n]+$/.test(reference.image_url)||reference.image_url.length>8_000_000)throw Error('visual_review_attachment_reference_unavailable');}
+    if(request.reference_filename){reference=await host.referenceImage(request.reference_filename);if(reference?.filename!==request.reference_filename||!safeId(reference?.evidence_ref?.evidence_id)||!/^sha256:[a-f0-9]{64}$/.test(reference.evidence_ref.content_hash)||!/^data:image\/(?:png|jpeg);base64,[A-Za-z0-9+/=\r\n]+$/.test(reference.image_url)||reference.image_url.length>20_000_000)throw Error('visual_review_reference_unavailable');}
+    await control();
     if(request.focus_element_ids){
       // Compose existing navigation, never synthesize image coordinates or
       // infer visual correctness from a successful ShowElements receipt.
@@ -547,7 +554,7 @@ export async function reviewCurrentWork(input,host){
     }
     const settings=host.settings();if(!bounded(settings?.model,200)||!bounded(settings?.reasoning_effort,30))throw Error('visual_review_provider_settings_unavailable');
     const userRequest=host.userRequest();if(!bounded(userRequest,12000))throw Error('visual_review_user_request_unavailable');
-    let baseline=null,reference=null,complementaryScene=null;
+    let baseline=null,complementaryScene=null;
     if(request.recheck_evidence_id){await control();baseline=validateVisualReviewBaseline(priorBaseline,request,owner,initial,frame);request.checks=baseline.checks;base.baseline=baseline.summary;reference=baseline.reference;}
     if(baseline&&typeof host.readTargetContext==='function'&&complementarySheetCandidate(baseline,request,initial,frame,(host.now||Date.now)())){
       await control();const context=await host.readTargetContext();raw.complementary_native_contexts=[context];await control();
@@ -556,8 +563,6 @@ export async function reviewCurrentWork(input,host){
         ||!['process_id','document_session_id','epoch','through_sequence','view_id'].every(k=>initial[k]===complementaryScene[k]))throw Error('visual_review_complementary_state_changed');
       Object.assign(baseline.summary,{relationship:'same_model_state_complementary',pixel_aligned:false,native_state:complementaryScene});
     }
-    if(request.reference_attachment_read){reference=await host.referenceAttachmentRead(request.reference_attachment_read);if(reference?.source_render?.source_read_call_id!==request.reference_attachment_read.call_id||reference?.source_render?.page!==request.reference_attachment_read.page||!safeId(reference?.evidence_ref?.evidence_id)||reference.evidence_ref.content_hash!=='sha256:'+reference.source_render.image_sha256||!/^data:image\/png;base64,[A-Za-z0-9+/=\r\n]+$/.test(reference.image_url)||reference.image_url.length>8_000_000)throw Error('visual_review_attachment_reference_unavailable');}
-    if(request.reference_filename){reference=await host.referenceImage(request.reference_filename);if(reference?.filename!==request.reference_filename||!safeId(reference?.evidence_ref?.evidence_id)||!/^sha256:[a-f0-9]{64}$/.test(reference.evidence_ref.content_hash)||!/^data:image\/(?:png|jpeg);base64,[A-Za-z0-9+/=\r\n]+$/.test(reference.image_url)||reference.image_url.length>20_000_000)throw Error('visual_review_reference_unavailable');}
     // Native render guards remain retained host evidence, not model appearance claims.
     const {sheet_render_state:locationGuard,...reviewLocation}=initial;
     const {sheet_render_state:frameGuard,...reviewFrame}=frame;
