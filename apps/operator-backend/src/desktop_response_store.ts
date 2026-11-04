@@ -283,22 +283,27 @@ function assertWindowImages(input: unknown): void {
  * when its literal window exists, the provider receives input-array chaining.
  * Missing legacy windows keep the supported cursor route, never reconstructed
  * images or a fabricated compaction. No network recovery or hidden retry. */
-// A cold computer-tool request may carry only one top-level screen image.
-// Supersede only the host's earlier startup-screen blocks when this request
-// supplies a fresh one. Literal reference/model tool-image pairs stay intact;
-// the original pixels remain in the immutable response journal/evidence.
-function supersededDesktopScreens(window: any[], body: any): any[] {
-  const isScreen = (item: any) => item?.role === 'user' && Array.isArray(item.content)
-    && item.content.filter((c: any) => c?.type === 'input_image').length === 1
-    && item.content.some((c: any) => c?.type === 'input_text' && typeof c.text === 'string'
-      && c.text.startsWith('The final image in this message is the current computer screen across the full virtual desktop,'));
+// Cold computer replay must not append a new startup image to historical
+// top-level user pixels (including inline references, not just desktop screens).
+// Retire only those historical pixels from the live window; keep the original
+// attachment text, literal tool-image pairs and immutable raw journals intact.
+function supersededStartupImages(window: any[], body: any): { input: any[]; omitted: number } {
+  const hasUserImage = (item: any) => item?.role === 'user' && Array.isArray(item.content)
+    && item.content.some((c: any) => c?.type === 'input_image');
   if (!body.tools?.some((t: any) => t?.type === 'computer') || !Array.isArray(body.input)
-      || !body.input.some(isScreen)) return window;
-  return window.map(item => !isScreen(item) ? item : { ...item, content: item.content.map((part: any) =>
-    part?.type !== 'input_image' ? part : { type: 'input_text', text:
-      'Historical desktop screenshot omitted from replay because this request supplies a fresh screen. '
-      + 'Original image SHA256: ' + createHash('sha256').update(canonicalJsonV2(part)).digest('hex')
-      + '. Raw pixels and evidence remain retained; this is not current visual proof. Refresh a focused view if needed.' }) });
+      || !body.input.some(hasUserImage)) return { input: window, omitted: 0 };
+  assertWindowImages(window); // Retirement must not hide malformed image identities.
+  let omitted = 0;
+  const input = window.map(item => !hasUserImage(item) ? item : { ...item, content: item.content.map((part: any) => {
+    if (part?.type !== 'input_image') return part;
+    omitted++;
+    return { type: 'input_text', text:
+      'Historical desktop screenshot or inline reference image omitted from replay because this request supplies a fresh screen/image input. '
+      + 'Original image-input SHA256: ' + createHash('sha256').update(canonicalJsonV2(part)).digest('hex')
+      + '. Original pixels, source attachment references and raw evidence remain retained. This digest is not visual proof. '
+      + 'Re-read the retained source attachment or retrieve a focused current model view when those pixels are needed; do not infer image details from this placeholder.' };
+  }) });
+  return { input, omitted };
 }
 
 type FeedbackMarker = { index: number; sha256: string };
@@ -412,7 +417,7 @@ export function prepareDesktopProviderInput(binding: Binding, messageId: unknown
   // This argument is supplied only by the authenticated host producer. A text
   // prefix/schema in caller input is never sufficient to mark or delete it.
   const latestFeedback = hostFeedback(binding, body.input, internal.hostFeedback);
-  let markers: FeedbackMarker[] = [], omittedFeedback = 0, omittedImages = 0;
+  let markers: FeedbackMarker[] = [], omittedFeedback = 0, omittedImages = 0, omittedStartupImages = 0;
   let prepared = body;
   if (current.predecessor) {
     const prior = current.predecessor;
@@ -427,7 +432,9 @@ export function prepareDesktopProviderInput(binding: Binding, messageId: unknown
       throw Error('desktop_context_window_predecessor_mismatch');
     const known = feedbackMarkers(prior.window, prior.feedback_markers);
     const superseded = new Set(latestFeedback ? known.map(x => x.index) : []);
-    const retained = supersededDesktopScreens(prior.window, body).filter((_item: any, i: number) => !superseded.has(i));
+    const startup = supersededStartupImages(prior.window, body);
+    omittedStartupImages = startup.omitted;
+    const retained = startup.input.filter((_item: any, i: number) => !superseded.has(i));
     omittedFeedback = superseded.size;
     const pixels = uniqueHistoricalPixels(retained, body.input);
     omittedImages = pixels.omitted;
@@ -448,7 +455,8 @@ export function prepareDesktopProviderInput(binding: Binding, messageId: unknown
   replaceContext(binding, { ...current, model: body.model, reasoning_effort: body.reasoning_effort,
     provider_input: providerInput, continuation_transport: providerInput ? 'durable_input_array' : 'previous_response_id',
     feedback_markers: markers, host_feedback_item: latestFeedback,
-    context_packing: { superseded_host_snapshots: omittedFeedback, duplicate_historical_images: omittedImages } });
+    context_packing: { superseded_host_snapshots: omittedFeedback, duplicate_historical_images: omittedImages,
+      ...(omittedStartupImages ? { superseded_startup_images: omittedStartupImages } : {}) } });
   return prepared;
 }
 /** Host transport state only. Retaining completed outputs proves no model work,
