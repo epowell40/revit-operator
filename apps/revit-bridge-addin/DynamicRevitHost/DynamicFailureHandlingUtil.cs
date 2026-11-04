@@ -31,15 +31,19 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
 
             public FailureProcessingResult PreprocessFailures(FailuresAccessor accessor)
             {
-                var hasError = false;
+                var hasFailure = false;
                 try
                 {
                     foreach (var failure in accessor.GetFailureMessages())
                     {
-                        if (failure == null) continue;
+                        // Continue delegates unresolved warnings to Revit's modal
+                        // UI. An unattended program cannot consent to losing a
+                        // host or other model relationship. Retain diagnostics
+                        // and roll back this transaction instead of hiding them.
+                        hasFailure = true;
+                        if (failure == null) throw new InvalidOperationException("Native failure entry was unavailable.");
                         FailureSeverity severity;
-                        try { severity = failure.GetSeverity(); } catch { severity = FailureSeverity.Warning; }
-                        if (severity != FailureSeverity.Warning) hasError = true;
+                        try { severity = failure.GetSeverity(); } catch { severity = FailureSeverity.Error; }
                         string message;
                         try { message = failure.GetDescriptionText() ?? ""; } catch { message = ""; }
                         long[] ids;
@@ -55,8 +59,12 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                         });
                     }
                 }
-                catch { }
-                return hasError ? FailureProcessingResult.ProceedWithRollBack : FailureProcessingResult.Continue;
+                catch
+                {
+                    hasFailure = true;
+                    _failures.Add(new DynamicCapturedFailure { severity = "error", message = "Native failure inventory could not be fully read; transaction requires rollback." });
+                }
+                return hasFailure ? FailureProcessingResult.ProceedWithRollBack : FailureProcessingResult.Continue;
             }
         }
     }
