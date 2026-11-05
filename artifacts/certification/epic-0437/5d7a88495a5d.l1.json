@@ -198,6 +198,14 @@
       "sha256": "sha256:dd4fd7cd0071803b9d5e78df091296ab4e4920aa42d2795905d6b198a1ea4a8b"
     },
     {
+      "path": "apps/mcp-server/src/lib/evidenceTextRangeSchema.test.ts",
+      "sha256": "sha256:beae8d706b61492e5a8394498e5562c81d1aacfd9bc5371fa6e8e366bdb1e661"
+    },
+    {
+      "path": "apps/mcp-server/src/lib/evidenceTextRangeSchema.ts",
+      "sha256": "sha256:85f9afed284a897101d5cb04fe4aab5700945ee1d6f61c72fe4e010e65447c27"
+    },
+    {
       "path": "apps/mcp-server/src/lib/excelOutputContracts.test.ts",
       "sha256": "sha256:ed3c6ba052daa6bd3bcc774e9117809329d07e104ddf1e0ade1bdcb91c849e78"
     },
@@ -668,7 +676,7 @@
     },
     {
       "path": "apps/mcp-server/src/server.ts",
-      "sha256": "sha256:dfd9d14332c405cd4abfb19e08ea367e65966bfb42c49b98bbbf80ba653b96e0"
+      "sha256": "sha256:d526cde6810562027c41e6c1ac03129a10db45dced0325684a9fd18e8722b5d3"
     },
     {
       "path": "apps/mcp-server/src/skills/alignCeilingDevices.ts",
@@ -3353,11 +3361,15 @@
     },
     {
       "path": "apps/operator-backend/src/evidence/evidence_ref.ts",
-      "sha256": "sha256:18a3386d5a76240631e12cc6f4ef106e7b27e14d9941ae22420a576019202d83"
+      "sha256": "sha256:0da9af1b62b2045b3938fd542df19ec2db239826d25ea2fc02da361e41ccdf33"
     },
     {
       "path": "apps/operator-backend/src/evidence/evidence_store.ts",
-      "sha256": "sha256:f6bd13df065ef9f700315093b575f496e318407f5eff64d2afec39ec09172eba"
+      "sha256": "sha256:d8e13fd575db2e808ed3fc35a07fbb602d1f02b7f847071be5833df67746fa5e"
+    },
+    {
+      "path": "apps/operator-backend/src/evidence/field_text_range.ts",
+      "sha256": "sha256:6fae0741cbe7002773e4c94f42a7fe3f9ec64eeb2add88479ab752c9d05f9c5f"
     },
     {
       "path": "apps/operator-backend/src/evidence/image_retention.ts",
@@ -5794,6 +5806,10 @@
     {
       "path": "apps/operator-backend/test/epic0442_authenticated_campaign.test.ts",
       "sha256": "sha256:b9bbfae033f48a57c75370606438c2123192228e7c502c5e81118e47350806ed"
+    },
+    {
+      "path": "apps/operator-backend/test/evidence_field_text_range.test.ts",
+      "sha256": "sha256:e758c4f1c7cc2b145a9a1e19740d92885b7548a5c2f084e811b5efb2293aaf5d"
     },
     {
       "path": "apps/operator-backend/test/evidence_http_routes.test.ts",
@@ -12238,7 +12254,7 @@
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/evidence-retrieval-selector-golden-vectors.json",
-      "sha256": "sha256:9dd7f5bc3cc71585db4ffc991301f4d28698c6f693ea7be3b618a8343cfe7b0e"
+      "sha256": "sha256:f5eb78fa4df1bf7a411f2367cfc233ca91b8e0a451b4769d5ead030fc4f6a9d5"
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/focused-evidence.d.ts",
@@ -12246,19 +12262,19 @@
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/focused-evidence.js",
-      "sha256": "sha256:5da810dc18a576aa18f7f7dd892c70f38cbcb2553d23190113dfd29ef0547388"
+      "sha256": "sha256:d7eff3f25665b85517e49d102e2d6f2eff32090feeb21323784db19df3d30ce7"
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/focused-evidence.test.mjs",
-      "sha256": "sha256:1ea4901171990bd4950a767b2fb164dddd7689358d96f176241cb095458fd65c"
+      "sha256": "sha256:2e39ff319d5d183c5b87bb99bedc1cfadb6f534d2d0643d4483a596b5f8a9eae"
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/index.d.ts",
-      "sha256": "sha256:b0bd8fe9b1a38935dc4530b05d1c59526d7d1703c5e5d0b9d2377bb64d022a13"
+      "sha256": "sha256:66f5ffd9f3b50ce537727494cee652c63ee5eb88d9c400ec48aa8c5bc9820651"
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/index.js",
-      "sha256": "sha256:06ba1ec7cd8e20d78c198ddeed9d7fab1714433ecb0ef49374253a73f7fc5a10"
+      "sha256": "sha256:ac143b2fb4f3ea2fef55f882be993a983eef083bf59c69399257212a30e0cd01"
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/input-schema-gap.d.ts",
@@ -12413,7 +12429,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:8d627ea0c86c6d501a7cf704d638bb908ced6931d68befd4a58226dfadc785a5",
+  "inputs_hash": "sha256:1a8f82de6564f853bf6fce9ff36476a652df73373ed3fdd59065e3f4caa2b68b",
   "result": {
     "passed": true,
     "checks": [
