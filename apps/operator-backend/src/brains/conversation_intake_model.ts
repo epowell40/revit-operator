@@ -5,6 +5,7 @@ import { CodexAppServer } from "../codex/app_server.js";
 import { prepareCertifiedCodexIsolation, type CertifiedCodexIsolation } from "../codex/config.js";
 import { ensureWorkspaceLayout } from "../workspace.js";
 import { createOpenAiClient, resolveOpenAiApiKey } from "../openai_client.js";
+import {resolveOpenAiDataPolicy} from '../openai_data_policy.js';
 import { assertModelReasoningEffort, normalizeModelId, normalizeReasoningEffort } from "../speed_config.js";
 import { INTAKE_INSTRUCTIONS, INTAKE_SCHEMA, type ConversationIntakeInterpreter, type IntakeInput, type IntakeCorrection, type IntakePhaseObserver, type IntakeHostPhase } from "../conversation_intake.js";
 import { operationScopeRequestHash } from "../domain/assignment-kernel/operation_scope.js";
@@ -124,7 +125,9 @@ export class ModelConversationIntake implements ConversationIntakeInterpreter {
       normalizeModelId(brain==="codex"?process.env.OPERATOR_CODEX_MODEL:process.env.OPERATOR_OPENAI_MODEL,"gpt-5.6-sol"));
     const effort=normalizeReasoningEffort(process.env.OPERATOR_INTAKE_REASONING_EFFORT,"low");
     assertModelReasoningEffort(model,effort);
-    if (brain!=="codex") {
+    // A host-storage policy must not escape through the CLI's separate auth
+    // and provider transport. Reuse this existing tool-free Responses path.
+    if (brain!=="codex" || resolveOpenAiDataPolicy().storage==='host') {
       const key=resolveOpenAiApiKey();
       if (!key || brain==="rule")throw Error("Conversation intake model is unavailable");
       phase("requesting_response");

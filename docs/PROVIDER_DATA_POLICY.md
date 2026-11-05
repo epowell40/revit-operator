@@ -11,6 +11,10 @@ rejects remote response cursors, Conversations, remote item references,
 background mode and attempts to set `store:true`. The ordinary owner rebuilds
 validated closed input arrays before requesting the next response. SDK streaming
 uses the same checked create method; SDK response helpers are retained.
+When the General Agent uses the Codex brain, host mode also selects intake's
+existing tool-free Responses branch so that classification cannot silently use
+the CLI's separate authentication/transport. Default provider mode keeps the
+existing CLI intake route. No second agent/controller is added.
 
 Host mode requires HTTPS, except loopback HTTP for isolated local tests. The
 factory checks the configured destination/project/organization and rejects HTTP

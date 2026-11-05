@@ -1,8 +1,9 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {createOpenAiClient} from '../src/openai_client.js';
+import{ModelConversationIntake}from'../src/brains/conversation_intake_model.js';
 import http from'node:http';
 const realFetch=globalThis.fetch;
-const names=['OPERATOR_OPENAI_RESPONSE_STORAGE','OPERATOR_OPENAI_ACCOUNT_ALIAS','OPERATOR_OPENAI_BASE_URL','OPENAI_BASE_URL','OPERATOR_OPENAI_ORG','OPENAI_ORG','OPENAI_ORG_ID','OPERATOR_OPENAI_PROJECT','OPENAI_PROJECT','OPENAI_PROJECT_ID'];
+const names=['OPERATOR_OPENAI_RESPONSE_STORAGE','OPERATOR_OPENAI_ACCOUNT_ALIAS','OPERATOR_OPENAI_BASE_URL','OPENAI_BASE_URL','OPERATOR_OPENAI_ORG','OPENAI_ORG','OPENAI_ORG_ID','OPERATOR_OPENAI_PROJECT','OPENAI_PROJECT','OPENAI_PROJECT_ID','OPERATOR_BRAIN','OPERATOR_INTAKE_MODEL','OPERATOR_OPENAI_API_KEY'];
 async function isolated(run:(sent:any[])=>Promise<void>){const prior=Object.fromEntries(names.map(k=>[k,process.env[k]])),previous=globalThis.fetch,sent:any[]=[];
  for(const k of names)delete process.env[k];process.env.OPERATOR_OPENAI_BASE_URL='http://127.0.0.1:1/v1';process.env.OPERATOR_OPENAI_RESPONSE_STORAGE='host';
  globalThis.fetch=async(_url:any,init:any)=>{sent.push(JSON.parse(init.body));return new Response(JSON.stringify({id:'synthetic',object:'response',status:'completed',output:[]}),{headers:{'content-type':'application/json'}});};
@@ -11,6 +12,14 @@ async function isolated(run:(sent:any[])=>Promise<void>){const prior=Object.from
 test('host response storage sends explicit false with opaque reasoning continuity',()=>isolated(async sent=>{
  await createOpenAiClient('synthetic-fixture-key').responses.create({model:'gpt-6.1-terra',input:[{role:'user',content:'Synthetic data only'}],context_management:[{type:'compaction',compact_threshold:100_000}]} as any,{maxRetries:0});
  assert.equal(sent.length,1);assert.equal(sent[0].store,false);assert.ok(sent[0].include.includes('reasoning.encrypted_content'));assert.equal(sent[0].context_management[0].type,'compaction');
+}));
+for(const storage of ['host','provider'])test('intake preserves the selected transport boundary '+storage,()=>isolated(async sent=>{
+ process.env.OPERATOR_BRAIN='codex';process.env.OPERATOR_OPENAI_RESPONSE_STORAGE=storage;process.env.OPERATOR_INTAKE_MODEL='gpt-6.1-terra';process.env.OPERATOR_OPENAI_API_KEY='synthetic-only';let cli=0;
+ globalThis.fetch=async(_url:any,init:any)=>{sent.push(JSON.parse(init.body));const value={route:'answer',answer:'Synthetic fixture',basis:'general_knowledge',requested_effect:'none',entire_request_answered:true,confidence:1,reason:'Synthetic',question_kind:'general_explanation',identity_fields:[],read_evidence:'not_applicable',operation_scope:null};return new Response(JSON.stringify({id:'synthetic-intake',object:'response',status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text:JSON.stringify(value),annotations:[]}]}]}),{headers:{'content-type':'application/json'}});};
+ const model=new ModelConversationIntake({prepareIsolation:()=>{cli++;throw Error('Synthetic CLI dependency refused');},createClient:()=>{throw Error('must not create CLI');}} as any);
+ try{if(storage==='host'){const result=await model.interpret({user_text:'Synthetic fixture',recent_conversation:[],ui_observation:{}} as any,new AbortController().signal);assert.equal(result.telemetry.provider,'responses');assert.equal(cli,0);assert.equal(sent.length,1);assert.equal(sent[0].store,false);}
+ else{await assert.rejects(()=>model.interpret({user_text:'Synthetic fixture',recent_conversation:[],ui_observation:{}} as any,new AbortController().signal),/Synthetic CLI dependency refused/);assert.equal(cli,1);assert.equal(sent.length,0);}}
+ finally{await model.close();}
 }));
 test('host SDK streaming uses the checked create path',()=>isolated(async sent=>{
  globalThis.fetch=async(_url:any,init:any)=>{sent.push(JSON.parse(init.body));const response={id:'synthetic',status:'completed',output:[]};return new Response(['response.created','response.completed'].map(type=>'event: '+type+'\ndata: '+JSON.stringify({type,response})+'\n\n').join(''),{headers:{'content-type':'text/event-stream'}});};
@@ -57,3 +66,4 @@ test('host preserves opaque compacted input and SDK APIPromise helpers without m
  const promise=createOpenAiClient('synthetic').responses.create(body as any);assert.equal(typeof promise.withResponse,'function');await promise;
  assert.equal(JSON.stringify(body),original);assert.deepEqual(sent[0].input,input);assert.deepEqual(sent[0].include,['reasoning.encrypted_content']);
 }));
+
