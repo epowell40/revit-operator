@@ -38,6 +38,14 @@ test("short structured credentials are removed independently of length and nesti
   assert.equal(value.api_key, "short", "export redaction must not alter retained source evidence");
 });
 
+test("prefixed workstation tokens and service session keys are credentials too", () => {
+  const result=redactUnknown({OPERATOR_TOKEN:'short',service_secret:'small',session_key:'tiny',
+    headers:[{name:'X-Operator-Token',value:'a'}],token_id:'identifier',token_count:3});
+  for(const value of[result.OPERATOR_TOKEN,result.service_secret,result.session_key,result.headers[0].value])
+    assert.equal(value,'<redacted:credential>');
+  assert.equal(result.token_id,'identifier');assert.equal(result.token_count,3);
+});
+
 test("credential-shaped text is scrubbed without consuming adjacent diagnostics", () => {
   const value = 'api_key=tiny&status=failed\n{"password":"x","token_count":12}\nAuthorization: Basic short\nnext=ready';
   const result = redactString(value);

@@ -10,7 +10,7 @@ function credentialField(key: string): boolean {
   const normalized = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
   if (/^(?:has|is)(?:apikey|password|credential|credentials|secret|token)$/.test(normalized)) return false;
   // Match names, not token lengths. Diagnostic flags/counts/IDs are not secrets.
-  return /(?:apikey|apisecret|clientsecret|jwtsecret|signingkey|secretkey|privatekey|accesskeyid|secretaccesskey|sessiontoken|accesstoken|refreshtoken|idtoken|uploadtoken|password|passwd|passphrase|connectionstring|databaseurl)$/.test(normalized)
+  return /(?:apikey|secret|token|signingkey|secretkey|privatekey|sessionkey|channelkey|encryptionkey|hmackey|accesskeyid|secretaccesskey|password|passwd|passphrase|connectionstring|databaseurl)$/.test(normalized)
     || ["pwd", "token", "secret", "credential", "credentials", "authorization", "proxyauthorization", "cookie", "setcookie"].includes(normalized);
 }
 
