@@ -3,7 +3,7 @@ import { requireSupportedToolRoute } from "../capabilities/supported_tool_invent
 import { admitCourierJobClaim } from "./revit_tool_job_claim_support.js";
 import path from "node:path";
 import { createHash, randomBytes } from "node:crypto";
-import {canonicalJsonV2} from '../domain/assignment-kernel/canonical.js';
+import {matchesCompletedSavedDocumentTarget, type CompletedSavedDocumentTarget} from './completed_saved_document_target.js';
 import {
   REVIT_COURIER_V2_JOB_VERSION,
   RevitCourierCertificationError,
@@ -643,25 +643,9 @@ export function readRevitToolJobTerminalOutcome(jobId: string): Readonly<{
   } : null;
 }
 
-/** Exact transport provenance for a retained same-document checkpoint. This
- * read-only lookup neither changes a job nor grants a new execution target. */
-export function completedRevitToolJobMatchesTarget(operationId:string,expected:{session_id:string;executor_id:string;title:string|undefined;path:string;body:unknown}):boolean {
-  try{
-    // The existing MCP courier publisher keys V2 jobs by this exact operation
-    // digest. Native request/correlation IDs are a different identity.
-    if(!/^opv2_[a-f0-9]{64}$/.test(operationId))return false;
-    const jobId=operationId.slice('opv2_'.length);
-    const job=readJob(safeId(jobId,'job_id'));
-    if(!job||![REVIT_COURIER_JOB_VERSION,REVIT_COURIER_V2_JOB_VERSION].includes(job.version)
-      ||(job as {assignment_operation_id?:unknown}).assignment_operation_id!==operationId
-      ||job.status!=='succeeded'||job.session_id!==expected.session_id||job.correlation_id!==jobId
-      ||job.method!=='POST'||job.path!=='/revit/save-as'||job.target_executor_id!==expected.executor_id
-      ||job.claim?.executor_id!==expected.executor_id||job.target_document_title!==expected.title
-      ||(job.target_document_path??'').replaceAll('\\','/').toLowerCase()!==expected.path.replaceAll('\\','/').toLowerCase()
-      ||canonicalJsonV2(job.body)!==canonicalJsonV2(expected.body))return false;
-    const result=readTerminalResult(job);
-    return result?.status==='succeeded'&&result.outcome_unknown!==true;
-  }catch{return false;}
+export function completedRevitToolJobMatchesTarget(operationId:string,expected:CompletedSavedDocumentTarget):boolean {
+  return matchesCompletedSavedDocumentTarget(operationId,expected,id=>readJob(safeId(id,'job_id')),readTerminalResult,
+    [REVIT_COURIER_JOB_VERSION,REVIT_COURIER_V2_JOB_VERSION]);
 }
 
 function reconcileJobWithResult(job: RevitToolJob, result: RevitToolResult): RevitToolJob {
