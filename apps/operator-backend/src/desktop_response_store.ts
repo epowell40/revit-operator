@@ -6,6 +6,7 @@ import { prepareBoundedModelEvidenceInput } from "./evidence/model_context_budge
 import { canonicalJsonV2, type AssignmentSnapshotV2 } from "./domain/assignment-kernel/index.js";
 import type { AssignmentKernelBindingInputV2 } from "./assignments/assignment_kernel_v2_lifecycle.js";
 import {getAssignmentKernelSnapshotV2} from './assignments/assignment_kernel_v2_store.js';
+import {resolveOpenAiDataPolicy} from './openai_data_policy.js';
 
 function writeDurable(file: string, value: unknown): void {
   const fd = fs.openSync(file, "wx");
@@ -14,6 +15,21 @@ function writeDurable(file: string, value: unknown): void {
 }
 
 type Binding = AssignmentKernelBindingInputV2 & { kernelVersion: 1 | 2 };
+/** Immutable transport/account-configuration pin, never native or completion
+ * authority. Used by owner and independent review; no credentials are stored. */
+function pinProviderDataPolicy(binding:Binding):void {
+ const key=createHash('sha256').update(canonicalJsonV2(binding)).digest('hex');
+ const file=identity(binding,'provider-policy-'+key).file+'.policy',policy=resolveOpenAiDataPolicy();
+ const validate=()=>{let old:any;
+  try{const stat=fs.lstatSync(file);if(!stat.isFile()||stat.isSymbolicLink()||stat.size>16_384)throw Error();old=JSON.parse(fs.readFileSync(file,'utf8'));}
+  catch{throw Error('provider_data_policy_custody_invalid');}
+  if(canonicalJsonV2(old.binding)!==canonicalJsonV2(binding)||canonicalJsonV2(old.policy)!==canonicalJsonV2(policy))throw Error('provider_data_policy_changed_requires_new_task');};
+ if(fs.existsSync(file)){validate();return;}
+ // Historical contexts have no proven stateless policy. Leave their content
+ // intact and require an explicit migration instead of silently changing it.
+ if(policy.storage==='host'&&fs.existsSync(contextFile(binding)))throw Error('provider_data_policy_legacy_context_requires_migration');
+ try{writeDurable(file,{binding,policy});}catch(error){if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;validate();}
+}
 type Stored = { binding: Binding; message_id: string; request_hash: string;
   status: "pending" | "complete" | "error"; response?: unknown; failure?: unknown };
 /** Transport custody only. A reviewer uses the same accounting/admission path,
@@ -84,6 +100,7 @@ export async function retainDesktopResponse<T>(binding: Binding, messageId: unkn
     // Even completed responses must be recovered explicitly, never executed twice.
     throw new Error("desktop_response_already_dispatched_use_result");
   }
+  pinProviderDataPolicy(binding);
   const pending: Stored = { binding, message_id: id.messageId, request_hash: requestHash, status: "pending" };
   writeDurable(id.file, pending);
   // A new dispatch invalidates the previous resumable boundary before any

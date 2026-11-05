@@ -26,6 +26,7 @@ import {assignmentKernelV2ForBinding} from './assignments/assignment_kernel_v2_f
 import {desktopAssignmentFeedbackInputV2} from './desktop_assignment_feedback.js';
 import {withSerializedProviderTurn} from './provider_turn_queue.js';
 import {prepareDesktopProviderInput,desktopModelInputPackage,desktopResponseOwnsContext} from './desktop_response_store.js';
+import {resolveOpenAiDataPolicy} from './openai_data_policy.js';
 import {getWorkspaceRoot} from './workspace.js';
 import {desktopNativeInteractionTools,retainNativeInteractiveProviderResponse,withDesktopNativeProviderReadiness} from './assignments/desktop_native_tools.js';
 
@@ -40,6 +41,7 @@ export type DesktopComputerRelayRequest = {
 };
 
 type DesktopComputerRelayResponse = {
+  provider_data_policy?: ReturnType<typeof resolveOpenAiDataPolicy>;
   input_images?: ReturnType<typeof imageInputManifest>;
   input_image_delivery_error?: string;
   id: string;
@@ -243,6 +245,7 @@ export async function relayDesktopComputerResponse(rawBody: unknown,
   // count historical context again against one turn's evidence-envelope cap.
   if (!retainedTurnUsage) body.input = prepareBoundedModelEvidenceInput(body.input);
   const evidenceUsage = retainedTurnUsage ?? assertBoundedModelEvidencePayload(body.input);
+  const dataPolicy=resolveOpenAiDataPolicy();
   const client = createOpenAiClient(apiKey);
   const model = body.model || resolveDesktopComputerModel();
   const reasoningEffort = body.reasoning_effort || resolveDesktopComputerReasoningEffort();
@@ -292,7 +295,7 @@ export async function relayDesktopComputerResponse(rawBody: unknown,
     response
   });
   recordDesktopEvidenceUsage(evidenceUsage, body.evidence_scope, receipt);
-  return {...simplifyRelayResponse(response, receipt), input_images:imageInputManifest(body.input),model_context_package:contextPackage};
+  return {...simplifyRelayResponse(response, receipt), provider_data_policy:dataPolicy,input_images:imageInputManifest(body.input),model_context_package:contextPackage};
 }
 
 /** The authenticated HTTP edge supplies this binding, never the model input. */
