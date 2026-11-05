@@ -366,7 +366,8 @@
     "sidecar_agent_profile.test.ts",
     "task_review_policy.test.ts",
     "desktop_execution_guidance.test.ts",
-    "conversation_intake_timing.test.ts"
+    "conversation_intake_timing.test.ts",
+    "courier_saved_document_target.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",

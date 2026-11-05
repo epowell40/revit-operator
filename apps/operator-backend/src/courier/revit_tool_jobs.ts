@@ -3,6 +3,7 @@ import { requireSupportedToolRoute } from "../capabilities/supported_tool_invent
 import { admitCourierJobClaim } from "./revit_tool_job_claim_support.js";
 import path from "node:path";
 import { createHash, randomBytes } from "node:crypto";
+import {matchesCompletedSavedDocumentTarget, type CompletedSavedDocumentTarget} from './completed_saved_document_target.js';
 import {
   REVIT_COURIER_V2_JOB_VERSION,
   RevitCourierCertificationError,
@@ -640,6 +641,11 @@ export function readRevitToolJobTerminalOutcome(jobId: string): Readonly<{
     result: terminal.result ?? null,
     error: terminal.error ?? null
   } : null;
+}
+
+export function completedRevitToolJobMatchesTarget(operationId:string,expected:CompletedSavedDocumentTarget):boolean {
+  return matchesCompletedSavedDocumentTarget(operationId,expected,id=>readJob(safeId(id,'job_id')),readTerminalResult,
+    [REVIT_COURIER_JOB_VERSION,REVIT_COURIER_V2_JOB_VERSION]);
 }
 
 function reconcileJobWithResult(job: RevitToolJob, result: RevitToolResult): RevitToolJob {
