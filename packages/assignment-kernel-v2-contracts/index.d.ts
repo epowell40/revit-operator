@@ -115,7 +115,7 @@ export type EvidenceItemRangeV1 = Readonly<{path:string;start:number;count:numbe
 export type EvidenceRetrievalSelectorV1 =
   | Readonly<{ kind: "fields"; fields: readonly string[] }>
   | Readonly<{ kind: "item_range"; item_range: EvidenceItemRangeV1 }>
-  | Readonly<{ kind: "text_range"; text_range: Readonly<{ start: number; length: number }> }>
+  | Readonly<{ kind: "text_range"; text_range: Readonly<{ start: number; length: number; path?: string }> }>
   | Readonly<{ kind: "target_subset"; target_subset: readonly string[] }>
   | Readonly<{ kind: "image"; image: true }>;
 
@@ -127,6 +127,7 @@ export interface ExactEvidenceTargetSelectionV1 {
 }
 
 export function parseEvidenceRetrievalSelectorV1(value: unknown): EvidenceRetrievalSelectorV1;
+export function assertEvidenceTextRangePageV1(selector:unknown,response:unknown):void;
 export function assertScalarEvidencePageV1(request:unknown,envelope:unknown):void;
 export function isEvidenceTargetIdentityFieldV1(value: unknown): boolean;
 export function evidenceTargetIdentityValuesV1(value: unknown): readonly string[];

@@ -6,8 +6,9 @@ import { familyPlacementToolShape } from "./lib/familyPlacementSchema.js";
 import { primitiveFamilyDefinitionSchema } from "./lib/primitiveFamilySchema.js";
 import { categoryVisibilityScopeSchemaV1 } from './lib/category_visibility_scope_schema.js';
 import { familyStaticTextScopeSchemaV1 } from './lib/family_static_text_scope_schema.js';
-import { parseEvidenceRetrievalSelectorV1, assertScalarEvidencePageV1 } from "@revitoperator/assignment-kernel-v2-contracts";
+import { parseEvidenceRetrievalSelectorV1, assertScalarEvidencePageV1, assertEvidenceTextRangePageV1 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { evidenceItemRangeSchema } from "./lib/evidenceItemRangeSchema.js";
+import {evidenceTextRangeSchema} from './lib/evidenceTextRangeSchema.js';
 import {retainedImageDelivery,MAX_RETAINED_IMAGE_BYTES} from './lib/retainedImageDelivery.js';
 import { canonicalRevitActionPath } from "@revitoperator/revit-action-effect-v1";
 import * as fs from "fs";
@@ -1014,7 +1015,7 @@ server.tool("operator_retrieve_evidence", "Retrieve a focused, byte-bounded sele
     purpose: z.string().describe("Specific decision or verification need; 'all evidence' is rejected."),
     fields: z.array(z.string()).min(1).max(64).describe("One or more typed paths. Mutually exclusive with itemRange, textRange, targetSubset, and image.").optional(),
     itemRange: evidenceItemRangeSchema.describe("One bounded retained array page. fields selects relative columns as row_index/values/missing_fields. Optional filters (1..8 AND predicates eq/ne/lt/lte/gt/gte over typed finite scalars) and orderBy (finite numeric asc/desc, missing/non-numeric last, stable source ties) require fields and at most5000 retained source rows. Non-null comparisons require matching scalar types; missing/nonfinite values never match. eq:null/ne:null test actual null/non-null scalars, not missing fields. These are discovery projections, always complete:false/source_rows_exhausted:false; original row_index remains the source index. With filters/orderBy, start/next_start count selected ranks; pagination.selection_query distinguishes original source, matches, unavailable values and selected_rows_exhausted. Bounds/source completeness do not certify native absence or work. Confirm selected targets with current native reads. Mutually exclusive with every other selector.").optional(),
-    textRange: z.object({ start: z.number().int().min(0), length: z.number().int().min(1) }).describe("One bounded UTF-8 byte range. Mutually exclusive with every other selector.").optional(),
+    textRange: evidenceTextRangeSchema.describe("One bounded UTF-8 byte range. Optional path pages one retained string field (for example native_outcome.program_result); omit path for raw artifact bytes. Continue at text_pagination.next_start; field pages are complete:false and do not prove model/collection completeness. Mutually exclusive with every other selector.").optional(),
     targetSubset: z.array(z.string()).min(1).max(64).describe("Exact target identities; arbitrary prose and partial substrings never match. Mutually exclusive with every other selector.").optional(),
     image: z.literal(true).describe("Return one exact retained image as pixels with its original scope/hash, not base64 text or current-state proof. Mutually exclusive with every other selector.").optional(),
     maxBytes: z.number().int().min(64).max(MAX_RETAINED_IMAGE_BYTES).describe("Image: decoded file bytes, default/max5MiB. Text/JSON: existing default16KiB/max1MiB. Explicit smaller image budgets are respected.").optional()
@@ -1044,6 +1045,7 @@ server.tool("operator_retrieve_evidence", "Retrieve a focused, byte-bounded sele
         ...(args.maxBytes !== undefined ? { max_bytes: args.maxBytes } : {})
       });
       assertScalarEvidencePageV1(selectorRequest,result);
+      assertEvidenceTextRangePageV1(selectorRequest,result);
       if(args.image===true)return retainedImageDelivery(result,args);
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
     } catch (error) {

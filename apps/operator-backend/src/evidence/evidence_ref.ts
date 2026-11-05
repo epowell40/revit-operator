@@ -131,7 +131,7 @@ export type EvidenceRetrievalRequest = {
   scope: EvidenceScope;
   fields?: string[];
   item_range?: import("@revitoperator/assignment-kernel-v2-contracts").EvidenceItemRangeV1;
-  text_range?: { start: number; length: number };
+  text_range?: { start: number; length: number; path?: string };
   target_subset?: string[];
   image?: true;
   max_bytes?: number;
@@ -144,6 +144,8 @@ export type EvidenceRetrievalResult = {
   selection: unknown;
   returned_bytes: number;
   complete: boolean;
+  text_pagination?: {path:string;start:number;requested_length:number;returned_utf8_bytes:number;total_utf8_bytes:number;
+    next_start:number|null;has_more:boolean;field_complete:boolean;byte_limited:boolean};
   image_byte_count?: number;
   image_byte_limit?: number;
   pagination?: { path: string; start: number; requested_count: number; returned_count: number; total_items: number;

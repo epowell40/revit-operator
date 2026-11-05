@@ -367,7 +367,9 @@
     "task_review_policy.test.ts",
     "desktop_execution_guidance.test.ts",
     "conversation_intake_timing.test.ts",
-    "courier_saved_document_target.test.ts"
+    "courier_saved_document_target.test.ts",
+    "evidence_field_text_range.test.ts",
+    "focused_desktop_evidence.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -414,7 +416,8 @@
     "lib/workPlanDiagnosticsStdio.test.ts",
     "lib/toolSearchCompleteness.test.ts",
     "lib/dynamicNativeProgram.test.ts",
-    "lib/dynamicNativeCourier.test.ts"
+    "lib/dynamicNativeCourier.test.ts",
+    "lib/evidenceTextRangeSchema.test.ts"
   ],
   "desktop_tests": [
     "test/saved_computer_owner.test.js",
@@ -5405,6 +5408,14 @@
         "backend:isolation_lifecycle.test.ts",
         "backend:conversation_intake_timing.test.ts",
         "backend:conversation_intake_recovery.test.ts"
+      ]
+    },
+    {
+      "id": "long_native_program_text_result_recovery445",
+      "coverage": [
+        "backend:evidence_field_text_range.test.ts",
+        "backend:focused_desktop_evidence.test.ts",
+        "mcp:lib/evidenceTextRangeSchema.test.ts"
       ]
     }
   ],

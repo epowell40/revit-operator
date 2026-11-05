@@ -152,6 +152,24 @@
         },
         "kind": "item_range"
       }
+    },
+    {
+      "id": "nested-field-text-page",
+      "input": {
+        "text_range": {
+          "path": "native_outcome.program_result",
+          "start": 2048,
+          "length": 1024
+        }
+      },
+      "expected": {
+        "kind": "text_range",
+        "text_range": {
+          "start": 2048,
+          "length": 1024,
+          "path": "native_outcome.program_result"
+        }
+      }
     }
   ],
   "invalid_selectors": [
@@ -412,6 +430,39 @@
         }
       },
       "error": "must be numeric"
+    },
+    {
+      "id": "null-text-field-path",
+      "input": {
+        "text_range": {
+          "path": null,
+          "start": 0,
+          "length": 10
+        }
+      },
+      "error": "text_range.path"
+    },
+    {
+      "id": "empty-text-field-path",
+      "input": {
+        "text_range": {
+          "path": "",
+          "start": 0,
+          "length": 10
+        }
+      },
+      "error": "text_range.path"
+    },
+    {
+      "id": "control-text-field-path",
+      "input": {
+        "text_range": {
+          "path": "bad\npath",
+          "start": 0,
+          "length": 10
+        }
+      },
+      "error": "text_range.path"
     }
   ],
   "target_selection_vectors": [

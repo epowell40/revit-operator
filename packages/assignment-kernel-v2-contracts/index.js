@@ -688,7 +688,10 @@ export function parseEvidenceRetrievalSelectorV1(value) {
         || !Number.isSafeInteger(textRange.length) || textRange.length < 1 || textRange.length > 1_048_576) {
       evidenceSelectorInvalid("text_range requires start >= 0 and length 1..1048576");
     }
-    active.push({ kind: "text_range", text_range: { start: textRange.start, length: textRange.length } });
+    const fieldPath = hasOwn(textRange, "path") ? boundedSelectorString(textRange.path, 512, "text_range.path") : undefined;
+    if (fieldPath !== undefined && fieldPath !== textRange.path) evidenceSelectorInvalid("text_range.path must not contain surrounding whitespace");
+    if (fieldPath && /[\u0000-\u001f]/.test(fieldPath)) evidenceSelectorInvalid("text_range.path contains control characters");
+    active.push({ kind: "text_range", text_range: { start: textRange.start, length: textRange.length, ...(fieldPath === undefined ? {} : { path: fieldPath }) } });
   }
   if (hasOwn(request, "target_subset")) {
     if (!Array.isArray(request.target_subset) || request.target_subset.length < 1 || request.target_subset.length > 64) {
@@ -901,6 +904,23 @@ export function nativeFailureDependencyLinksV1(value, declaredTargetIdentities) 
 
 export * from "./native-continuation.js";
 export * from "./schedule-filter-state.js";
+
+/** Shared owner/MCP peer guard for projected retained strings, never native proof. */
+export function assertEvidenceTextRangePageV1(selector, response) {
+  const range=record(record(selector)?.text_range),result=record(record(response)?.result),p=record(result?.text_pagination);
+  if(range?.path===undefined){if(result?.text_pagination!==undefined)throw Error('focused_evidence_unexpected_text_pagination');return;}
+  const bad=()=>{throw Error('focused_evidence_text_pagination_invalid');};
+  if(typeof range.path!=='string'||!range.path||!Number.isSafeInteger(range.start)||range.start<0||!Number.isSafeInteger(range.length)||range.length<1)bad();
+  if(!result||typeof result.selection!=='string'||result.complete!==false||!p||p.path!==range.path||p.start!==range.start||p.requested_length!==range.length)bad();
+  const encoded=new TextEncoder().encode(result.selection),n=encoded.length;
+  if(new TextDecoder('utf-8',{fatal:true}).decode(encoded)!==result.selection)bad();
+  const source=record(result.evidence_ref);
+  if(!source||!Number.isSafeInteger(source.byte_count)||!Number.isSafeInteger(p.total_utf8_bytes)||p.total_utf8_bytes<range.start||p.total_utf8_bytes>source.byte_count
+    ||p.returned_utf8_bytes!==n||n>range.length||n>p.total_utf8_bytes-range.start)bad();
+  const end=range.start+n,more=end<p.total_utf8_bytes;
+  if(p.has_more!==more||p.next_start!==(more?end:null)||more&&n===0
+    ||p.field_complete!==(range.start===0&&!more)||p.byte_limited!==(n<Math.min(range.length,p.total_utf8_bytes-range.start)))bad();
+}
 
 /** This route edits an owned, detached family document. Its verified child
  * typography is useful progress but is never proof of a loaded project result.

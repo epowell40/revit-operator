@@ -1,4 +1,4 @@
-import {parseEvidenceRetrievalSelectorV1,assertScalarEvidencePageV1} from './index.js';
+import {parseEvidenceRetrievalSelectorV1,assertScalarEvidencePageV1,assertEvidenceTextRangePageV1} from './index.js';
 
 const fieldsSchema={type:'array',minItems:1,maxItems:64,items:{type:'string',minLength:1,maxLength:512}};
 const scalarFiltersSchema={type:'array',minItems:1,maxItems:8,items:{type:'object',additionalProperties:false,required:['field','op','value'],properties:{field:{type:'string',minLength:1,maxLength:512},op:{type:'string',enum:['eq','ne','lt','lte','gt','gte']},value:{anyOf:[{type:'string',maxLength:512},{type:'number'},{type:'boolean'},{type:'null'}]}}}};
@@ -11,12 +11,13 @@ export const FOCUSED_EVIDENCE_TOOL_V1={type:'function',strict:false,name:'operat
   'Supply exactly one of fields, itemRange, textRange or targetSubset; omit the other selector properties entirely. Never fill unused selectors with placeholders. Field selections use exact paths as selection keys; missing_fields distinguishes absence from null. complete is artifact-wide and false does not mean a selected field was clipped. '+
   'For array pages continue at pagination.next_start; selected-field rows use row_index, values and missing_fields. Targets must be exact reviewed identities. The byte budget counts JSON-encoded UTF-8, including escaping, so a textRange shorter than maxBytes can still exceed it. On refusal use the recommended shorter length at the same start, or narrower leaf fields/selected-field array pages; do not repeat the unchanged request. '+
   'Optional itemRange.filters (1..8 AND typed scalar eq/ne/lt/lte/gt/gte predicates) and orderBy (finite numeric field, asc/desc, unavailable last, stable original ties) require fields and at most5000 retained rows. Non-null comparisons require matching scalar types; missing/nonfinite values never match. eq:null/ne:null test actual null/non-null scalars, not missing fields. These discovery projections remain complete:false/source_rows_exhausted:false. row_index is the original index; start/next_start count selected ranks. pagination.selection_query separates source/match counts, unavailable values and selected_rows_exhausted. Confirm candidate size/identity with current native reads; selection is not native collection/absence proof. '+
+  'For a long text leaf such as native_outcome.program_result use textRange:{path:"native_outcome.program_result",start:0,length:4096}. Its offsets count decoded UTF-8 bytes within that string; continue at text_pagination.next_start. This avoids rerunning C# merely to recover already stored results. Field pages always have complete:false; field_complete concerns only that text, never model/collection completeness. Omit path to retain raw-artifact textRange behavior. '+
   'This text/JSON read does not dispatch Revit work, change task status, prove a native postcondition or certify completion. Use the retained content as supporting findings; perform required native and visual checks.',
   parameters:{type:'object',additionalProperties:false,required:['evidenceId','purpose'],properties:{
     evidenceId:{type:'string',pattern:'^ev1_[A-Za-z0-9_-]{32}$'},purpose:{type:'string',minLength:1,maxLength:300},
     fields:fieldsSchema,
     itemRange:{type:'object',additionalProperties:false,required:['path','start','count'],properties:{path:{type:'string',minLength:1,maxLength:512},start:{type:'integer',minimum:0},count:{type:'integer',minimum:1,maximum:256},fields:fieldsSchema,filters:scalarFiltersSchema,orderBy:numericOrderSchema}},
-    textRange:{type:'object',additionalProperties:false,required:['start','length'],properties:{start:{type:'integer',minimum:0},length:{type:'integer',minimum:1,maximum:4096}}},
+    textRange:{type:'object',additionalProperties:false,required:['start','length'],properties:{path:{type:'string',minLength:1,maxLength:512},start:{type:'integer',minimum:0},length:{type:'integer',minimum:1,maximum:4096}}},
     targetSubset:{type:'array',minItems:1,maxItems:64,items:{type:'string',minLength:1,maxLength:160}},
     maxBytes:{type:'integer',minimum:64,maximum:4096,description:'Focused text/JSON selection budget; defaults to4096. The full model-facing result must fit the existing8192-byte item limit.'}
   }}};
@@ -47,6 +48,7 @@ function owner(value){
 const scopeKeys=['assignment_id','session_id','run_id','generation'];
 const sameOwner=(a,b)=>[...scopeKeys,'principal_id','document_fingerprint'].every(k=>a[k]===b[k]);
 
+
 /** Only the host's current-owner callback supplies scope. Storage performs its
  * ordinary immutable-byte/hash and selector checks; the client additionally
  * refuses a foreign or late response. No native dispatch or task-state write. */
@@ -58,7 +60,7 @@ export async function retrieveFocusedEvidenceV1(currentOwner,args,request){
     ||typeof args.purpose!=='string'||!args.purpose.trim()||args.purpose.length>300||/[\u0000-\u001f]/.test(args.purpose)
     ||/^(?:all|all evidence|everything|dump all evidence)$/i.test(args.purpose.trim())
     ||args.maxBytes!==undefined&&(!Number.isSafeInteger(args.maxBytes)||args.maxBytes<64||args.maxBytes>4096))throw Error('focused_evidence_request_invalid');
-  for(const [key,keys]of [['itemRange',['path','start','count','fields','filters','orderBy']],['textRange',['start','length']]]){
+  for(const [key,keys]of [['itemRange',['path','start','count','fields','filters','orderBy']],['textRange',['path','start','length']]]){
     if(Object.hasOwn(args,key)&&(!object(args[key])||Object.keys(args[key]).some(k=>!keys.includes(k))))throw Error('focused_evidence_selector_invalid');
   }
   const names={fields:'fields',itemRange:'item_range',textRange:'text_range',targetSubset:'target_subset'};
@@ -84,6 +86,7 @@ export async function retrieveFocusedEvidenceV1(currentOwner,args,request){
   // audit, but do not resend that index to read one selected field. The model
   // gets the exact source identity and explicit metadata omissions, not a
   // different or shortened selected value masquerading as the original.
+  assertEvidenceTextRangePageV1(selector,response);
   const {evidence_ref:_ref,...selected}=result;
   const identityKeys=['evidence_id','content_hash','byte_count','media_type','source','trust_level','session_id',
     'assignment_id','run_id','attempt_id','generation','redaction_status','secret_screening_status','created_at_utc','verification_relevance'];

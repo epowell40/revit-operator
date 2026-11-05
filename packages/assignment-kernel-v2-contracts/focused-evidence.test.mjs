@@ -2,6 +2,23 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {FOCUSED_EVIDENCE_TOOL_V1,retrieveFocusedEvidenceV1,focusedEvidenceFailureOutputV1} from './focused-evidence.js';
 
+test('field text range reaches the existing evidence route with bounded truthful pagination',async()=>{
+ const input={evidenceId:args.evidenceId,purpose:'Read the next part of an existing C# result',textRange:{path:'native_outcome.program_result',start:0,length:64},maxBytes:64};
+ const r=response('first returned text');r.result.evidence_ref.byte_count=72652;delete r.result.missing_fields;delete r.result.selection_origins;
+ r.result.text_pagination={path:input.textRange.path,start:0,requested_length:64,returned_utf8_bytes:19,total_utf8_bytes:12610,next_start:19,has_more:true,field_complete:false,byte_limited:true};
+ const out=await retrieveFocusedEvidenceV1(()=>binding,input,async(p,o)=>{assert.equal(p,'/evidence/retrieve');const body=JSON.parse(o.body);assert.deepEqual(body.text_range,input.textRange);assert.equal(body.max_bytes,64);return r;});
+ assert.equal(out.model_output.result.selection,'first returned text');assert.equal(out.model_output.result.complete,false);assert.equal(out.model_output.whole_task_verified,false);
+});
+
+test('field text consumer rejects malformed selectors and dishonest pagination without weakening old selectors',async()=>{
+ const input={evidenceId:args.evidenceId,purpose:'Read retained text',textRange:{path:'native_outcome.program_result',start:0,length:64},maxBytes:64};
+ const valid=()=>{const r=response('text');r.result.evidence_ref.byte_count=72652;r.result.text_pagination={path:input.textRange.path,start:0,requested_length:64,returned_utf8_bytes:4,total_utf8_bytes:12610,next_start:4,has_more:true,field_complete:false,byte_limited:true};return r;};
+ for(const mutate of [r=>delete r.result.text_pagination,r=>r.result.complete=true,r=>r.result.text_pagination.path='foreign',r=>r.result.text_pagination.start=2,r=>r.result.text_pagination.next_start=0,r=>r.result.text_pagination.total_utf8_bytes=90000,r=>r.result.text_pagination.returned_utf8_bytes=3,r=>r.result.text_pagination.field_complete=true,r=>r.result.text_pagination.has_more=false,r=>r.result.text_pagination.byte_limited=false]){const r=valid();mutate(r);await assert.rejects(retrieveFocusedEvidenceV1(()=>binding,input,async()=>r),/text_pagination/);}
+ for(const field of ['',null,42,'bad\npath'])await assert.rejects(retrieveFocusedEvidenceV1(()=>binding,{...input,textRange:{...input.textRange,path:field}},async()=>{throw Error('Malformed range must not reach transport');}),/text_range.path/);
+ const foreign=valid();foreign.result.evidence_ref.assignment_id='another';await assert.rejects(retrieveFocusedEvidenceV1(()=>binding,input,async()=>foreign),/response_invalid/);
+ await assert.rejects(retrieveFocusedEvidenceV1(()=>binding,{...input,textRange:{start:0,length:64}},async()=>valid()),/unexpected_text_pagination/);
+});
+
 test('bounded focused read failures stay fully visible without accepting success, foreign calls or oversized content',()=>{
  const call={name:'operator_retrieve_evidence',call_id:'read'};
  const error='Retained shape hints: '+ 'results[0].connectors:array, '.repeat(30);
