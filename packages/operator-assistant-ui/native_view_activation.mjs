@@ -5,7 +5,7 @@ const text=v=>typeof v==='string'&&v.trim().length>0&&v.length<=240;
  * path. Never retry an unconfirmed activation or infer model correctness. */
 export async function focusNativeReviewTarget(target,{activeViewId,activate,assertCurrent}){
  const normalized=nativeViewActivationRequest(target);
- if(!['elements','bounds','elements_and_bounds'].includes(normalized.focusKind))throw Error('native_review_focus_requires_elements_or_bounds');
+ if(!['elements','bounds','elements_and_bounds','fit'].includes(normalized.focusKind))throw Error('native_review_focus_requires_elements_or_bounds');
  await assertCurrent();
  if(activeViewId!==target.view_id){
   const opened=await activate({view_id:target.view_id});await assertCurrent();
@@ -29,7 +29,7 @@ export async function focusNativeReviewTarget(target,{activeViewId,activate,asse
 
 export const NATIVE_VIEW_ACTIVATION_TOOL={type:'function',name:'activate_revit_view',
  description:'Activate an exact existing Revit view or schedule for authorized UI navigation without changing model content. '+
-  'For deterministic focus, first activate the exact view, then use show_element_ids, paired bbox_min_xyz/bbox_max_xyz, or zoom_to_fit. In review_current_work, provide element IDs and contextual bounds together: its host sequence settles element focus before contextual zoom, without another model turn. Direct combined navigation is not confirmed unless the fresh actual sheet viewport contains the requested bounds. Do not combine zoom_to_fit with either. '+
+  'Request deterministic focus in one call with the exact view ID and show_element_ids, paired bbox_min_xyz/bbox_max_xyz, or zoom_to_fit. The host first activates and confirms that view when necessary, then applies focus there; an unconfirmed step stops the sequence without retry. Element focus settles before contextual bounds when both are provided. In review_current_work the same host sequence is available. Focus is not confirmed unless fresh actual native observations support the request. Do not combine zoom_to_fit with either. '+
   'Derive element IDs and bounds from fresh native geometry, never screenshot pixels. Bounds use the target view coordinate space: model feet for model views; sheet feet with z=0 for sheets. Never use model-coordinate bounds on a sheet. '+
   'On a sheet, an inspected schedule definition ID may be focused directly: native Revit resolves its unique actual placement on that sheet. Missing or repeated placements stay unconfirmed. This navigation association does not replace the definition ID in native verification. '+
   'For host model elements on a sheet, prefer show_element_ids without bounds: native Revit localizes their unique placed view and projection transforms, then frames the actual projected footprint with a small context margin. Include relevant neighboring model elements when wider context is needed. Ambiguous placements, unsupported crop or missing geometry stay unconfirmed; do not guess sheet coordinates or change elements to obtain focus. Native associations are navigation only, not proof that symbols render clearly. '+
@@ -38,10 +38,10 @@ export const NATIVE_VIEW_ACTIVATION_TOOL={type:'function',name:'activate_revit_v
  parameters:{type:'object',additionalProperties:false,properties:{
   view_id:{type:'integer',description:'Exact existing view/schedule ID. Required for focus.'},
   view_name:{type:'string',description:'Exact existing view/schedule name, for plain activation when ID is unavailable.'},
-  show_element_ids:{type:'array',minItems:1,maxItems:200,items:{type:'integer'},description:'Existing native element IDs to show in the already active exact view. All must be confirmed shown.'},
+  show_element_ids:{type:'array',minItems:1,maxItems:200,items:{type:'integer'},description:'Existing native element IDs to show in the exact view after host-confirmed activation. All must be confirmed shown.'},
   bbox_min_xyz:{type:'array',minItems:3,maxItems:3,items:{type:'number'},description:'Minimum [x,y,z] in target-view coordinates: model feet for model views, sheet feet (z=0) for sheets. Pair with bbox_max_xyz. For physical model elements on a sheet prefer show_element_ids without bounds, using native projection.'},
   bbox_max_xyz:{type:'array',minItems:3,maxItems:3,items:{type:'number'},description:'Maximum [x,y,z] in target-view coordinates: model feet for model views, sheet feet (z=0) for sheets. Pair with bbox_min_xyz; never copy model bounds onto a sheet.'},
-  zoom_to_fit:{type:'boolean',description:'Fit the already active exact view. Does not select a stable detailed review region.'}
+  zoom_to_fit:{type:'boolean',description:'Fit the exact view after host-confirmed activation. Does not select a stable detailed review region.'}
  },anyOf:[{required:['view_id']},{required:['view_name']}]}};
 
 /** Existing native navigation only. Keep omitted legacy fields omitted, and
@@ -81,6 +81,7 @@ function sameIdentity(before,context){
  const after=identity(context);
  if(Object.keys(before).some(k=>before[k]!==after[k]))throw Error('native_view_activation_context_changed');
 }
+export function assertNativeViewContextUnchanged(before,after){sameIdentity(identity(before),after);}
 
 function confirmedElementFocus(requested,shown,missing,associations,sheetId){
  if(!Array.isArray(shown)||!shown.every(positive)||new Set(shown).size!==shown.length||!Array.isArray(missing)||missing.length)return false;
