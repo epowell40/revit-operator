@@ -66,4 +66,3 @@ test('host preserves opaque compacted input and SDK APIPromise helpers without m
  const promise=createOpenAiClient('synthetic').responses.create(body as any);assert.equal(typeof promise.withResponse,'function');await promise;
  assert.equal(JSON.stringify(body),original);assert.deepEqual(sent[0].input,input);assert.deepEqual(sent[0].include,['reasoning.encrypted_content']);
 }));
-
