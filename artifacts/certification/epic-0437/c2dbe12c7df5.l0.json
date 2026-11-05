@@ -1788,7 +1788,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/conversation_intake_model.ts",
-      "sha256": "sha256:8497ada7045239d55e1514b57b5d172e320f7dddb01e33ba9686738c0890f8dd"
+      "sha256": "sha256:c6e75d126f0ab253c63214fb8c76ce720e7b4d0aa63787e58c8ffba07c5e9446"
     },
     {
       "path": "apps/operator-backend/src/brains/conversation_work_profile.ts",
@@ -3005,7 +3005,7 @@
     },
     {
       "path": "apps/operator-backend/src/desktop_computer.ts",
-      "sha256": "sha256:3a67f84a14f7a5cd2e76ed5032d60aff08660d0bac6ff2a74d35da49c673a7d4"
+      "sha256": "sha256:86abc84b2f0a203d552393e9957e88e72baad0a89bd9883fa7bda37264375046"
     },
     {
       "path": "apps/operator-backend/src/desktop_image_delivery.ts",
@@ -3013,7 +3013,7 @@
     },
     {
       "path": "apps/operator-backend/src/desktop_response_store.ts",
-      "sha256": "sha256:1b731bc109b9f64fb053319cc07f58011c7e6d901129d2f24c8716b4525914ef"
+      "sha256": "sha256:5c0714cc0d96a19a95b1405d3920c0f0054b551330cb2ebb0f4aed1558a0e438"
     },
     {
       "path": "apps/operator-backend/src/deterministic/aec_level_identity.ts",
@@ -3941,7 +3941,11 @@
     },
     {
       "path": "apps/operator-backend/src/openai_client.ts",
-      "sha256": "sha256:d9f6ae66815bc00a09a7c11b3b40ffa967eae03bd969f97e3dcf4abd1a00a0ec"
+      "sha256": "sha256:6a658a17a39ee61229b81e51c91c25cf8862078eb60e53669538f8332714c33a"
+    },
+    {
+      "path": "apps/operator-backend/src/openai_data_policy.ts",
+      "sha256": "sha256:340deb0ffa1e49116bf9aebcbc984e65d646a5717b8cb8798cf18daa35b8b750"
     },
     {
       "path": "apps/operator-backend/src/operator_backend_auth.ts",
@@ -5654,6 +5658,10 @@
     {
       "path": "apps/operator-backend/test/desktop_provider_diagnostic.test.ts",
       "sha256": "sha256:d7a684cd4da7abbecd3382d7cfaa8cc736259be2481d811c56461294a377cd76"
+    },
+    {
+      "path": "apps/operator-backend/test/desktop_provider_policy.test.ts",
+      "sha256": "sha256:57c72c84193bb6333a130a2d9162bf3bd44f4bc39ba5ac17894fed2e17f1ff9b"
     },
     {
       "path": "apps/operator-backend/test/desktop_provider_turn.test.ts",
@@ -7446,6 +7454,10 @@
     {
       "path": "apps/operator-backend/test/openai_brain_spatial_prompt.test.ts",
       "sha256": "sha256:17fc48cf7284f2ad3acac18f99dbcbc95470e64597a5c0ff162cc34896be1d16"
+    },
+    {
+      "path": "apps/operator-backend/test/openai_data_policy.test.ts",
+      "sha256": "sha256:63513e5c153a927de1abcbd7998d1a82543a06b5a8c2806b035268902d9ecdac"
     },
     {
       "path": "apps/operator-backend/test/operator_backend_auth_lease.test.ts",
@@ -12433,7 +12445,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:0ae3d21574a0702e05173a00fa87e00deac966f446c7a2c71da554f2387d1e98",
+  "inputs_hash": "sha256:b1653b7fe3ce4cdfa2417dee03c1bbc98fb100cdec247ba7a74147d080466c0e",
   "result": {
     "passed": true,
     "checks": [
