@@ -1,6 +1,8 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "improvement_redact.test.ts",
+    "improvement_export_credentials.test.ts",
     "isolation_lifecycle.test.ts",
     "postedit_preservation_progress.test.ts",
     "pending_inspection_requirements.test.ts",
@@ -601,6 +603,13 @@
     "OperatorCourierRuntimeProfileTests"
   ],
   "failure_families": [
+    {
+      "id": "short_credentials_removed_from_structured_support_export455",
+      "coverage": [
+        "backend:improvement_redact.test.ts",
+        "backend:improvement_export_credentials.test.ts"
+      ]
+    },
     {
       "id": "linked_spatial_inventory_discovery391",
       "coverage": [

@@ -79,6 +79,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.4'
+      - name: Install checksum-pinned local scanner
+        run: echo "GITLEAKS_PATH=$(node scripts/install-gitleaks.mjs "$RUNNER_TEMP/operator-gitleaks")" >> "$GITHUB_ENV"
+      - name: Scanner boundary regressions
+        run: node --test scripts/check-secrets.test.mjs
       - run: bash scripts/check-secrets.sh
 
   operator-deploy:
