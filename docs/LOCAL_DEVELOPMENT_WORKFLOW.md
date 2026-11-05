@@ -17,6 +17,14 @@ The normal local endpoint is `http://127.0.0.1:7007`. Keep local services bound
 to loopback unless a self-hosting task explicitly requires another reviewed
 network configuration.
 
+For tests that spawn other runtimes, prepend the approved Node directory to the
+test process PATH as well as launching that Node executable. A pinned parent
+does not pin a PowerShell child's PATH. Scope `OPERATOR_DESKTOP_NO_LISTEN=1`
+to module imports with `try/finally`; restore the prior value before startup
+smokes spawn a Sidecar. Retain failed receipts when diagnosing test-environment
+mistakes. Never relax executable, release-root or ownership checks to make a
+launcher test pass.
+
 Architecture qualification must start the backend with
 `OPERATOR_ASSIGNMENT_KERNEL_V2=1`. Shared-token mode remains a single local
 trust boundary; the backend binds those Assignments to the stable,

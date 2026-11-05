@@ -1,6 +1,10 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "openai_data_policy.test.ts",
+    "desktop_provider_policy.test.ts",
+    "improvement_redact.test.ts",
+    "improvement_export_credentials.test.ts",
     "isolation_lifecycle.test.ts",
     "postedit_preservation_progress.test.ts",
     "pending_inspection_requirements.test.ts",
@@ -367,7 +371,9 @@
     "task_review_policy.test.ts",
     "desktop_execution_guidance.test.ts",
     "conversation_intake_timing.test.ts",
-    "courier_saved_document_target.test.ts"
+    "courier_saved_document_target.test.ts",
+    "evidence_field_text_range.test.ts",
+    "focused_desktop_evidence.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -414,7 +420,8 @@
     "lib/workPlanDiagnosticsStdio.test.ts",
     "lib/toolSearchCompleteness.test.ts",
     "lib/dynamicNativeProgram.test.ts",
-    "lib/dynamicNativeCourier.test.ts"
+    "lib/dynamicNativeCourier.test.ts",
+    "lib/evidenceTextRangeSchema.test.ts"
   ],
   "desktop_tests": [
     "test/saved_computer_owner.test.js",
@@ -598,6 +605,14 @@
     "OperatorCourierRuntimeProfileTests"
   ],
   "failure_families": [
+    {"id":"host_response_storage_preserves_bound_owner_continuity456","coverage":["backend:openai_data_policy.test.ts","backend:desktop_provider_policy.test.ts"]},
+    {
+      "id": "short_credentials_removed_from_structured_support_export455",
+      "coverage": [
+        "backend:improvement_redact.test.ts",
+        "backend:improvement_export_credentials.test.ts"
+      ]
+    },
     {
       "id": "linked_spatial_inventory_discovery391",
       "coverage": [
@@ -5405,6 +5420,14 @@
         "backend:isolation_lifecycle.test.ts",
         "backend:conversation_intake_timing.test.ts",
         "backend:conversation_intake_recovery.test.ts"
+      ]
+    },
+    {
+      "id": "long_native_program_text_result_recovery445",
+      "coverage": [
+        "backend:evidence_field_text_range.test.ts",
+        "backend:focused_desktop_evidence.test.ts",
+        "mcp:lib/evidenceTextRangeSchema.test.ts"
       ]
     }
   ],

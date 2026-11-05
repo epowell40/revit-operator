@@ -26,3 +26,51 @@ test("redactUnknown walks objects and preserves structure", () => {
   assert.ok((r as any).nested.email.includes("<email>"));
 });
 
+test("short structured credentials are removed independently of length and nesting", () => {
+  const value = { api_key: "short", nested: { password: 1234, OPENAI_API_KEY: "tiny", clientSecret: "x",
+    refresh_token: "r", authorization: "Basic c2hvcnQ=", cookie: "sid=small" },
+    credentials: { username: "synthetic", password: "hidden" },
+    list: [{ AWS_SECRET_ACCESS_KEY: "s" }, { name: "X-Api-Key", value: "abc" }, { key: "Authorization", value: "Bearer a" }] };
+  const result = redactUnknown(value);
+  for (const item of [result.api_key, ...Object.values(result.nested), result.credentials,
+    result.list[0].AWS_SECRET_ACCESS_KEY, result.list[1].value, result.list[2].value])
+    assert.equal(item, "<redacted:credential>");
+  assert.equal(value.api_key, "short", "export redaction must not alter retained source evidence");
+});
+
+test("prefixed workstation tokens and service session keys are credentials too", () => {
+  const result=redactUnknown({OPERATOR_TOKEN:'short',service_secret:'small',session_key:'tiny',
+    headers:[{name:'X-Operator-Token',value:'a'}],token_id:'identifier',token_count:3});
+  for(const value of[result.OPERATOR_TOKEN,result.service_secret,result.session_key,result.headers[0].value])
+    assert.equal(value,'<redacted:credential>');
+  assert.equal(result.token_id,'identifier');assert.equal(result.token_count,3);
+});
+
+test("credential-shaped text is scrubbed without consuming adjacent diagnostics", () => {
+  const value = 'api_key=tiny&status=failed\n{"password":"x","token_count":12}\nAuthorization: Basic short\nnext=ready';
+  const result = redactString(value);
+  for (const secret of ["tiny", '"x"', "Basic short"]) assert.ok(!result.includes(secret));
+  assert.ok(result.includes("status=failed"));
+  assert.ok(result.includes('"token_count":12'));
+  assert.ok(result.includes("next=ready"));
+  assert.ok(!redactString("Bearer a").includes("Bearer a"));
+  assert.ok(!redactString("HTTP failed; Authorization: Bearer tiny").includes("tiny"));
+});
+
+test("header records and prototype-shaped input cannot bypass structured redaction", () => {
+  const value = JSON.parse('{"__proto__":{"api_key":"small"},"headers":[{"Name":"Authorization","Value":"Basic small"}]}');
+  const result = redactUnknown(value);
+  assert.equal(Object.getPrototypeOf(result), Object.prototype);
+  assert.ok(Object.hasOwn(result, "__proto__"));
+  assert.equal(result.__proto__.api_key, "<redacted:credential>");
+  assert.equal(result.headers[0].Value, "<redacted:credential>");
+});
+
+test("ordinary task IDs counts flags and model keys remain diagnostic data", () => {
+  const value = { token_count: 12, max_tokens: 50, secret_count: 0, has_api_key: true,
+    password_present: false, source_hash: "sha256:short", key: "Comments", value: "KEEP",
+    name: "Comments", status: "ready", api_key: null, nested: [{ name: "Mark", value: "P-1" }] };
+  const result = redactUnknown(value);
+  assert.deepEqual(result, value);
+});
+

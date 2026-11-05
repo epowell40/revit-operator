@@ -1,4 +1,5 @@
 import { selectEvidenceItemPage } from "./item_page.js";
+import {selectFieldTextRange} from './field_text_range.js';
 import {admitEvidenceImage,noteStoredEvidenceImage} from './image_retention.js';
 import fs from "node:fs";
 import path from "node:path";
@@ -478,6 +479,7 @@ export function retrieveEvidence(request: EvidenceRetrievalRequest): EvidenceRet
   let selection: unknown;
   let complete = false;
   let pagination: EvidenceRetrievalResult["pagination"];
+  let textPagination: EvidenceRetrievalResult["text_pagination"];
   let missingFields: string[] | undefined;
   let selectionOrigins: Record<string, "payload" | "deterministic_projection"> | undefined;
   const parsed = parseRaw(bytes, ref.media_type);
@@ -488,10 +490,15 @@ export function retrieveEvidence(request: EvidenceRetrievalRequest): EvidenceRet
     selection = { media_type: ref.media_type, data_base64: bytes.toString("base64") };
     complete = true;
   } else if (selector.kind === "text_range") {
-    const start = selector.text_range.start;
-    const length = Math.min(selector.text_range.length, maxBytes);
-    selection = bytes.subarray(start, Math.min(bytes.length, start + length)).toString("utf8");
-    complete = start === 0 && length >= bytes.length;
+    if(selector.text_range.path!==undefined){
+      const page=selectFieldTextRange(selectPath(selectable,selector.text_range.path),{...selector.text_range,path:selector.text_range.path},maxBytes);
+      selection=page.selection;textPagination=page.text_pagination;
+    }else{
+      const start = selector.text_range.start;
+      const length = Math.min(selector.text_range.length, maxBytes);
+      selection = bytes.subarray(start, Math.min(bytes.length, start + length)).toString("utf8");
+      complete = start === 0 && length >= bytes.length;
+    }
   } else if (selector.kind === "item_range") {
     const array = selectPath(selectable, selector.item_range.path);
     if (!Array.isArray(array)) throw new Error("item_range.path must select an array." + retainedShapeHints(selectable));
@@ -546,7 +553,9 @@ export function retrieveEvidence(request: EvidenceRetrievalRequest): EvidenceRet
       } while (length > 1 && Buffer.byteLength(JSON.stringify(bytes.subarray(start, start + length).toString("utf8")), "utf8") > maxBytes);
       throw new Error(`${prefix} Text range length counts raw bytes; escaping also consumes the output budget. Retry the same evidence at the same start with recommended length: ${length}. Keep the byte budget unchanged.`);
     }
-    throw new Error(`${prefix} Select narrower leaf fields; for an array, use itemRange with selected fields and page continuation. Do not repeat the unchanged selection.` + retainedShapeHints(selectable));
+    const fieldHint=selector.kind==='fields'&&selector.fields.length===1&&typeof (selection as Record<string,unknown>)[selector.fields[0]!] ==='string'
+      ? ` For this text leaf use textRange:{path:${JSON.stringify(selector.fields[0])},start:0,length:4096} and continue at text_pagination.next_start; do not rerun native work solely to recover stored text.` : '';
+    throw new Error(`${prefix} Select narrower leaf fields; for an array, use itemRange with selected fields and page continuation. Do not repeat the unchanged selection.` + fieldHint + retainedShapeHints(selectable));
   }
   appendEvidenceTelemetry({
     session_id: ref.session_id,
@@ -562,6 +571,7 @@ export function retrieveEvidence(request: EvidenceRetrievalRequest): EvidenceRet
     estimated_model_tokens_avoided: null
   });
   return { schema: EVIDENCE_RETRIEVAL_SCHEMA, evidence_ref: ref, selection, returned_bytes: selectedBytes, complete,
+    ...(textPagination ? {text_pagination:textPagination} : {}),
     ...(image ? { image_byte_count: bytes.length, image_byte_limit: maxBytes } : {}),
     ...(pagination ? { pagination } : {}), ...(missingFields ? { missing_fields: missingFields, selection_origins: selectionOrigins } : {}) };
 }
