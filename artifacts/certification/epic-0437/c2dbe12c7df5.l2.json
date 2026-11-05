@@ -3849,7 +3849,7 @@
     },
     {
       "path": "apps/operator-backend/src/improvement/redact.ts",
-      "sha256": "sha256:3cc224bce0359120d2bf40f32069ba6208d29b3e3162b679eae8e9966e8ed938"
+      "sha256": "sha256:c96b5a708c40941042c5fe6fcdaf486aa6d847912da6f73f86a82da1abc3cc0e"
     },
     {
       "path": "apps/operator-backend/src/improvement/skill_candidate_miner.ts",
@@ -7012,6 +7012,10 @@
       "sha256": "sha256:ace81a67f472c03440044f20affe77a865ec3149b4606a9649701aa2fda93080"
     },
     {
+      "path": "apps/operator-backend/test/improvement_export_credentials.test.ts",
+      "sha256": "sha256:f6771a66370351e6a61d180f3b77a6e6849213432dd1891ce27acbc245479112"
+    },
+    {
       "path": "apps/operator-backend/test/improvement_jobs.test.ts",
       "sha256": "sha256:b0617b0d629e8062e719a7458346f1537cd6b9e6d576f2ef49d32dc9d9b7ef19"
     },
@@ -7021,7 +7025,7 @@
     },
     {
       "path": "apps/operator-backend/test/improvement_redact.test.ts",
-      "sha256": "sha256:0db4c5db8a08105383b24e3dba7987a60b26f7ceaa988c1c049da10a8357d8de"
+      "sha256": "sha256:6735a197e1ca1f34e95dd8db34057586b7cb0e8c6800711ebf3d3acf3ac39c70"
     },
     {
       "path": "apps/operator-backend/test/inline_accessory_bookkeeping.fixtures.ts",
@@ -12429,7 +12433,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:1a8f82de6564f853bf6fce9ff36476a652df73373ed3fdd59065e3f4caa2b68b",
+  "inputs_hash": "sha256:0ae3d21574a0702e05173a00fa87e00deac966f446c7a2c71da554f2387d1e98",
   "result": {
     "passed": true,
     "checks": [
