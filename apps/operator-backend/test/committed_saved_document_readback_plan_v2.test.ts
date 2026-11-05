@@ -1,3 +1,4 @@
+import {beginRevitCourierTurnContext,endRevitCourierTurnContext} from '../src/courier/revit_courier_context.js';
 import {savedCopyHandoffV2} from '../src/assignments/saved_copy_handoff_v2.js';
 import {deriveTerminalResultV2} from '../src/assignments/assignment_kernel_v2_terminal_result.js';
 import assert from 'node:assert/strict';
@@ -30,10 +31,12 @@ function fixture(){
     saved_document:{...identity,is_modified:false,is_modifiable:false,is_family_document:false}}};
 }
 
-for(const variant of ['exact','prior_verified_stage_history','native_session_transition','dirty_document','wrong_hash','wrong_native_session','read_failure','read_schema_rejected','paused_after_save','last_provider_call','last_provider_call_advisory','last_provider_call_schema_rejected','last_provider_call_schema_changed','last_provider_call_pause_at_dispatch'] as const)
+for(const variant of ['courier_save_transition','exact','prior_verified_stage_history','native_session_transition','dirty_document','wrong_hash','wrong_native_session','read_failure','read_schema_rejected','paused_after_save','last_provider_call','last_provider_call_advisory','last_provider_call_schema_rejected','last_provider_call_schema_changed','last_provider_call_pause_at_dispatch'] as const)
 test(`ordinary native save ${variant} receives one guarded fresh file/document read without another save`,async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-host-save-check-')),previous=process.env.OPERATOR_WORKSPACE_ROOT;
  process.env.OPERATOR_WORKSPACE_ROOT=root;__testOnlyResetGoalListCache();
+ const previousTransport=process.env.OPERATOR_REVIT_TRANSPORT;
+ if(variant==='courier_save_transition')process.env.OPERATOR_REVIT_TRANSPORT='courier';
  const fixtureEnv:Record<string,string>={REVIT_OPERATOR_MODE:'development',OPERATOR_HOSTED_ENABLED:'0',OPERATOR_ADVISORY_VERIFICATION_SESSION_IDS:'save-host-session',OPERATOR_ADVISORY_MAX_PROVIDER_CALLS:'64'};
  const oldEnv=Object.fromEntries(Object.keys(fixtureEnv).map(k=>[k,process.env[k]]));
  if(variant==='last_provider_call_advisory')Object.assign(process.env,fixtureEnv);
@@ -73,9 +76,14 @@ test(`ordinary native save ${variant} receives one guarded fresh file/document r
     }
    }},async callTool(_tool:string,args:any,context:any){
     calls.push(args);const lease=context.assignmentKernelV2;context.onMcpAccepted();
-    const read=args.path==='/revit/inspect-exported-files';if(read&&variant==='read_failure')throw Error('native_read_failed');
+    const read=args.path==='/revit/inspect-exported-files';
+    if(variant==='courier_save_transition'){const transport=JSON.parse(fs.readFileSync(path.join(root,'config/revit-courier-context.json'),'utf8'));assert.equal(transport.target_document_path,read?f.output:'C:/fixture/source.rvt','actual automatic readback must target the saved document');assert.equal(transport.target_document_title,read?'result':'source');}
+if(read&&variant==='read_failure')throw Error('native_read_failed');
     if(!read&&lastCall)fixtureProviderReceipt(limit-1);
     const payload:any=read?structuredClone(f.read):{status:'Success',ok:true,artifact_receipt:f.receipt};
+    const nativeCorrelation='native:'+lease.operation_id;
+    const courierJobId=lease.operation_id.slice('opv2_'.length);
+    if(variant==='courier_save_transition'&&!read){const folder=path.join(root,'artifacts/revit-courier/jobs',courierJobId);fs.mkdirSync(folder,{recursive:true});fs.writeFileSync(path.join(folder,'job.json'),JSON.stringify({version:'revit-operator.revit-tool-job.v1',id:courierJobId,assignment_operation_id:lease.operation_id,correlation_id:courierJobId,session_id:binding.session_id,method:'POST',path:'/revit/save-as',body:args.body,status:'succeeded',target_executor_id:'fixture-executor',target_document_title:'source',target_document_path:'C:/fixture/source.rvt',claim:{executor_id:'fixture-executor'}}));fs.writeFileSync(path.join(folder,'result.json'),JSON.stringify({version:'revit-operator.revit-tool-result.v1',id:courierJobId,correlation_id:courierJobId,status:'succeeded',result:payload}));}
     if(read){if(variant==='dirty_document')payload.saved_document.is_modified=true;if(variant==='wrong_hash')payload.files[0].sha256='c'.repeat(64);
      if(variant==='wrong_native_session')payload.saved_document.session_id='different';}
     const op=getAssignmentKernelSnapshotV2(goal.id)!.operations[lease.operation_id]!;
@@ -85,13 +93,14 @@ test(`ordinary native save ${variant} receives one guarded fresh file/document r
       status:'succeeded',dispatch_state:'dispatched',persistent_effect:read?'none':'applied',native_transaction_state:'not_applicable',authority:'native-host',
       affected_target_identities:['artifact_path:'+f.output.toLowerCase()],result_schema_id:`operator-native/POST:${args.path}/v2`,observation_required:true,
       ...(!read?{native_artifact_receipt:f.receipt}:{}),raw_payload_hash:createHash('sha256').update(canonicalJsonV2(payload)).digest('hex'),
-      receipt_id:'receipt:'+lease.operation_id,native_correlation_id:'native:'+lease.operation_id,request_identity:lease.request_identity,completed_at:new Date().toISOString()},
+      receipt_id:'receipt:'+lease.operation_id,native_correlation_id:nativeCorrelation,request_identity:lease.request_identity,completed_at:new Date().toISOString()},
      observation:{raw_payload:payload,semantic_facts:[{fact_id:op.fulfillment_role==='verification'?'verification.result_available':'control.result_available',
       fact_class:op.fulfillment_role==='verification'?'verification':'control',value:true}],verification_relevance:['control']}}};
    }};
   const owner=beginTeammateLoopOwner(runtime,{version:'operator.backend.v1',session_id:binding.session_id,message_id:'save-task',user_text:goal.objective,
    assignment_id:binding.assignment_id,assignment_run_id:binding.run_id,assignment_generation:binding.generation,
    context:{revit:{source:{live:true},process_id:42,document:{title:'Fixture',path:'C:/fixture/source.rvt',projectIdentity:{fingerprint:'a'.repeat(64)}}}}} as any,{canonicalSupervisionOnly:!priorStage});
+  const courier=variant==='courier_save_transition'?beginRevitCourierTurnContext({session_id:binding.session_id,message_id:'save-task',ttl_ms:600000,target_executor_id:'fixture-executor',target_document_title:'source',target_document_path:'C:/fixture/source.rvt'}):null;
   try {
    if(priorStage){
     // Reproduce346's cumulative helper history without claiming these synthetic
@@ -104,12 +113,13 @@ test(`ordinary native save ${variant} receives one guarded fresh file/document r
     assert.equal(teammateLoopReceiptForOwner(runtime)?.verification_action_ids.length,6);
    }
    const response:any=await handleCodexDynamicToolCall(runtime,{id:'user-save',method:'item/tool/call',params:{namespace:'revit_operator',turnId:'save-turn',tool:'revit_call_tool',arguments:f.input}} as any);
+   if(variant==='courier_save_transition')assert.equal(JSON.parse(fs.readFileSync(path.join(root,'config/revit-courier-context.json'),'utf8')).target_document_path,f.output,'saved-path target must reach the existing courier consumer');
    __testOnlyResetGoalListCache();const s=getAssignmentKernelSnapshotV2(goal.id)!,apply=Object.values(s.operations).find(o=>o.requested_effect==='apply')!;
    assert.equal(apply.result?.persistent_effect,'applied');assert.equal(calls.filter(c=>c.path==='/revit/save-as').length,1);assert.equal(response.success,true);
    assert.equal(validations.filter(c=>c.path==='/revit/inspect-exported-files').length,variant==='paused_after_save'?0:schemaRejected?1:2);
    assert.equal(calls.filter(c=>c.path==='/revit/inspect-exported-files').length,variant==='paused_after_save'||schemaRejected||noDispatch?0:1);
    const verified=apply.verification_operation_ids.some(id=>s.operations[id]!.observation_ids.some(oid=>s.observations[oid]!.facts.some(x=>x.fact_id==='verification.postcondition_satisfied'&&x.value===true)));
-   const expectedVerified=['exact','native_session_transition','prior_verified_stage_history'].includes(variant)||lastCall&&!schemaRejected&&!noDispatch;
+   const expectedVerified=['courier_save_transition','exact','native_session_transition','prior_verified_stage_history'].includes(variant)||lastCall&&!schemaRejected&&!noDispatch;
    assert.equal(verified,expectedVerified);assert.equal(deriveProgressGapsV2(s).some(g=>g.gap_id==='verification:'+apply.operation_id),!expectedVerified);
    assert.deepEqual(s.in_flight_operation_ids,[]);assert.deepEqual(s.unresolved_unknown_operation_ids,[]);
    if(priorStage){assert.equal(teammateLoopReceiptForOwner(runtime)?.verification_action_ids.length,7);assert.equal(teammateLoopReceiptForOwner(runtime)?.verified,true);}
@@ -157,6 +167,6 @@ test(`ordinary native save ${variant} receives one guarded fresh file/document r
       const altered=structuredClone(plain);mutate(altered);assert.equal(committedSavedDocumentReadbackPlanV2(altered,altered.operations[apply.operation_id]),null);
     }
    }
-  }finally{endTeammateLoopOwner(owner);}
- });}finally{for(const [k,v]of Object.entries(oldEnv)){if(v===undefined)delete process.env[k];else process.env[k]=v;}__testOnlyResetGoalListCache();if(previous===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=previous;fs.rmSync(root,{recursive:true,force:true});}
+  }finally{endRevitCourierTurnContext(courier);endTeammateLoopOwner(owner);}
+ });}finally{if(previousTransport===undefined)delete process.env.OPERATOR_REVIT_TRANSPORT;else process.env.OPERATOR_REVIT_TRANSPORT=previousTransport;for(const [k,v]of Object.entries(oldEnv)){if(v===undefined)delete process.env[k];else process.env[k]=v;}__testOnlyResetGoalListCache();if(previous===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=previous;fs.rmSync(root,{recursive:true,force:true});}
 });

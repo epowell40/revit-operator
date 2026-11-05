@@ -89,6 +89,7 @@ import { committedCreatedScheduleReadbackPlanV2 } from "../verification/created_
 import { committedScheduleCellBackgroundReadbackPlanV2 } from "../verification/schedule_cell_appearance_v2.js";
 import { committedNativeSchedulePresentationReadbackPlanV2, committedNativeSchedulePresentationReadbackPlansV2 } from "../verification/native_schedule_presentation_v2.js";
 import { committedSavedDocumentReadbackPlanV2 } from '../verification/committed_saved_document_readback_plan_v2.js';
+import {refreshRevitCourierDocumentTarget} from '../courier/revit_courier_context.js';
 import { codexRequestedScopeReadbackV1 } from './codex_requested_scope_readback.js';
 import { committedReadRetryDecisionV2 } from '../verification/safe_committed_read_retry_v2.js';
 import { validFamilyStaticTextScopeV1 } from '../domain/assignment-kernel/work_plan_family_scope.js';
@@ -325,6 +326,7 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
     return { contentItems: [{ type: "inputText", text: teammateGate.message ?? "Host teammate-loop guard blocked this Revit call." }], success: false };
   }
   if (v2Snapshot && v2Binding) {
+    refreshRevitCourierDocumentTarget(v2Snapshot);
     if (teammateGate.call?.effect === "interaction" || teammateGate.call?.effect === "completion_claim") {
       try {
         // The helper's local instruction is not the entire authenticated user
