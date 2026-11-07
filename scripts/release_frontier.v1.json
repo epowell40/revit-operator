@@ -605,7 +605,13 @@
     "OperatorCourierRuntimeProfileTests"
   ],
   "failure_families": [
-    {"id":"host_response_storage_preserves_bound_owner_continuity456","coverage":["backend:openai_data_policy.test.ts","backend:desktop_provider_policy.test.ts"]},
+    {
+      "id": "host_response_storage_preserves_bound_owner_continuity456",
+      "coverage": [
+        "backend:openai_data_policy.test.ts",
+        "backend:desktop_provider_policy.test.ts"
+      ]
+    },
     {
       "id": "short_credentials_removed_from_structured_support_export455",
       "coverage": [
@@ -5429,6 +5435,14 @@
         "backend:focused_desktop_evidence.test.ts",
         "mcp:lib/evidenceTextRangeSchema.test.ts"
       ]
+    },
+    {
+      "id": "task_workspace_activity_and_completion458459",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/task_workspace.test.mjs",
+        "javascript:package/operator-assistant-ui/task_activity.test.mjs",
+        "javascript:package/operator-assistant-ui/computer_completion_presentation.test.mjs"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
@@ -5478,6 +5492,9 @@
     "package/operator-assistant-ui/native_code_review.test.mjs",
     "package/operator-assistant-ui/native_code_review_recovery.test.mjs",
     "package/operator-assistant-ui/native_code_source.test.mjs",
-    "package/operator-assistant-ui/visual_review_image_provenance.test.mjs"
+    "package/operator-assistant-ui/visual_review_image_provenance.test.mjs",
+    "package/operator-assistant-ui/task_workspace.test.mjs",
+    "package/operator-assistant-ui/task_activity.test.mjs",
+    "package/operator-assistant-ui/computer_completion_presentation.test.mjs"
   ]
 }
