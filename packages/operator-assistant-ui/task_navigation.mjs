@@ -2,6 +2,15 @@ export const TASK_NAVIGATION_SCHEMA = 'revit-operator.task-navigation/v1';
 const states = new Set(['working','pausing','paused','needs_input','needs_review','ready','complete','failed','unknown','loading','stopping_after_usage_limit','waiting_for_usage']);
 const text = (value, maximum) => typeof value === 'string' && value.length > 0 && value.length <= maximum;
 
+/** Observe a submitted computer request only after the relay echoes its exact
+ * user-message nonce. An idle previous conversation is not its acknowledgement.
+ * This is observer binding only, never task/operation completion evidence. */
+export function computerStateIncludesSubmittedMessage(payload, messageId) {
+  if (!text(messageId, 200) || !text(payload?.backendSessionId, 240) || !Array.isArray(payload?.messages)) return false;
+  if (payload.assignmentBindingV2 != null && !computerStateMatchesTask(payload, payload.assignmentBindingV2, payload.backendSessionId)) return false;
+  return payload.messages.some(message => message?.role === 'user' && message.id === messageId);
+}
+
 /** Read-only relay adoption for an explicitly opened saved task. Never resumes
  * work or treats a matching conversation alone as matching task identity. */
 export function computerStateMatchesTask(payload, binding, sessionId) {
