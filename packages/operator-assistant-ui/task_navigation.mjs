@@ -2,6 +2,15 @@ export const TASK_NAVIGATION_SCHEMA = 'revit-operator.task-navigation/v1';
 const states = new Set(['working','pausing','paused','needs_input','needs_review','ready','complete','failed','unknown','loading','stopping_after_usage_limit','waiting_for_usage']);
 const text = (value, maximum) => typeof value === 'string' && value.length > 0 && value.length <= maximum;
 
+/** Observe a submitted computer request only after the relay echoes its exact
+ * user-message nonce. An idle previous conversation is not its acknowledgement.
+ * This is observer binding only, never task/operation completion evidence. */
+export function computerStateIncludesSubmittedMessage(payload, messageId) {
+  if (!text(messageId, 200) || !text(payload?.backendSessionId, 240) || !Array.isArray(payload?.messages)) return false;
+  if (payload.assignmentBindingV2 != null && !computerStateMatchesTask(payload, payload.assignmentBindingV2, payload.backendSessionId)) return false;
+  return payload.messages.some(message => message?.role === 'user' && message.id === messageId);
+}
+
 /** Read-only relay adoption for an explicitly opened saved task. Never resumes
  * work or treats a matching conversation alone as matching task identity. */
 export function computerStateMatchesTask(payload, binding, sessionId) {
@@ -82,18 +91,28 @@ export async function taskDraftKey(tabId, sessionId, crypto = globalThis.crypto)
   return 'task-' + [...digest].map(value => value.toString(16).padStart(2,'0')).join('');
 }
 
-export function renderTaskList(container, tasks, selectedSessionId, onOpen) {
+export function renderTaskList(container, tasks, selectedSessionId, onOpen, options = {}) {
+  const query = String(options.query || '').trim().toLocaleLowerCase().slice(0,180);
+  const visible = query ? tasks.filter(task => `${task.title}\n${task.summary}`.toLocaleLowerCase().includes(query)) : tasks;
+  const signature = JSON.stringify([visible, selectedSessionId, query, !!options.loading, !!options.unavailable]);
+  if (container.dataset?.taskListPresentation === signature) return;
+  if (container.dataset) container.dataset.taskListPresentation = signature;
   const document = container.ownerDocument;
   container.replaceChildren();
-  if (!tasks.length) {const empty=document.createElement('p');empty.className='taskListEmpty';empty.textContent='Your tasks will appear here.';container.append(empty);return;}
-  for (const group of groupTasks(tasks, selectedSessionId)) {
+  if (options.loading || options.unavailable) {
+    const notice=document.createElement('p');notice.className='taskListEmpty';notice.setAttribute('role','status');
+    notice.textContent=options.unavailable?'Task history is unavailable. Your current conversation is retained.':'Updating saved task status…';container.append(notice);
+  }
+  if (!visible.length) {const empty=document.createElement('p');empty.className='taskListEmpty';empty.textContent=query?'No matching tasks.':options.loading?'Loading your tasks…':'Your tasks will appear here.';container.append(empty);return;}
+  for (const group of groupTasks(visible, selectedSessionId)) {
     const section=document.createElement('section'), heading=document.createElement('h3');
     heading.textContent=group.title;section.append(heading);
     for(const task of group.items) {
       const button=document.createElement('button');button.type='button';button.className='taskListRow';
       if(task.session_id===selectedSessionId)button.setAttribute('aria-current','page');
       const title=document.createElement('span');title.className='taskListTitle';title.textContent=task.title;title.title=task.title;
-      const status=document.createElement('span');status.className='taskListStatus';status.textContent=taskStateLabel(task.state);
+      const status=document.createElement('span');status.className='taskListStatus';status.textContent=options.loading || options.unavailable?'Status not confirmed':taskStateLabel(task.state);
+      button.dataset && (button.dataset.taskState = options.loading || options.unavailable?'unknown':task.state);
       button.append(title,status);button.addEventListener('click',()=>onOpen(task));section.append(button);
     }
     container.append(section);
@@ -115,16 +134,33 @@ export function sessionStartPresentation(tasks, { loading = false, unavailable =
   };
 }
 
-export function renderSessionStart(container, tasks, options, onOpen, onBrowse) {
+export function renderSessionStart(container, tasks, options, onOpen, onBrowse, onExample = () => {}) {
   const document = container.ownerDocument, model = sessionStartPresentation(tasks, options);
   // Polling the same state must not replace a keyboard-focused button.
-  const signature = JSON.stringify(model);
+  const signature = options.showSavedWork === false ? 'new-workspace/v1' : JSON.stringify([model, options.showSavedWork]);
   if (container.dataset.presentation === signature) return;
   container.dataset.presentation = signature;
   container.replaceChildren();
   const heading = document.createElement('h2'), description = document.createElement('p'), status = document.createElement('p');
-  heading.textContent = model.title; description.textContent = model.description;
+  heading.textContent = options.showSavedWork === false ? 'What would you like to work on?' : model.title;
+  description.textContent = options.showSavedWork === false ? 'Describe a task or attach a drawing. Operator will work in the open Revit model.' : model.description;
   status.textContent = model.status; status.className = 'sessionStartStatus'; status.setAttribute('role','status');
+  if (options.showSavedWork === false) {
+    container.append(heading,description);
+    const examples=document.createElement('div');examples.className='taskExamples';
+    for (const [title, detail, prompt] of [
+      ['Work through redlines','Apply clear changes and flag questions.','Review the attached redlines and apply the clear changes. Ask me about missing design information.'],
+      ['Draft from a reference','Reconstruct the visible existing conditions.','Reconstruct the visible existing conditions in the attached drawing. Keep uncertainties visible and check the result.'],
+      ['Check the current model','Report the model, view and connection.','Check the active Revit model and report its name, active view, and connection status. Do not change anything.']
+    ]) {
+      const button=document.createElement('button');button.type='button';button.className='taskExample';
+      const label=document.createElement('strong'),help=document.createElement('span');label.textContent=title;help.textContent=detail;
+      button.append(label,help);button.addEventListener('click',()=>onExample(prompt));examples.append(button);
+    }
+    container.append(examples);
+    const hint=document.createElement('p');hint.className='sessionStartStatus';hint.textContent='Previous work is in Tasks. Opening a saved task does not restart it.';container.append(hint);
+    return;
+  }
   container.append(heading, description, status);
   if (model.rows.length) {
     const label = document.createElement('h3'); label.textContent = 'Saved work'; container.append(label);
