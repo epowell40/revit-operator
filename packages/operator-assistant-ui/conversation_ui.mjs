@@ -1,3 +1,94 @@
+// Display only: these observations never establish task progress/completion.
+function activityLine(value) {
+  return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, 220) : '';
+}
+
+function friendlyActivity(value, fallback = '') {
+  const text = activityLine(value);
+  if (/waiting for (?:the next |initial )?model response|requesting initial model response/i.test(text)) return 'Waiting for the agent’s response…';
+  if (/checking result before completing|postcondition|verifying|checking the result/i.test(text)) return 'Checking the result…';
+  if (/captur.*screenshot|model requested a screenshot/i.test(text)) return 'Inspecting the current view…';
+  if (/read active Revit context|checking the active Revit project/i.test(text)) return 'Checking the current model…';
+  if (/native__(?:get|read|query|inspect|find|list|collect)[_\w]*/i.test(text)) return 'Reading model information…';
+  if (/native__(?:save|saveas)/i.test(text)) return 'Saving the model…';
+  if (/native__(?:move|set|create|delete|update|place|connect)[_\w]*/i.test(text)) return 'Applying a model operation…';
+  if (/Step \d+: running|^native__|^revit_|^execute_|^delegate_revit_task$|native-only Revit owner/i.test(text)) return 'Running a Revit operation…';
+  if (/evaluating tool calls for step/i.test(text)) return 'Preparing the next action…';
+  if (/continuing (?:the same|with tool|the saved)|assignment has ready work/i.test(text)) return 'Continuing the remaining work…';
+  if (/pause requested|stop requested|waiting for admitted work/i.test(text)) return 'Pausing after the current operation settles…';
+  if (/recovering backend|settling|rate.limit|retrying.*model/i.test(text)) return 'Waiting for the connection or service…';
+  if (/^Starting (?:computer-use run|task)/i.test(text)) return 'Starting the task…';
+  return fallback;
+}
+
+function activityTime(value) {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const time = Date.parse(value); return Number.isFinite(time) ? time : null;
+}
+
+function activityDuration(ms) {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
+export function taskActivityPresentation(input = {}) {
+  if (input.running !== true) return { visible: false, tone: 'idle', label: '', detail: '', elapsed: '', recent: [] };
+  const now = activityTime(input.now) ?? Date.now(), progress = input.progress || {};
+  const started = activityTime(progress.startedAt) ?? activityTime(input.startedAt);
+  const updated = activityTime(progress.updatedAt) ?? activityTime(input.updatedAt) ?? started;
+  const lastSeen = activityTime(input.lastSeenAt);
+  const disconnected = input.connectionLost === true || lastSeen !== null && now - lastSeen > 20000;
+  const quiet = updated !== null && now - updated > 45000;
+  const agent = activityLine(input.agentProgress);
+  const current = friendlyActivity(progress.currentAction, activityLine(progress.currentAction));
+  const latest = friendlyActivity(progress.lastEvent);
+  const label = disconnected ? 'Connection interrupted. Checking task status…' : agent || current || latest || activityLine(input.fallback) || 'Working on your task…';
+  const recent = [];
+  for (const event of (Array.isArray(input.events) ? input.events.slice(-40) : [])) {
+    const line = friendlyActivity(event?.text);
+    if (!line) continue;
+    const previous = recent.indexOf(line); if (previous >= 0) recent.splice(previous, 1);
+    recent.push(line);
+  }
+  return { visible: true, tone: disconnected || quiet ? 'waiting' : 'working', label,
+    detail: disconnected ? 'The last known task state is retained. No work has been resubmitted.'
+      : quiet ? `No new activity for ${activityDuration(now - updated)}. Waiting for an update; completion is not yet confirmed.` : '',
+    elapsed: started !== null ? `${activityDuration(now - started)} elapsed` : '', recent: recent.slice(-4) };
+}
+
+export function renderTaskActivity(container, input) {
+  if (!container) return;
+  const view = taskActivityPresentation(input);
+  container.hidden = !view.visible;
+  container.dataset.tone = view.tone;
+  if (!view.visible) { container._activityNodes = null; container.replaceChildren(); return; }
+  let nodes = container._activityNodes;
+  if (!nodes) {
+    const doc = container.ownerDocument;
+    const make = (tag, cls) => { const el = doc.createElement(tag); el.className = cls; return el; };
+    const heading = make('div', 'taskActivityHeading'), indicator = make('span', 'taskActivityIndicator');
+    indicator.setAttribute('aria-hidden', 'true');
+    const label = make('span', 'taskActivityLabel'), timer = make('span', 'taskActivityTimer');
+    label.setAttribute('role', 'status'); label.setAttribute('aria-live', 'polite');
+    timer.setAttribute('role', 'timer'); timer.setAttribute('aria-live', 'off');
+    heading.append(indicator, label, timer);
+    const detail = make('p', 'taskActivityDetail'), details = make('details', 'taskActivityHistory');
+    const summary = make('summary', ''); summary.textContent = 'Recent updates';
+    const list = make('ol', ''); details.append(summary, list); container.replaceChildren(heading, detail, details);
+    nodes = container._activityNodes = { label, timer, detail, details, list, signature: '' };
+  }
+  if (nodes.label.textContent !== view.label) nodes.label.textContent = view.label;
+  nodes.timer.textContent = view.elapsed;
+  nodes.detail.textContent = view.detail; nodes.detail.hidden = !view.detail;
+  nodes.details.hidden = !view.recent.length;
+  const signature = JSON.stringify(view.recent);
+  if (signature !== nodes.signature) {
+    nodes.signature = signature;
+    nodes.list.replaceChildren(...view.recent.map(text => { const li = container.ownerDocument.createElement('li'); li.textContent = text; return li; }));
+  }
+}
+
 export function compactWorkSummary(goal, running) {
   if (!running) return "";
   const phase = `${goal?.current_step || ""} ${goal?.current_phase || ""}`.toLowerCase();

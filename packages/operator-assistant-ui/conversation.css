@@ -189,4 +189,16 @@ textarea:focus { outline: none; }
   .productControls > button, .advancedPanel > summary { padding: 6px 5px; }
   .advancedPanelBody .speedControls { grid-template-columns: 1fr; }
 }
+.taskActivity { margin: 6px 0 20px; padding: 14px 0; border-top: 1px solid #eee; color: #555; font-size: 13px; }
+.taskActivityHeading { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.taskActivityIndicator { width: 14px; height: 14px; flex: 0 0 14px; border: 2px solid #e0e6e4; border-top-color: #367b65; border-radius: 50%; animation: taskActivityTurn 1.1s linear infinite; }
+.taskActivityLabel { flex: 1; min-width: 140px; line-height: 1.6; overflow-wrap: anywhere; }
+.taskActivityTimer { color: #777; font-size: 11px; font-variant-numeric: tabular-nums; }
+.taskActivityDetail { color: #856336; font-size: 12px; margin: 8px 0 0 24px; line-height: 1.6; }
+.taskActivity[data-tone="waiting"] .taskActivityIndicator { border-top-color: #a37c35; animation-duration: 2.5s; }
+.taskActivityHistory { margin: 10px 0 0 24px; font-size: 12px; }
+.taskActivityHistory summary { cursor: pointer; color: #777; }
+.taskActivityHistory ol { margin: 8px 0; padding-left: 18px; line-height: 1.9; }
+body:has(#taskActivity:not([hidden])) #assignmentCompactStep { display: none; }
+@keyframes taskActivityTurn { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
