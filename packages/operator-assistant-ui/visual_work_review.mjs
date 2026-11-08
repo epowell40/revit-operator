@@ -639,8 +639,18 @@ export async function reviewCurrentWork(input,host){
 }
 
 export function visualWorkReviewModelOutput(modelOutput,result,evidenceId,inspectionCloseout=null){
-  if(!result||result.schema!=='operator.visual_work_review.v1'||!safeId(evidenceId)||typeof modelOutput?.output!=='string')throw Error('visual_review_projection_invalid');
-  const envelope=JSON.parse(modelOutput.output),matches=envelope.evidence_projections?.filter(p=>p.evidence_id===evidenceId);
+  if(!result||result.schema!=='operator.visual_work_review.v1'||!safeId(evidenceId))throw Error('visual_review_projection_invalid');
+  // The first presentation delivers actual pixels. The existing host then adds
+  // its inspection-closeout result to that SAME output. Accept only the exact
+  // host-owned image blocks, keeping their order/bytes and a single text envelope.
+  const images=primaryObservationImages.get(result);let text=modelOutput?.output,deliveredImages=[];
+  if(Array.isArray(text)){
+    if(!images?.length||text.length!==images.length+1||text[0]?.type!=='input_text'||typeof text[0].text!=='string'
+      ||!images.every((image,index)=>JSON.stringify(image)===JSON.stringify(text[index+1])))throw Error('visual_review_projection_invalid');
+    deliveredImages=text.slice(1);text=text[0].text;
+  }
+  if(typeof text!=='string')throw Error('visual_review_projection_invalid');
+  const envelope=JSON.parse(text),matches=envelope.evidence_projections?.filter(p=>p.evidence_id===evidenceId);
   if(envelope.schema!=='revit-operator.model-evidence-envelope.v1'||matches?.length!==1)throw Error('visual_review_artifact_binding_missing');
   const original=matches[0],checks=Array.isArray(result.checks)?result.checks:[];
   const location=result.location?Object.fromEntries(['process_id','document_session_id','epoch','through_sequence','view_id','view_name','view_unique_id','view_type','sheet_number','document_title','identity_authority'].map(k=>[k,result.location[k]])):null;
@@ -689,8 +699,8 @@ export function visualWorkReviewModelOutput(modelOutput,result,evidenceId,inspec
   }
   if(checks.length&&!feedback.checks.length)throw Error('visual_review_projection_budget_exceeded');
   const output=wire();if(Buffer.byteLength(output,'utf8')>8192)throw Error('visual_review_projection_budget_exceeded');
-  const images=primaryObservationImages.get(result);
   if(result.state==='observed'&&(result.ok!==true||result.request?.review_mode!=='observe'||!images?.length||inspectionCloseout))throw Error('visual_review_observation_pixels_unavailable');
+  if(deliveredImages.length)return {...modelOutput,output:[{type:'input_text',text:output},...deliveredImages]};
   if(result.ok===true&&images?.length&&!inspectionCloseout&&['observed','matched','mismatch','uncertain'].includes(result.state)){
     return {...modelOutput,output:[{type:'input_text',text:output},...images]};
   }

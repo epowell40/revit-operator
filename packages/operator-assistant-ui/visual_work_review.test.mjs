@@ -399,6 +399,41 @@ test('a completed independent review also returns its actual work pixels for pri
  const feedback=JSON.parse(output.output[0].text).evidence_projections[0].visual_work_review;
  assert.equal(feedback.native_postcondition_verified,false);assert.equal(feedback.whole_task_verified,false);
 });
+
+test('post-review inspection feedback preserves already-delivered pixels and a mismatch for correction',async()=>{
+ const f=host('mismatch'),result=await reviewCurrentWork(request,f.h);
+ const original={type:'function_call_output',call_id:'review',output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{evidence_id:'ev1_review'}]})};
+ const first=visualWorkReviewModelOutput(original,result,'ev1_review');assert(Array.isArray(first.output));
+ const closeout={state:'not_submitted',reason:'visual_review_not_matched',item_id:'final_inspection'};
+ const final=visualWorkReviewModelOutput(first,result,'ev1_review',closeout);
+ assert.deepEqual(final.output.slice(1),first.output.slice(1),'No lost, duplicated, resized or replaced model images');
+ assert.equal(final.call_id,first.call_id);
+ const feedback=JSON.parse(modelText(final.output)).evidence_projections[0].visual_work_review;
+ assert.equal(feedback.state,'mismatch');assert.equal(feedback.inspection_closeout.state,'not_submitted');
+ assert.equal(feedback.native_postcondition_verified,false);assert.equal(feedback.whole_task_verified,false);
+ assert.equal(feedback.inspection_closeout.whole_task_verified,false);
+ assert.equal(f.calls.providers.length,1,'Presentation cannot issue an extra review or model call');
+ for(const change of [
+  o=>o.output.push({type:'input_text',text:'foreign extra envelope'}),
+  o=>o.output[1]={type:'input_image',image_url:'data:image/png;base64,foreign'},
+  o=>o.output[0]={type:'input_image',image_url:'data:image/png;base64,foreign'},
+ ]){const forged=structuredClone(first);change(forged);assert.throws(()=>visualWorkReviewModelOutput(forged,result,'ev1_review',closeout));}
+ assert.throws(()=>visualWorkReviewModelOutput(first,result,'ev1_foreign',closeout));
+ assert.throws(()=>visualWorkReviewModelOutput(first,structuredClone(result),'ev1_review',closeout),'Array pixels require the original host-owned observation');
+});
+
+test('accepted inspection closeout updates text once while retaining exact current observation images',async()=>{
+ const f=host(),result=await reviewCurrentWork(request,f.h),original={type:'function_call_output',call_id:'review',output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{evidence_id:'ev1_review'}]})};
+ const first=visualWorkReviewModelOutput(original,result,'ev1_review');
+ const final=visualWorkReviewModelOutput(first,result,'ev1_review',{state:'submitted',outcome:'complete',item_id:'inspect'});
+ assert.deepEqual(final.output.slice(1),first.output.slice(1));
+ const feedback=JSON.parse(modelText(final.output)).evidence_projections[0].visual_work_review;
+ assert.equal(feedback.inspection_closeout.outcome,'complete');
+ assert.equal(feedback.inspection_closeout.whole_task_verified,false);
+ assert.equal(feedback.native_postcondition_verified,false);assert.equal(feedback.whole_task_verified,false);
+ assert.equal(final.output.filter(b=>b.type==='input_text').length,1);
+ assert(Buffer.byteLength(final.output[0].text)<=8192);
+});
 test('observation cannot close inspection or request code approval, and stale or foreign captures remain unavailable',async()=>{
  for(const extra of [{complete_inspection_item_id:'inspect'},{code_evidence_ids:['ev1_code']},{recheck_evidence_id:'ev1_old'}])assert.throws(()=>normalizeVisualReviewRequest({...request,review_mode:'observe',...extra}));
  for(const fault of ['native-change','foreign-owner']){const f=host();let n=0;f.h.readContext=async()=>{const s=snapshot();if(n++&&fault==='native-change')s.context.nativeChangeObservations.throughSequence=1;return s;};
