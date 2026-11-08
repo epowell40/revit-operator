@@ -127,7 +127,8 @@ namespace RevitBridge.Logic.Handlers
                     var box = SafeBoundingBox(element, view);
                     var curve = element is CurveElement curveElement ? SafeCurve(curveElement) : null;
                     var geometryKey = RelativeGeometryKey(element, view);
-                    var signatureComplete = !comparisonExcluded && categoryType != null && textComplete && geometryKey != null;
+                    var signatureComplete = !comparisonExcluded && categoryType != null && textComplete && geometryKey != null
+                        && (!(element is CurveElement) || curve != null);
                     if (!signatureComplete && !comparisonExcluded) incompleteSignatureCount++;
                     var signature = signatureComplete
                         ? ViewOwnedDetailingSemanticSignature.Create(element.GetType().Name,
@@ -221,7 +222,8 @@ namespace RevitBridge.Logic.Handlers
             try
             {
                 var curve = element.GeometryCurve;
-                if (curve is NurbSpline) return NativeDraftingCurveGeometry.Read(curve);
+                if (curve is NurbSpline || curve is HermiteSpline || curve is Arc && !curve.IsBound)
+                    return NativeDraftingCurveGeometry.Read(curve);
                 return curve == null ? null : new { kind = curve.GetType().Name,
                     start = Point(curve.GetEndPoint(0)), end = Point(curve.GetEndPoint(1)) };
             }
@@ -256,6 +258,8 @@ namespace RevitBridge.Logic.Handlers
                     if (curve != null)
                     {
                         if (curve is NurbSpline spline) return NativeDraftingCurveGeometry.NurbsRelativeKey(spline, view);
+                        if (curve is HermiteSpline hermite) return NativeDraftingCurveGeometry.HermiteRelativeKey(hermite, view);
+                        if (curve is Arc circle && !curve.IsBound) return NativeDraftingCurveGeometry.CircleRelativeKey(circle, view);
                         // Endpoints plus a midpoint determine a line/arc, but cannot certify
                         // an arbitrary spline or ellipse. Unsupported geometry stays incomplete.
                         if (!(curve is Line) && !(curve is Arc)) return null;
