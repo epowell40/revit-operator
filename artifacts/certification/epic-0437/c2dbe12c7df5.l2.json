@@ -7365,7 +7365,7 @@
     },
     {
       "path": "apps/operator-backend/test/native_program_effect_postcondition_v2.test.ts",
-      "sha256": "sha256:399b7fbd1ca62a3bb6e97274b99a1905c0ad0c1cb51e893bcd2ace7d4512819b"
+      "sha256": "sha256:4871d194c1edf7752d872e9e8d6a156a387969f67d9d2529f913beabeb210717"
     },
     {
       "path": "apps/operator-backend/test/native_program_parameter_postcondition_v2.test.ts",
@@ -9105,7 +9105,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorNativeEffectStateTests.cs",
-      "sha256": "sha256:2488457d1b4493131f8ebe5accbaa9e45704f2eca3bf3a5b444402db75427f4e"
+      "sha256": "sha256:6120c651d9eac1035592f7921a29fd6f89c6dfe2c14ccf8b4dc21d16e3980cb1"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorNativeExecutionAttestationAuthorityTests.cs",
@@ -10257,7 +10257,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorNativeEffectState.cs",
-      "sha256": "sha256:56ad1f5f57940e27571a85f009f97af8f9615b95ca509b434143f7457748dfab"
+      "sha256": "sha256:16abd26134cb7ff403766c0f46bdf213f450f1cb225816977ed9065a479b0b54"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorNativeExecutionAttestationAuthority.cs",
@@ -11614,7 +11614,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/NativeProgramEffectObservation.cs",
-      "sha256": "sha256:e7f973cceedcf4f011c53b748c38fbd3ffd32220bfb340944ac666937f4b5627"
+      "sha256": "sha256:4a9e0c8a4ca38af75e8bbc3efb4f051e03b98aed585b69f162a6415030026169"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Profiles/DataOutlets/data_outlets.hospital_default.json",
@@ -12505,7 +12505,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:0885275ace934f968a23d5eb3aee3d91b9f6e36ece0b7b8dac3450a3e8189bbc",
+  "inputs_hash": "sha256:818c7744bbb90aae2faf5f7a7ed3156172b8a37971f2e705baae1bc780f2ec93",
   "result": {
     "passed": true,
     "checks": [
