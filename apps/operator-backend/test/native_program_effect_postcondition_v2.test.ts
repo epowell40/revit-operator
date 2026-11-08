@@ -57,6 +57,23 @@ function opaqueFixture(change?:(receipt:any)=>void){
  f.result.raw_payload_hash=payloadDigestV2(f.fresh).digest;return f;
 }
 
+test('native region contours, fill and sketch/dimension references must persist independently of equal bounding boxes',()=>workspace(()=>{
+ const shapes=[{kind:'filled_region',box:[0,0,1,1],boundaries:[[[0,0],[1,0],[0,1]]],regionType:{foreground:{solid:true},foregroundColor:{r:0,g:0,b:0}}},
+  {kind:'sketch',profile:[[[0,0],[1,0],[0,1]]],memberIds:[11,12,13]},
+  {kind:'dimension',curve:{kind:'Line',isBound:false,origin:[0,0,0],direction:[1,0,0]},value:1,locked:true,references:[{elementId:11,stable:'native-reference'}]}];
+ for(const shape of shapes){const f=fixture(p=>{const r=JSON.parse(p.evidence.nativeExecutionReceipt),json=JSON.stringify({elementId:42,found:true,shape});
+   r.effect_observation.items[1]={elementId:42,found:true,complete:true,stateJson:json,stateHash:'sha256:'+sha(json)};p.evidence.nativeExecutionReceipt=JSON.stringify(r);});
+  f.fresh.nativeProgramEffectState=JSON.parse(f.payload.evidence.nativeExecutionReceipt).effect_observation;
+  f.result.raw_payload_hash=payloadDigestV2(f.fresh).digest;assert.equal(match(f.snapshot,f.subject,f.result,f.fresh),true);
+  const item=f.fresh.nativeProgramEffectState.items[1],s=JSON.parse(item.stateJson);
+  if(shape.kind==='filled_region')s.shape.boundaries[0][1][0]=0.9;
+  if(shape.kind==='sketch')s.shape.memberIds[0]=99;
+  if(shape.kind==='dimension')s.shape.references[0].stable='other-native-reference';
+  item.stateJson=JSON.stringify(s);item.stateHash='sha256:'+sha(item.stateJson);f.result.raw_payload_hash=payloadDigestV2(f.fresh).digest;
+  assert.equal(match(f.snapshot,f.subject,f.result,f.fresh),false);
+ }
+}));
+
 test('opaque native internals require trusted unchanged native continuity, never pretend field inspection',()=>workspace(()=>{
  const f=opaqueFixture();assert.equal(match(f.snapshot,f.subject,f.result,f.fresh),true);
  for(const change of [

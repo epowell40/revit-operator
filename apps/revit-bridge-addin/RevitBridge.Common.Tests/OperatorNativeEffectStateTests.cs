@@ -9,6 +9,30 @@ namespace RevitBridge.Common.Tests
     public class OperatorNativeEffectStateTests
     {
         private static JsonElement Json(object value)=>JsonSerializer.SerializeToElement(value);
+        [Fact] public void NativeProfileAndReferenceBoundsNeverSilentlyTruncate()
+        {
+            Assert.Equal(new[]{1,2,3},OperatorNativeEffectState.Bounded(new[]{1,2,3},3));
+            Assert.Throws<InvalidOperationException>(()=>OperatorNativeEffectState.Bounded(new[]{1,2,3,4},3));
+            Assert.Throws<ArgumentException>(()=>OperatorNativeEffectState.Bounded(new[]{1},0));
+            var result=Json(OperatorNativeEffectState.Observe("f","s",new long[]{1},id=>{
+                var edges=OperatorNativeEffectState.Bounded(Enumerable.Range(0,2049),2048);
+                return OperatorNativeEffectState.Capture(id,true,new {elementId=id,found=true,edges});
+            }));
+            Assert.False(result.GetProperty("complete").GetBoolean());
+            var failed=Json(OperatorNativeEffectState.Observe("f","s",new long[]{1},id=>throw new InvalidOperationException("private model field value")));
+            var reason=failed.GetProperty("items")[0].GetProperty("reason").GetString();
+            Assert.StartsWith("native_state_read_failed:InvalidOperationException.",reason);
+            Assert.DoesNotContain("private model field value",reason);Assert.True(reason!.Length<=145);
+            Assert.False(failed.GetProperty("complete").GetBoolean());
+        }
+        [Fact] public void EqualRegionBoxesCannotHideChangedContoursFillOrConstraintReferences()
+        {
+            string Hash(int interior,int fill,int reference) => OperatorNativeEffectState.Capture(1,true,new {
+                elementId=1,found=true,box=new[]{0,0,1,1},contour=new[]{0,interior,1},pattern=fill,reference }).stateHash!;
+            Assert.NotEqual(Hash(1,2,3),Hash(2,2,3));
+            Assert.NotEqual(Hash(1,2,3),Hash(1,4,3));
+            Assert.NotEqual(Hash(1,2,3),Hash(1,2,4));
+        }
         private static OperatorNativeEffectState.Item Opaque(long id) => OperatorNativeEffectState.Capture(id, true,
             new { elementId=id, found=true, shape=new {kind="opaque_element_public_state",privateStateInspected=false} });
         [Fact] public void OpaqueStateRequiresTrustedStableNativeVersionAndRetainsExplicitCoverage()

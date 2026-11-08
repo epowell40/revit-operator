@@ -36,6 +36,14 @@ namespace RevitBridge.Common
             return new Item { elementId = id, found = found, complete = true, stateJson = json, stateHash = "sha256:" + digest };
         }
         public static Item Unavailable(long id, string reason) => new Item { elementId = id, complete = false, reason = reason };
+        // Native readers must fail closed rather than silently hash a truncated profile/reference list.
+        public static T[] Bounded<T>(IEnumerable<T> source, int maximum)
+        {
+            if (source == null || maximum < 1 || maximum > MaxElements) throw new ArgumentException("Invalid native observation bound.");
+            var values = source.Take(maximum + 1).ToArray();
+            if (values.Length > maximum) throw new InvalidOperationException("Native observation collection exceeds its bound.");
+            return values;
+        }
         public static void AttachAfterCommit(Dictionary<string,object?> result, Func<IReadOnlyList<long>,object> capture)
         {
             if (!result.TryGetValue("success",out var success) || !(success is true)
@@ -60,7 +68,14 @@ namespace RevitBridge.Common
             {
                 Item item;
                 try { item = read(id); if (item.elementId != id) throw new InvalidOperationException(); }
-                catch { item = Unavailable(id, "native_state_read_failed_or_unsupported"); }
+                catch (Exception error)
+                {
+                    // Bounded native method/type diagnostic only; never serialize exception
+                    // messages, model values or a stack trace, and never promote a failed read.
+                    var code=error.GetType().Name+"."+(error.TargetSite?.Name??"unavailable");
+                    var safe=new string(code.Where(c=>char.IsLetterOrDigit(c)||c=='_'||c=='.').Take(120).ToArray());
+                    item = Unavailable(id, "native_state_read_failed:"+safe);
+                }
                 var itemBytes=Encoding.UTF8.GetByteCount(item.stateJson ?? "");
                 if (bytes+itemBytes > MaxTotalBytes) { complete = false; break; }
                 bytes += itemBytes;
