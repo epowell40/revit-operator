@@ -2,6 +2,31 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { presentDynamicProgramResult } from "./dynamicProgramPresentation.js";
 
+test("native reflection admission failure gives type-safe correction guidance without changing diagnostics", () => {
+  const diagnostics = [{code:"POLICY_SOURCE_FORBIDDEN",phase:"source_admission",severity:"error",message:"Generated code may not use GetType(.",repair_action:"remove_forbidden_api"},
+    {code:"POLICY_SYMBOL_FORBIDDEN",phase:"source_admission",severity:"error",message:"Generated code may not bind to System.Reflection.MemberInfo."}];
+  const payload={execution_lane:"native",requested_mode:"apply",execution_status:"failed",execution_ok:false,native_outcome:null,diagnostics};
+  const before=JSON.stringify(payload),view:any=presentDynamicProgramResult(payload);
+  assert.match(view.guidance,/GetType\(\)\.Name/);assert.match(view.guidance,/is DetailCurve/);
+  assert.deepEqual(view.diagnostics,diagnostics);assert.equal(view.execution_ok,false);assert.equal(view.native_outcome,null);assert.equal(JSON.stringify(payload),before);
+});
+
+test("confirmed native rollback points correction at observed identities instead of assuming unique endpoints", () => {
+  const error="Expected one curve, found 2 at the requested endpoints";
+  const view:any=presentDynamicProgramResult({execution_lane:"native",requested_mode:"apply",execution_status:"failed",execution_ok:false,
+    native_outcome:{persistent_effect:"none",native_transaction_state:"rolled_back",error},diagnostics:[{code:"NATIVE_PROGRAM_FAILED",phase:"native",message:error}]});
+  assert.match(view.guidance,/UniqueId/);assert.match(view.guidance,/coincident/);assert.match(view.guidance,/read-only/);
+  assert.equal(view.native_outcome.error,error);assert.equal(view.native_outcome.task_verified,false);assert.equal(view.native_outcome.native_transaction_state,"rolled_back");
+});
+
+test("unknown native effect and unrelated compile errors do not acquire corrective retry guidance", () => {
+  for(const native_outcome of [{persistent_effect:"unknown",native_transaction_state:"unknown"},null]){
+    const view:any=presentDynamicProgramResult({execution_lane:"native",requested_mode:"apply",execution_status:"failed",execution_ok:false,native_outcome,
+      diagnostics:[{code:"CS0103",phase:"compile",severity:"error",message:"Name missing"}]});
+    assert.doesNotMatch(view.guidance,/is DetailCurve|coincident/);assert.equal(view.execution_ok,false);
+  }
+});
+
 test("successful custom read presents the filtered answer without repeating thousands of input rows", () => {
   const payload = { requested_mode: "read", execution_status: "completed", execution_ok: true,
     report: { MatchingRooms: "20", MissingNames: "3", Scope: "Complete active-document category; missing names unknown; links excluded" },

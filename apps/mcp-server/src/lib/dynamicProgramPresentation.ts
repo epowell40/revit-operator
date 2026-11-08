@@ -14,19 +14,34 @@ function receipt(value: unknown): RecordValue {
 export function presentDynamicProgramResult(value: RecordValue): RecordValue {
   if (value.execution_lane === "native") {
     const outcome = record(value.native_outcome), verification = record(value.verification);
+    const diagnostics = Array.isArray(value.diagnostics) ? value.diagnostics.slice(0, 8) : [];
+    const reflectionAdmissionFailure = value.execution_status === "failed" && value.execution_ok === false
+      && (Object.keys(outcome).length === 0 || (outcome.persistent_effect === "none" && outcome.native_transaction_state === "not_started"))
+      && diagnostics.some(item => {
+        const diagnostic = record(item);
+        return diagnostic.phase === "source_admission" && diagnostic.severity === "error"
+          && ((diagnostic.code === "POLICY_SOURCE_FORBIDDEN" && typeof diagnostic.message === "string" && diagnostic.message.includes("GetType("))
+            || (diagnostic.code === "POLICY_SYMBOL_FORBIDDEN" && typeof diagnostic.message === "string" && diagnostic.message.includes("System.Reflection.")));
+      });
+    const sourceRepairGuidance = reflectionAdmissionFailure
+      ? " Remove reflection from the rejected source, including GetType().Name used only for logging. Use a C# type pattern such as e is DetailCurve, a typed collector or OfType<DetailCurve>(); use native UniqueId values for target identity. Do not just reformat the same rejected call. This diagnostic hint grants no execution or retry authority."
+      : "";
     const rollbackGuidance = value.requested_mode === "apply" && value.execution_ok === false
       && value.execution_status === "failed" && outcome.persistent_effect === "none" && outcome.native_transaction_state === "rolled_back"
       ? " Confirmed rollback means this attempt left no persistent model changes. Inspect current targets and the native cause before correcting source or scope. Reported collateral IDs do not automatically authorize changes to those elements. For authorized general native-code work, submit a fresh request using explicit active_document scope rather than predicting dependent IDs; the host binds it to the current document and exact source. Keep a requested strict listed-elements scope when that is the intended constraint. Verify requested results and review the actual executed code against user intent; an audit of dependent changes is not a failure by itself. Do not replay consumed authorization or use snapshot resume on this lane."
+      : "";
+    const correctionIdentityGuidance = rollbackGuidance
+      ? " For a curve correction, endpoints alone are not unique: coincident curves may be intentional. Inspect matching identities, owner/style and geometry with a bounded read-only query, then use the intended observed UniqueId with doc.GetElement(uniqueId). Do not choose or delete an arbitrary match."
       : "";
     return { schema: text(value.schema, 128), run_id: text(value.run_id, 128), requested_mode: text(value.requested_mode, 32),
       execution_lane: "native", execution_status: text(value.execution_status, 32), execution_ok: value.execution_ok === true,
       native_outcome: Object.keys(outcome).length ? { effect_scope: text(outcome.effect_scope, 32), persistent_effect: text(outcome.persistent_effect, 32),
         native_transaction_state: text(outcome.native_transaction_state, 32), task_verified: false,
         verification_required: true, program_result: text(outcome.program_result, 32768), error: text(outcome.error, 2000) } : null,
-      diagnostics: Array.isArray(value.diagnostics) ? value.diagnostics.slice(0, 8) : [],
+      diagnostics,
       affected_target_identities: record(value.canonical_attempt_settlement).affected_target_identities ?? [],
       retained_evidence: { evidence_sha256: text(verification.evidence_sha256, 128) },
-      guidance: "Native transaction outcome and generated return text are separate. Independently read back affected targets for writes; use an adequate visual review only for visual obligations. Generated counts do not automatically establish collection completeness. Do not retry unknown effects or treat compiler success as execution. Use native_outcome.program_result for concise result delivery; exact full receipts remain in canonical evidence." + rollbackGuidance };
+      guidance: "Native transaction outcome and generated return text are separate. Independently read back affected targets for writes; use an adequate visual review only for visual obligations. Generated counts do not automatically establish collection completeness. Do not retry unknown effects or treat compiler success as execution. Use native_outcome.program_result for concise result delivery; exact full receipts remain in canonical evidence." + sourceRepairGuidance + rollbackGuidance + correctionIdentityGuidance };
   }
   if (value.execution_status === "completed" && value.execution_ok === true && value.requested_mode === "read") {
     const entries = Object.entries(record(value.report));

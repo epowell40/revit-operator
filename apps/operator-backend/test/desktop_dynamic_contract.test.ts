@@ -23,6 +23,7 @@ test('actual registered C# executor contract reaches owner through bounded docum
   const raw=listed.find(t=>t.name==='operator_run_dynamic_revit_program');assert(raw?.description);
   assert(Buffer.byteLength(JSON.stringify({'tool.description':raw.description}),'utf8')<8192,'The exact top-level guide must fit one existing evidence selection');
   assert.match(raw.description,/native_program/);assert.match(raw.description,/tool\.inputSchema\.properties\.source/);
+  assert.match(raw.description,/GetType\(\)\.Name/);assert.match(raw.description,/UniqueId/);assert.match(raw.description,/coincident/);
   const tool={name:raw.name,description:raw.description,inputSchema:raw.inputSchema,deferLoading:true};
   const models=desktopNativeModelTools([tool]);assert(models.some(t=>t.name==='native__describe_tool'));
   const primary=models.find(t=>t.name==='native__'+tool.name);
