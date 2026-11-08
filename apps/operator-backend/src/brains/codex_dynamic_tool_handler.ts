@@ -1,5 +1,6 @@
 import { committedDrawingSpecImportReadbackPlanV2 } from "../verification/drawing_spec_import_v2.js";
 import {committedNativeProgramParameterReadbackPlanV2} from '../verification/native_program_parameter_postcondition_v2.js';
+import {committedNativeProgramEffectReadbackPlanV2} from '../verification/native_program_effect_postcondition_v2.js';
 import {committedExcelTableImportReadbackPlanV2} from '../verification/excel_table_import_v2.js';
 import {committedVectorDetailReadbackPlanV2,committedVectorAnnotationRefreshPlanV2} from '../verification/vector_detail_import_v2.js';
 import {committedVectorStrokeCadReadbackPlanV2} from '../verification/vector_stroke_cad_readback_v2.js';
@@ -457,6 +458,7 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
           ?? committedVectorStrokeCadReadbackPlanV2(current,current.operations[lease.operation_id]!) : null;
       const readPlan = typedRead?.plan ?? (current?.operations[lease.operation_id]
         ? committedNativeProgramParameterReadbackPlanV2(current,current.operations[lease.operation_id]!)
+          ?? committedNativeProgramEffectReadbackPlanV2(current,current.operations[lease.operation_id]!)
           ?? committedTagReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedVisibilityReadbackPlanV2(current, current.operations[lease.operation_id]!)
           ?? committedScheduleCellBackgroundReadbackPlanV2(current, current.operations[lease.operation_id]!)

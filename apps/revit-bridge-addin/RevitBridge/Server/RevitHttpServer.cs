@@ -59,7 +59,7 @@ namespace RevitBridge.Server
                 { "/revit/dynamic-runtime/snapshot", new RevitBridge.Logic.Handlers.DynamicRuntime.DynamicRuntimeSnapshotHandler() },
                 { "/revit/dynamic-runtime/native-program-prepare-v1", new RevitBridge.Logic.Handlers.DynamicRuntime.DynamicNativeProgramPreparationHandler(RevitDocumentChangeObservations.CaptureVersion) },
                 { "/revit/dynamic-runtime/native-program-read-v1", new RevitBridge.Logic.Handlers.DynamicRuntime.DynamicNativeProgramExecutionHandler(RevitDocumentChangeObservations.CaptureVersion, true) },
-                { "/revit/dynamic-runtime/native-program-apply-v1", new RevitBridge.Logic.Handlers.DynamicRuntime.DynamicNativeProgramExecutionHandler(RevitDocumentChangeObservations.CaptureVersion, false) },
+                { "/revit/dynamic-runtime/native-program-apply-v1", new RevitBridge.Logic.Handlers.DynamicRuntime.DynamicNativeProgramExecutionHandler(RevitDocumentChangeObservations.CaptureVersion, false, RevitBridge.Logic.NativeProgramEffectObservation.AttachCommitted) },
                 { "/revit/dynamic-runtime/preview", new RevitBridge.Logic.Handlers.DynamicRuntime.DynamicRuntimePreviewHandler() },
                 { "/revit/dynamic-runtime/authorize-apply", new RevitBridge.Logic.Handlers.DynamicRuntime.DynamicRuntimeApplyAuthorizationHandler() },
                 { "/revit/dynamic-runtime/apply", new RevitBridge.Logic.Handlers.DynamicRuntime.DynamicRuntimeApplyHandler() },
