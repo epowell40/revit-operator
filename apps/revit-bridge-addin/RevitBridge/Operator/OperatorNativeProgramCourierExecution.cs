@@ -12,7 +12,8 @@ namespace RevitBridge.Operator
 {
     internal static class OperatorNativeProgramCourierExecution
     {
-        internal static async Task<object> ExecuteAsync(string path, string body, string bridgeUrl, CancellationToken token)
+        internal static async Task<object> ExecuteAsync(string path, string body, string bridgeUrl, CancellationToken token,
+            Action<Action> registerCompletionRetained)
         {
             if (!Uri.TryCreate(bridgeUrl, UriKind.Absolute, out var endpoint) || endpoint.Scheme != "http" || !endpoint.IsLoopback
                 || !string.IsNullOrEmpty(endpoint.UserInfo) || endpoint.AbsolutePath != "/" || !string.IsNullOrEmpty(endpoint.Query))
@@ -36,7 +37,8 @@ namespace RevitBridge.Operator
             var config = Path.Combine(run, "task.json");
             var evidence = Path.Combine(run, "evidence.json");
             Process? process = null;
-            var retainForReconciliation = false;
+            var files = new OperatorNativeProgramCourierFiles(run);
+            registerCompletionRetained(files.CompletionRetained);
             try
             {
                 File.WriteAllText(source, request.GetProperty("source").GetString(), new UTF8Encoding(false));
@@ -56,14 +58,15 @@ namespace RevitBridge.Operator
                 start.EnvironmentVariables["OPERATOR_WORKSPACE_ROOT"] = workspace;
                 token.ThrowIfCancellationRequested();
                 process = Process.Start(start) ?? throw new InvalidOperationException("Native C# launcher did not start.");
+                files.LauncherStarted();
                 while (!process.HasExited) { token.ThrowIfCancellationRequested(); await Task.Delay(50, token).ConfigureAwait(false); }
                 if (process.ExitCode != 0 && process.ExitCode != 1 || !File.Exists(evidence) || new FileInfo(evidence).Length > 8 * 1024 * 1024)
-                    throw new InvalidOperationException("Native C# launcher has no bounded evidence. Reconcile before retrying.");
+                    throw new InvalidOperationException("Native C# launcher has no bounded evidence (exit " + process.ExitCode +
+                        "); exact run retained at " + run + ". Reconcile before retrying.");
                 using var result = JsonDocument.Parse(File.ReadAllText(evidence));
                 var output = new { schema = "operator.native-program-workstation-result.v1", exitCode = process.ExitCode, evidence = result.RootElement.Clone() };
                 if (JsonSerializer.SerializeToUtf8Bytes(output).Length > OperatorCourierResultCompactor.MaxTransportResultBytes)
                 {
-                    retainForReconciliation = true;
                     throw new InvalidOperationException("Native C# evidence exceeds courier transport capacity; exact evidence retained at " + evidence + ". Reconcile before retrying.");
                 }
                 return output;
@@ -77,12 +80,10 @@ namespace RevitBridge.Operator
                     try { if (!process.HasExited) process.Kill(); process.WaitForExit(5000); exited = process.HasExited; } catch { }
                     process.Dispose();
                 }
-                // Source is retained on the backend before publication; actual
-                // evidence is returned into the durable courier completion outbox.
-                // Remove only our three known temporary regular files, never models.
-                foreach (var file in exited && !retainForReconciliation ? new[] { source, config, evidence } : Array.Empty<string>())
-                    try { if (File.Exists(file) && (File.GetAttributes(file) & FileAttributes.ReparsePoint) == 0) File.Delete(file); } catch { }
-                if (exited && !retainForReconciliation) try { Directory.Delete(run, false); } catch { }
+                if (exited) files.LauncherExited();
+                // Missing/malformed/oversized evidence and lost durable-outbox
+                // writes keep the exact run. Never infer non-execution from exit.
+                files.Dispose();
             }
         }
     }
