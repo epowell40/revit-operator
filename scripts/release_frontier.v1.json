@@ -602,6 +602,10 @@
     "FamilyInspectionSourceTests",
     "OperatorNativeProgramExecutionTests",
     "OperatorNativeProgramCourierRequestTests",
+    "OperatorNativeProgramCourierFilesTests",
+    "OperatorNativeProgramCourierOutputTests",
+    "OperatorNativeProgramCourierConsumerTests",
+    "NativeCapturedFailureObservationTests",
     "OperatorCourierRuntimeProfileTests"
   ],
   "failure_families": [
@@ -5442,6 +5446,21 @@
         "javascript:package/operator-assistant-ui/task_workspace.test.mjs",
         "javascript:package/operator-assistant-ui/task_activity.test.mjs",
         "javascript:package/operator-assistant-ui/computer_completion_presentation.test.mjs"
+      ]
+    },
+    {
+      "id": "native_courier_completion_evidence_lifecycle461",
+      "coverage": [
+        "dotnet:OperatorNativeProgramCourierFilesTests",
+        "dotnet:OperatorNativeProgramCourierOutputTests",
+        "dotnet:OperatorNativeProgramCourierConsumerTests"
+      ]
+    },
+    {
+      "id": "native_failure_locations_reach_actor_without_edit_authority461",
+      "coverage": [
+        "dotnet:NativeCapturedFailureObservationTests",
+        "mcp:lib/dynamicNativeProgram.test.ts"
       ]
     }
   ],

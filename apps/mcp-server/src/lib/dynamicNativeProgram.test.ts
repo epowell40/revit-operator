@@ -130,6 +130,9 @@ test("authenticated warning rollback exposes bounded native cause to the actor w
       assert.equal(visible.native_outcome.task_verified, false);
       assert.equal(visible.diagnostics.filter((d: any) => d.code === "NATIVE_MODEL_WARNING").length, 6);
       assert.match(visible.diagnostics.find((d: any) => d.code === "NATIVE_MODEL_WARNING").message, /Instance origin does not lie on host face/);
+      assert.deepEqual(visible.diagnostics.find((d: any) => d.code === "NATIVE_MODEL_WARNING").native_failure?.failing_element_ids, [71]);
+      assert.equal(visible.diagnostics.find((d: any) => d.code === "NATIVE_MODEL_WARNING").native_failure?.reported_element_count, 1);
+      assert.equal(visible.diagnostics.find((d: any) => d.code === "NATIVE_MODEL_WARNING").native_failure?.element_ids_complete, true);
       assert.match(visible.diagnostics.find((d: any) => d.code === "NATIVE_FAILURES_OMITTED").message, /6 additional/);
       assert.equal(result.iteration.retryable, false);
       assert.deepEqual((result.evidence as RecordValue).nativeExecutionReceipt, e.nativeExecutionReceipt);
@@ -164,6 +167,50 @@ test("warning details cannot override committed or unknown native effects and st
         receipt.native_failures[0].message = "Substituted warning text";
         e.nativeExecutionReceipt = JSON.stringify(receipt); // Deliberately do not authenticate changed bytes.
         assert.throws(() => readNativeProgramEvidence(e, sourceHash, "apply", fingerprint), /authenticated receipt/);
+      });
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("native failure locations are bounded diagnostic observations, with unknown and malformed coverage explicit", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "native-failure-locations-"));
+  try {
+    const supervisor = path.join(root, "supervisor.exe"), worker = path.join(root, "worker"), token = path.join(root, "token");
+    fs.writeFileSync(supervisor, "stub"); fs.mkdirSync(worker); fs.writeFileSync(token, "0123456789abcdef");
+    const runtime = { ...process.env, ...env, OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH: supervisor,
+      OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY: worker, OPERATOR_TOKEN_FILE: token };
+    const cases = [
+      { raw: Array.from({ length: 40 }, (_, i) => i + 1), count: 40, ids: Array.from({ length: 12 }, (_, i) => i + 1), complete: false },
+      { raw: [71, 71, 0, -1, "72", 42], count: 6, ids: [71, 42], complete: false },
+      { raw: null, count: null, ids: [], complete: false },
+      { raw: [], count: 0, ids: [], complete: true },
+      { raw: [Number.MAX_SAFE_INTEGER + 1], count: 1, ids: [], complete: false }
+    ];
+    for (const state of ["rolled_back", "pending"]) for (const item of cases) {
+      const e = fixture("apply", state, false), receipt = JSON.parse(e.nativeExecutionReceipt);
+      receipt.native_failures = [{ severity: "error", message: "Can't keep elements joined.",
+        elementIds: item.raw, failureDefinitionId: "not-a-guid" }];
+      e.nativeExecutionReceipt = JSON.stringify(receipt); authenticate(e);
+      const original = e.nativeExecutionReceipt;
+      await runWithAssignmentKernelV2(metadata("apply"), async () => {
+        const result = await runDynamicRevitProgram({ source, mode: "apply", native_program: { entry_type: "Query", allow_create: true,
+          allowed_existing_unique_ids: [], max_affected_elements: 20 } }, runtime, async (_exe, args) => {
+          fs.writeFileSync(JSON.parse(fs.readFileSync(args[1]!, "utf8")).evidencePath, JSON.stringify(e));
+          return { exitCode: 1, stdout: "", stderr: "" };
+        });
+        const visible: any = presentDynamicProgramResult(result);
+        const diagnostic = visible.diagnostics.find((d: any) => d.code === "NATIVE_MODEL_FAILURE").native_failure;
+        assert.deepEqual(diagnostic.failing_element_ids, item.ids);
+        assert.equal(diagnostic.reported_element_count, item.count);
+        assert.equal(diagnostic.element_ids_complete, item.complete);
+        assert.equal(diagnostic.failure_definition_id, null);
+        assert.equal(diagnostic.authority, "diagnostic_only");
+        assert.match(diagnostic.limits, /not permission/);
+        assert.equal(visible.native_outcome.task_verified, false);
+        assert.equal(visible.native_outcome.persistent_effect, state === "pending" ? "unknown" : "none");
+        assert.deepEqual(visible.affected_target_identities, []);
+        assert.equal(result.iteration.retryable, false);
+        assert.equal((result.evidence as RecordValue).nativeExecutionReceipt, original);
       });
     }
   } finally { fs.rmSync(root, { recursive: true, force: true }); }

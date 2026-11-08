@@ -198,7 +198,8 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
       structuredDiagnostics.push({ code: warning ? "NATIVE_MODEL_WARNING" : "NATIVE_MODEL_FAILURE",
         message: message.slice(0, 1000), phase: "native", severity: warning ? "warning" : "error",
         repair_action: "inspect_native_outcome_before_correction", line: null, column: null,
-        end_line: null, end_column: null, step_id: null, assertion_id: null, retryable: false });
+        end_line: null, end_column: null, step_id: null, assertion_id: null, retryable: false,
+        native_failure: nativeFailureObservation(failure) });
     }
     if (failures.length > 6) structuredDiagnostics.push({ code: "NATIVE_FAILURES_OMITTED",
       message: `${failures.length - 6} additional native failure details remain in the authenticated retained receipt.`,
@@ -351,7 +352,25 @@ type StructuredDiagnostic = {
   code: string; message: string; phase: string; severity: string; repair_action: string;
   line: number | null; column: number | null; end_line: number | null; end_column: number | null;
   step_id: string | null; assertion_id: string | null; retryable: boolean;
+  native_failure?: ReturnType<typeof nativeFailureObservation>;
 };
+
+// Presentation of locations already captured by the authenticated native
+// failure collector. They are not an effect footprint or current edit targets:
+// IDs created by a rolled-back transaction may no longer exist.
+function nativeFailureObservation(failure: Record<string, unknown>) {
+  const raw = Array.isArray(failure.elementIds) ? failure.elementIds : null;
+  const ids = raw === null ? [] : [...new Set(raw.slice(0, 12)
+    .filter((id): id is number => Number.isSafeInteger(id) && id > 0))];
+  const definition = typeof failure.failureDefinitionId === "string"
+    && /^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/i.test(failure.failureDefinitionId)
+    ? failure.failureDefinitionId.toLowerCase() : null;
+  return { failing_element_ids: ids, reported_element_count: raw?.length ?? null,
+    omitted_or_invalid_id_count: raw === null ? null : raw.length - ids.length,
+    element_ids_complete: raw !== null && raw.length === ids.length,
+    failure_definition_id: definition, authority: "diagnostic_only",
+    limits: "Observed failure locations, not permission, committed changes, current existence or task verification. Inspect current elements before correction; preserve intentional source gaps." };
+}
 type IterationReceipt = {
   schema: "revit-operator.dynamic-code-iteration.v1";
   run_id: string; attempt: number; lane: ExecutionLane; resume_mode: "root" | "facts" | "repair" | "retry";

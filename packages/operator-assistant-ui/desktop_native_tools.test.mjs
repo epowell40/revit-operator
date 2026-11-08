@@ -54,3 +54,13 @@ test('unified actor instructions require actual model pixels, not camera navigat
  const text=singleExecutionInstructions('base','native');assert.match(text,/review_mode:observe/);assert.match(text,/activate_revit_view alone only navigates/);assert.match(text,/without another model call/);assert.match(text,/not a preview or verification/);
 });
 
+test('detail reconstruction shares source-addressed tracking and correction rather than a percentage stop',()=>{
+ const instructions=singleExecutionInstructions('base','native');
+ assert.match(instructions,/2D details and diagrams/);
+ assert.match(instructions,/components, linework and text/);
+ assert.match(instructions,/operator_manage_work_plan.*locate/);
+ assert.match(instructions,/known source gaps/);
+ assert.match(instructions,/benchmark percentage is not a stopping rule/);
+ assert.match(instructions,/not a bookkeeping call per element/);
+});
+

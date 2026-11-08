@@ -3,6 +3,8 @@ using System.IO;
 using RevitBridge.Common;
 using Xunit;
 
+namespace RevitBridge.Common.Tests;
+
 public sealed class OperatorNativeProgramCourierFilesTests
 {
     [Theory]

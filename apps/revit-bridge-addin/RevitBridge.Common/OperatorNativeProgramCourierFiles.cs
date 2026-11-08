@@ -34,7 +34,7 @@ namespace RevitBridge.Common
             catch (UnauthorizedAccessException) { return; }
             // Never recurse or remove unknown files/models. A failed cleanup
             // preserves evidence and must not turn a retained result into failure.
-            foreach (var name in new[] { "program.cs", "task.json", "evidence.json" })
+            foreach (var name in new[] { "program.cs", "task.json", "evidence.json", "launcher-diagnostics.json" })
             {
                 try
                 {

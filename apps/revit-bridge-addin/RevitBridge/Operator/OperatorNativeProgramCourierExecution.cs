@@ -51,7 +51,8 @@ namespace RevitBridge.Operator
                     expectedDocumentFingerprint = request.GetProperty("expectedDocumentFingerprint").GetString()
                 }, options), new UTF8Encoding(false));
                 var start = new ProcessStartInfo(supervisor, "--execute-task \"" + config + "\"") {
-                    UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = package
+                    UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = package,
+                    RedirectStandardOutput = true, RedirectStandardError = true
                 };
                 start.EnvironmentVariables["REVIT_OPERATOR_MODE"] = "local";
                 start.EnvironmentVariables["OPERATOR_TOOL_EXPOSURE_PROFILE"] = "general";
@@ -59,7 +60,22 @@ namespace RevitBridge.Operator
                 token.ThrowIfCancellationRequested();
                 process = Process.Start(start) ?? throw new InvalidOperationException("Native C# launcher did not start.");
                 files.LauncherStarted();
+                var stdout = new OperatorNativeProgramCourierOutput(0);
+                var stderr = new OperatorNativeProgramCourierOutput(4096);
+                var drains = Task.WhenAll(stdout.DrainAsync(process.StandardOutput), stderr.DrainAsync(process.StandardError));
                 while (!process.HasExited) { token.ThrowIfCancellationRequested(); await Task.Delay(50, token).ConfigureAwait(false); }
+                // Pipe drainage is diagnostic, not native-outcome authority. Do
+                // not wait indefinitely for an inherited child pipe after exit.
+                await Task.WhenAny(drains, Task.Delay(1000)).ConfigureAwait(false);
+                try
+                {
+                    File.WriteAllText(Path.Combine(run, "launcher-diagnostics.json"), JsonSerializer.Serialize(new {
+                        schema = "operator.native-program-launcher-diagnostics/v1", exit_code = process.ExitCode,
+                        stdout = stdout.Snapshot(), stderr = stderr.Snapshot(), authority = "diagnostic_only"
+                    }), new UTF8Encoding(false));
+                }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
                 if (process.ExitCode != 0 && process.ExitCode != 1 || !File.Exists(evidence) || new FileInfo(evidence).Length > 8 * 1024 * 1024)
                     throw new InvalidOperationException("Native C# launcher has no bounded evidence (exit " + process.ExitCode +
                         "); exact run retained at " + run + ". Reconcile before retrying.");
