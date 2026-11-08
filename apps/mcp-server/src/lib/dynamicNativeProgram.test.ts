@@ -16,6 +16,12 @@ import { runWithAssignmentKernelV2, decorateAssignmentKernelMcpResultV2, ASSIGNM
 const hash = (value: string) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
 const source = "public static class Query { public static string Execute(Autodesk.Revit.DB.Document doc) { return doc.Title; } }";
 const sourceHash = hash(source), fingerprint = hash("document");
+
+test("native source guide explains static fields without initializers and conservative source-step feedback",()=>{
+  assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/static fields.*without initializers/i);
+  assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/last executed source step/i);
+  assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/not.*exact failing/i);
+});
 const env = { REVIT_OPERATOR_MODE: "development", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" };
 type RecordValue = Record<string, any>;
 
@@ -51,6 +57,30 @@ function authenticate(evidence: RecordValue) {
       JSON.stringify({ schema: "dynamic-revit-authenticated-receipt/v0", runtime_instance_id: "runtime", purpose, receipt_hash: hash(raw),
         host_receipt_mac: "hmac-sha256:" + "f".repeat(64), receipt: JSON.parse(raw) }))];
 }
+
+test("source-step error context reaches the actor without altering native rollback, commit or unknown outcomes",async()=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'native-source-step-'));
+  try {
+    const supervisor=path.join(root,'supervisor.exe'),worker=path.join(root,'worker'),token=path.join(root,'token');
+    fs.writeFileSync(supervisor,'stub');fs.mkdirSync(worker);fs.writeFileSync(token,'0123456789abcdef');
+    const runtime={...env,OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH:supervisor,OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY:worker,OPERATOR_TOKEN_FILE:token};
+    const message='Last executed generated source step: line 6, column 4. This is diagnostic context, not proof of the exact failing expression or native outcome. Object reference not set to an instance of an object.';
+    for(const [state,effect]of [['rolled_back','none'],['committed','applied'],['pending','unknown']]){
+      const evidence=fixture('apply',state!,false),receipt=JSON.parse(evidence.nativeExecutionReceipt);
+      receipt.error=message;evidence.nativeExecutionReceipt=JSON.stringify(receipt);authenticate(evidence);
+      await runWithAssignmentKernelV2(metadata('apply'),async()=>{
+        const result=await runDynamicRevitProgram({source,mode:'apply',native_program:{entry_type:'Query',allow_create:true,allowed_existing_unique_ids:[],max_affected_elements:20}},runtime,async(_exe,args)=>{
+          fs.writeFileSync(JSON.parse(fs.readFileSync(args[1]!,'utf8')).evidencePath,JSON.stringify(evidence));return{exitCode:1,stdout:'',stderr:''};
+        });
+        const visible:any=presentDynamicProgramResult(result);
+        assert.equal(visible.diagnostics.find((d:any)=>d.code==='NATIVE_PROGRAM_FAILED').message,message);
+        assert.equal(result.canonical_attempt_settlement?.effect_state,effect);
+        assert.equal(visible.native_outcome.task_verified,false);assert.equal(result.iteration.retryable,false);
+        assert.equal((result.evidence as RecordValue).nativeExecutionReceipt,evidence.nativeExecutionReceipt);
+      });
+    }
+  } finally {fs.rmSync(root,{recursive:true,force:true});}
+});
 
 test("document-scoped authenticated audit accepts unpredicted changes without granting result verification", () => {
   const e = fixture("apply", "committed", true);

@@ -5,6 +5,16 @@ using Xunit;
 
 public sealed class OperatorNativeProgramExecutionTests
 {
+    [Fact]
+    public void SourceStepDiagnosticIsBoundedConservativeAndRejectsMissingOrMalformedMarkers()
+    {
+        var format=typeof(OperatorNativeProgramExecution).GetMethod("SourceStepDiagnostic");Assert.NotNull(format);
+        var message=(string)format!.Invoke(null,new object?[]{"6:4"})!;
+        Assert.Contains("line 6, column 4",message);Assert.Contains("Last executed",message);
+        Assert.Contains("not proof",message);Assert.True(message.Length<256);
+        foreach(var marker in new string?[]{null,"","0:4","1:0","-1:3","1:2:3","+1:2","9999999999999999:1","1:C:/private","1:2\nforged"})
+            Assert.Null(format.Invoke(null,new object?[]{marker}));
+    }
     [Theory]
     [InlineData("development_laboratory_v1", null, null, true)]
     [InlineData("development_laboratory_v1", "", "", true)]

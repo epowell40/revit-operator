@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Globalization;
 
 namespace RevitBridge.Common
 {
@@ -11,6 +12,18 @@ namespace RevitBridge.Common
         // Existing canonical native-effect inventory bound. This is an audit
         // capacity limit, not a model-predicted count or intended-change list.
         public const int MaximumDocumentAuditElements = 4096;
+        // Diagnostic-only coordinates from the already authenticated compiler
+        // boundary. They cannot establish native effects or the exact fault:
+        // generated finally blocks can execute while an exception unwinds.
+        public static string? SourceStepDiagnostic(string? marker)
+        {
+            if(string.IsNullOrEmpty(marker) || marker!.Length>23)return null;
+            var parts=marker.Split(':');
+            if(parts.Length!=2 || parts.Any(p=>p.Length==0 || p.Any(c=>c<'0'||c>'9'))
+                || !int.TryParse(parts[0],NumberStyles.None,CultureInfo.InvariantCulture,out var line) || line<1
+                || !int.TryParse(parts[1],NumberStyles.None,CultureInfo.InvariantCulture,out var column) || column<1)return null;
+            return "Last executed generated source step: line "+line+", column "+column+". This is diagnostic context, not proof of the exact failing expression or native outcome.";
+        }
         public static void RequireSupportedHost(string? nativeProgramMode, string? runtimeMode, string? exposureProfile)
         {
             // Normal workstation execution needs no developer opt-in. Exposure

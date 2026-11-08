@@ -160,6 +160,28 @@ public sealed class NativeProgramCompilerTests
     }
 
     [NativeCompileFact]
+    public void StaticFieldDiagnosticExplainsUninitializedFieldsAndNamesTheSourceLocation()
+    {
+        foreach(var declaration in new[]{"static Document saved;","static string saved=\"x\";"})
+        {
+            var source="using Autodesk.Revit.DB;\npublic class NativeTask {\n  "+declaration+"\n  public static string Execute(Document doc){return \"ok\";}\n}";
+            var result=Compile(source);
+            Assert.Null(result.Artifact);
+            var diagnostic=Assert.Single(result.Diagnostics.Where(d=>d.Code=="NATIVE_SOURCE_LIFECYCLE"));
+            Assert.Contains("static fields",diagnostic.Message);
+            Assert.Contains("without initializers",diagnostic.Message);
+            Assert.Equal(3,diagnostic.Line);Assert.Equal(3,diagnostic.Column);
+        }
+    }
+
+    [NativeCompileFact]
+    public void RequestLocalInstanceStateAndStaticHelperMethodsRemainSupported()
+    {
+        var source="using Autodesk.Revit.DB;public class NativeTask {string value; static string Helper()=>\"ok\"; string Run(){value=Helper();return value;} public static string Execute(Document doc){return new NativeTask().Run();}}";
+        var result=Compile(source);Assert.Empty(result.Diagnostics);Assert.NotNull(result.Artifact);
+    }
+
+    [NativeCompileFact]
     public void ExceptionAfterModelWriteCompilesButIsNotRollbackEvidenceAndLegacyAdmissionStillRejects()
     {
         var source = Program("doc.GetElement(new ElementId(1L)).get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS).Set(\"x\");throw new InvalidOperationException(\"after-write\");");

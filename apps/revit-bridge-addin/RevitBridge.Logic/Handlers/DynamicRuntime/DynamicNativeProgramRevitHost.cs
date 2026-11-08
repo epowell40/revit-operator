@@ -41,6 +41,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             if(!DynamicAdmissionReplayLedger.TryConsume(DynamicWire.Sha256("native-program/v1\n"+admission.RuntimeInstanceId+"\n"+admission.CorrelationId),admission.ExpiresUnixSeconds))
                 throw new InvalidOperationException("Native program admission was already consumed.");
             var entry=LoadTrustedEntry(artifact);var thread=Thread.CurrentThread.ManagedThreadId;var clock=Stopwatch.StartNew();
+            string? sourceStepDiagnostic=null;
             void Checkpoint()
             {
                 if(Thread.CurrentThread.ManagedThreadId!=thread)throw new InvalidOperationException("Native program left its admitted Revit thread.");
@@ -54,7 +55,11 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             {
                 Checkpoint();
                 try {return OperatorNativeProgramExecution.ValidateResult((string)entry.Invoke(null,new object[]{document,(Action)Checkpoint})!);}
-                catch(TargetInvocationException ex) when(ex.InnerException!=null){ExceptionDispatchInfo.Capture(ex.InnerException).Throw();throw;}
+                catch(TargetInvocationException ex) when(ex.InnerException!=null)
+                {
+                    sourceStepDiagnostic=ReadCompilerSourceStep(entry);
+                    ExceptionDispatchInfo.Capture(ex.InnerException).Throw();throw;
+                }
             }
             Dictionary<string,object?> result;
             if(artifact.Mode=="read")
@@ -65,6 +70,12 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 catch(Exception ex){result=new Dictionary<string,object?>{["success"]=false,["error"]=ex.Message,["read_only"]=true,["transaction"]=OperatorNativeTransactionReceipt.NotStarted()};}
             }
             else result=Write(app,document,scope,Invoke,Checkpoint);
+            // Append presentation only after the existing read/transaction path
+            // has settled. Preserve original exception types, effects, rollback
+            // and unknown handling. Old compiler artifacts have no marker.
+            if(sourceStepDiagnostic!=null && result.TryGetValue("success",out var ok) && ok is false
+                && result.TryGetValue("error",out var error) && error is string message)
+                result["error"]=sourceStepDiagnostic+" "+message;
             result["source_hash"]=artifact.SourceHash;result["assembly_hash"]=artifact.AssemblyHash;
             result["native_binding_hash"]=binding;result["document_fingerprint"]=fingerprint;result["document_session_id"]=session;
             result["document_revision_before"]=currentNativeRevision;result["elapsed_milliseconds"]=clock.ElapsedMilliseconds;
@@ -72,6 +83,21 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             result["effect_scope"]=scope.EffectScope;
             result["result_semantics"]="program_return_value_requires_task_specific_native_readback";
             return result;
+        }
+
+        private static string? ReadCompilerSourceStep(MethodInfo entry)
+        {
+            try
+            {
+                // The caller loaded this exact compiler-owned boundary from a
+                // signed/source-bound artifact. Never resolve a task-selected
+                // type, method, path or assembly for diagnostic collection.
+                var take=entry.DeclaringType?.GetMethod("TakeFailureSourceStep",BindingFlags.Public|BindingFlags.Static,
+                    null,Type.EmptyTypes,null);
+                if(take==null || take.ReturnType!=typeof(string))return null;
+                return OperatorNativeProgramExecution.SourceStepDiagnostic(take.Invoke(null,null) as string);
+            }
+            catch {return null;} // Missing/failed diagnostics never alter outcome.
         }
 
         private static Dictionary<string,object?> Write(UIApplication app,Document document,DynamicNativeProgramScopeV1 scope,

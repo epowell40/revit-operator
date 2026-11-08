@@ -109,12 +109,19 @@ internal static class NativeProgramCompiler
             syntaxDiagnostics.RemoveAll(d => d.Code == "POLICY_SOURCE_FORBIDDEN" && d.Message == "Generated code may not use typeof.");
         syntaxDiagnostics.AddRange(StaticAdmission.CheckSemantic(compilation,
             node => node.SyntaxTree == tree && node is TypeOfExpressionSyntax && collectorTypeSpans.Contains(node.Span)));
-        if (root.DescendantNodes().Any(n => n is ConstructorDeclarationSyntax c && c.Modifiers.Any(SyntaxKind.StaticKeyword)
+        var unsupportedLifecycle = root.DescendantNodes().FirstOrDefault(n => n is ConstructorDeclarationSyntax c && c.Modifiers.Any(SyntaxKind.StaticKeyword)
             || n is FieldDeclarationSyntax f && f.Modifiers.Any(SyntaxKind.StaticKeyword) && !f.Modifiers.Any(SyntaxKind.ConstKeyword)
             || n is PropertyDeclarationSyntax p && p.Modifiers.Any(SyntaxKind.StaticKeyword) && p.Initializer != null
-            || n is EventDeclarationSyntax or EventFieldDeclarationSyntax or DestructorDeclarationSyntax or AwaitExpressionSyntax or RefTypeSyntax)
-            || root.DescendantTokens().Any(t => t.IsKind(SyntaxKind.AsyncKeyword)))
-            syntaxDiagnostics.Add(Diagnostic("NATIVE_SOURCE_LIFECYCLE", "Source-owned static initialization, events, finalizers, async work and ref returns/locals are outside the synchronous native program contract."));
+            || n is EventDeclarationSyntax or EventFieldDeclarationSyntax or DestructorDeclarationSyntax or AwaitExpressionSyntax or RefTypeSyntax);
+        var asyncToken = root.DescendantTokens().FirstOrDefault(t => t.IsKind(SyntaxKind.AsyncKeyword));
+        if (unsupportedLifecycle != null || asyncToken.RawKind != 0)
+        {
+            var diagnostic = Diagnostic("NATIVE_SOURCE_LIFECYCLE", "Source-owned nonconstant static fields are forbidden, even without initializers. Static initialization, events, finalizers, async work and ref returns/locals are also outside the synchronous native program contract. Use Execute-local variables or instance state initialized inside Execute; static helper methods remain allowed.");
+            var span = (unsupportedLifecycle?.GetLocation() ?? asyncToken.GetLocation()).GetLineSpan();
+            diagnostic.Line=span.StartLinePosition.Line+1;diagnostic.Column=span.StartLinePosition.Character+1;
+            diagnostic.EndLine=span.EndLinePosition.Line+1;diagnostic.EndColumn=span.EndLinePosition.Character+1;
+            syntaxDiagnostics.Add(diagnostic);
+        }
         if (root.DescendantTokens().Any(t => t.IsKind(SyntaxKind.IdentifierToken) && t.ValueText == "NativeExecutionBoundaryV1"))
             syntaxDiagnostics.Add(Diagnostic("NATIVE_RESERVED_BOUNDARY", "The execution boundary is compiler-owned and cannot be named by task source."));
 
