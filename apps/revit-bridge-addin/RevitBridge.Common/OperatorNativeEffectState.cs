@@ -46,11 +46,16 @@ namespace RevitBridge.Common
                 meaning="Commit remains applied and requires independent inspection; never replay."}; }
         }
         public static object Observe(string fingerprint, string session, IEnumerable<long> requested, Func<long, Item> read)
+            => Observe(fingerprint, session, requested, read, null);
+        public static object Observe(string fingerprint, string session, IEnumerable<long> requested, Func<long, Item> read,
+            Func<string, OperatorDocumentChangeVersion>? captureVersion)
         {
             var ids = requested.OrderBy(id => id).ToArray();
             if (ids.Length == 0 || ids.Length > MaxElements || ids.Any(id => id <= 0) || ids.Distinct().Count() != ids.Length)
                 throw new ArgumentException("Native state read requires 1-4096 unique positive identities.");
             var items = new List<Item>(); var bytes = 0; var complete = true;
+            OperatorDocumentChangeVersion? before = null, nativeVersion = null;
+            try { before = captureVersion?.Invoke(session); } catch { /* Observation remains incomplete, not a failed commit. */ }
             foreach (var id in ids)
             {
                 Item item;
@@ -61,9 +66,29 @@ namespace RevitBridge.Common
                 bytes += itemBytes;
                 items.Add(item); complete &= item.complete;
             }
+            try
+            {
+                if (before != null && before.DocumentSessionId == session && before.ProcessId > 0 &&
+                    !string.IsNullOrWhiteSpace(before.Epoch) && before.Sequence >= 0)
+                {
+                    var after = captureVersion!(session);
+                    before.RequireUnchanged(after);
+                    nativeVersion = after;
+                }
+            }
+            catch { /* Never report stable opaque state after a failed/changed native stamp. */ }
+            if (captureVersion != null && nativeVersion == null) complete = false;
+            foreach (var item in items)
+            {
+                if (item.stateJson == null) continue;
+                using var state = JsonDocument.Parse(item.stateJson);
+                if (state.RootElement.TryGetProperty("shape", out var shape) && shape.ValueKind == JsonValueKind.Object &&
+                    shape.TryGetProperty("kind", out var kind) && kind.GetString() == "opaque_element_public_state" && nativeVersion == null)
+                { item.complete = false; item.reason = "opaque_state_requires_stable_native_version"; complete = false; }
+            }
             return new { scope = Scope, documentFingerprint = fingerprint, documentSessionId = session,
-                complete, requestedElementIds = ids, items, observedStateBytes = bytes,
-                meaning = "Observed committed-state persistence only; not code intent, requested design, visual fidelity or saved-file proof." };
+                complete, requestedElementIds = ids, items, observedStateBytes = bytes, nativeVersion,
+                meaning = "Public fields are observed directly. Opaque internals are not inspected; native version supplies continuity only, never correctness. Not code intent, requested design, visual fidelity or saved-file proof." };
         }
     }
 }

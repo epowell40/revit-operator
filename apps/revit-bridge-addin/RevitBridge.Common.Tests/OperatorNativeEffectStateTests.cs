@@ -9,6 +9,47 @@ namespace RevitBridge.Common.Tests
     public class OperatorNativeEffectStateTests
     {
         private static JsonElement Json(object value)=>JsonSerializer.SerializeToElement(value);
+        private static OperatorNativeEffectState.Item Opaque(long id) => OperatorNativeEffectState.Capture(id, true,
+            new { elementId=id, found=true, shape=new {kind="opaque_element_public_state",privateStateInspected=false} });
+        [Fact] public void OpaqueStateRequiresTrustedStableNativeVersionAndRetainsExplicitCoverage()
+        {
+            var store = new OperatorDocumentChangeObservationStore(1234);
+            var good = Json(OperatorNativeEffectState.Observe("f", "s", new long[]{1}, Opaque, store.CaptureVersion));
+            Assert.True(good.GetProperty("complete").GetBoolean());
+            Assert.Equal(1234, good.GetProperty("nativeVersion").GetProperty("ProcessId").GetInt32());
+            Assert.Contains("not inspected", good.GetProperty("meaning").GetString());
+            var missing = Json(OperatorNativeEffectState.Observe("f", "s", new long[]{1}, Opaque));
+            Assert.False(missing.GetProperty("complete").GetBoolean());
+            Assert.False(missing.GetProperty("items")[0].GetProperty("complete").GetBoolean());
+            Assert.Equal("opaque_state_requires_stable_native_version", missing.GetProperty("items")[0].GetProperty("reason").GetString());
+        }
+        [Fact] public void InterveningChangesCaptureFailuresAndForeignVersionsCannotCertifyOpaqueContinuity()
+        {
+            foreach (var failure in new[]{false,true})
+            {
+                var store=new OperatorDocumentChangeObservationStore(1234);
+                var changed=Json(OperatorNativeEffectState.Observe("f","s",new long[]{1},id=>{
+                    if(failure)store.RecordCaptureFailure(DateTimeOffset.UtcNow);
+                    else store.Record("s","transaction",Array.Empty<string>(),new long[]{2},Array.Empty<long>(),Array.Empty<long>(),DateTimeOffset.UtcNow);
+                    return Opaque(id);
+                },store.CaptureVersion));
+                Assert.False(changed.GetProperty("complete").GetBoolean());
+                Assert.Equal(JsonValueKind.Null,changed.GetProperty("nativeVersion").ValueKind);
+            }
+            foreach(var mode in new[]{"foreign-session","foreign-process","foreign-epoch","throw"})
+            {
+                var store=new OperatorDocumentChangeObservationStore(1234);var other=new OperatorDocumentChangeObservationStore(mode=="foreign-process"?4321:1234);
+                int calls=0;
+                OperatorDocumentChangeVersion Capture(string session)
+                {
+                    if(mode=="throw")throw new InvalidOperationException();
+                    return mode=="foreign-session"?store.CaptureVersion("foreign"):
+                        ++calls==1?store.CaptureVersion(session):other.CaptureVersion(session);
+                }
+                var result=Json(OperatorNativeEffectState.Observe("f","s",new long[]{1},Opaque,Capture));
+                Assert.False(result.GetProperty("complete").GetBoolean());
+            }
+        }
         [Fact] public void ExactNativeStateIncludesActualIdentityAndDeletedAbsence()
         {
             var value=Json(OperatorNativeEffectState.Observe("fingerprint","session",new long[]{2,1},id=>

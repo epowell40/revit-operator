@@ -43,6 +43,51 @@ function fixture(mutate?:(p:any)=>void,trust:any='authoritative_native'){
 function workspace(fn:()=>void){const old=process.env.OPERATOR_WORKSPACE_ROOT,p=fs.mkdtempSync(path.join(os.tmpdir(),'native-effect-state-'));process.env.OPERATOR_WORKSPACE_ROOT=p;
  try{fn();}finally{__closeForTests();if(old===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=old;fs.rmSync(p,{recursive:true,force:true});}}
 
+function opaqueFixture(change?:(receipt:any)=>void){
+ const f=fixture(p=>{const r=JSON.parse(p.evidence.nativeExecutionReceipt);
+  r.document_revision_before=6;
+  const prepared=JSON.parse(p.evidence.snapshotReceipt);prepared.Scope={DocumentRevision:6};p.evidence.snapshotReceipt=JSON.stringify(prepared);
+  r.effect_observation.nativeVersion={ProcessId:1234,Epoch:'native-epoch',DocumentSessionId:'native-session',Sequence:7};
+  const json=JSON.stringify({elementId:42,found:true,uniqueId:'native-42',className:'Element',name:'',ownerViewId:-1,typeUniqueId:null,parameters:[],
+   shape:{kind:'opaque_element_public_state',category:null,typeId:-1,location:null,box:null,privateStateInspected:false}});
+  r.effect_observation.items[1]={elementId:42,found:true,complete:true,stateJson:json,stateHash:'sha256:'+sha(json)};
+  change?.(r);p.evidence.nativeExecutionReceipt=JSON.stringify(r);
+ });
+ f.fresh.nativeProgramEffectState=JSON.parse(f.payload.evidence.nativeExecutionReceipt).effect_observation;
+ f.result.raw_payload_hash=payloadDigestV2(f.fresh).digest;return f;
+}
+
+test('opaque native internals require trusted unchanged native continuity, never pretend field inspection',()=>workspace(()=>{
+ const f=opaqueFixture();assert.equal(match(f.snapshot,f.subject,f.result,f.fresh),true);
+ for(const change of [
+  (r:any)=>delete r.effect_observation.nativeVersion,
+  (r:any)=>r.document_revision_before=7,
+  (r:any)=>delete r.document_revision_before,
+  (r:any)=>r.effect_observation.nativeVersion.DocumentSessionId='foreign',
+  (r:any)=>r.effect_observation.nativeVersion.Sequence=-1,
+  (r:any)=>r.effect_observation.nativeVersion.ProcessId=0,
+ ]){const x=opaqueFixture(change);assert.equal(match(x.snapshot,x.subject,x.result,x.fresh),false);assert.equal(plan(x.snapshot,x.subject),null);}
+ for(const key of ['ProcessId','Epoch','DocumentSessionId','Sequence']){const x=opaqueFixture();
+  x.fresh.nativeProgramEffectState.nativeVersion[key]=key==='Sequence'?8:key==='ProcessId'?4321:'foreign';
+  x.result.raw_payload_hash=payloadDigestV2(x.fresh).digest;assert.equal(match(x.snapshot,x.subject,x.result,x.fresh),false);}
+ const missing=opaqueFixture();delete missing.fresh.nativeProgramEffectState.nativeVersion;
+ missing.result.raw_payload_hash=payloadDigestV2(missing.fresh).digest;assert.equal(match(missing.snapshot,missing.subject,missing.result,missing.fresh),false);
+ for(const change of [
+  (s:any)=>s.shape.privateStateInspected=true,(s:any)=>s.className='FamilyInstance',
+  (s:any)=>s.shape.category='Ducts',(s:any)=>s.shape.typeId=45,(s:any)=>s.shape.box={min:[0,0,0]},
+  (s:any)=>s.shape.location={x:0},(s:any)=>s.typeUniqueId='type-45',(s:any)=>delete s.parameters,
+  (s:any)=>s.shape.kind='pretend_known_geometry',
+ ]){const x=opaqueFixture(r=>{const item=r.effect_observation.items[1],s=JSON.parse(item.stateJson);change(s);
+   item.stateJson=JSON.stringify(s);item.stateHash='sha256:'+sha(item.stateJson);});
+  assert.equal(match(x.snapshot,x.subject,x.result,x.fresh),false);}
+ const changed=opaqueFixture();changed.fresh.nativeProgramEffectState.items[0]=state(41,false);
+ changed.result.raw_payload_hash=payloadDigestV2(changed.fresh).digest;assert.equal(match(changed.snapshot,changed.subject,changed.result,changed.fresh),false,'continuity never replaces public field equality');
+ for(const mutate of [(x:any)=>x.snapshot.execution_control={state:'paused'},(x:any)=>x.snapshot.unresolved_unknown_operation_ids=['unknown'],
+  (x:any)=>x.subject.result.raw_payload_hash='foreign',(x:any)=>x.subject.input.source+='//changed']){
+  const x=opaqueFixture();mutate(x);assert.equal(match(x.snapshot,x.subject,x.result,x.fresh),false);
+ }
+}));
+
 test('host-captured actual native drafting state matches a distinct linked native read, including deletion',()=>workspace(()=>{
  const f=fixture();assert.equal(match(f.snapshot,f.subject,f.result,f.fresh),true);
  assert.deepEqual(plan(f.snapshot,f.subject),f.op.input);f.subject.verification_operation_ids=['read'];assert.equal(plan(f.snapshot,f.subject),null,'never repeat automatic read');

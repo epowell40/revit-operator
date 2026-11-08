@@ -8,6 +8,11 @@ const sha=(s:string)=>createHash('sha256').update(s).digest('hex');
 const same=(a:unknown,b:unknown)=>canonicalJsonV2(a)===canonicalJsonV2(b);
 const ids=(v:unknown):v is number[]=>Array.isArray(v)&&v.length<=4096&&v.every(n=>Number.isSafeInteger(n)&&n>0)&&new Set(v).size===v.length;
 const sorted=(v:readonly number[])=>[...v].sort((a,b)=>a-b);
+function nativeVersion(v:unknown,session:string){
+ const p=row(v);
+ return Number.isSafeInteger(p.ProcessId)&&p.ProcessId>0&&typeof p.Epoch==='string'&&p.Epoch.length>0&&p.Epoch.length<=200
+  &&p.DocumentSessionId===session&&Number.isSafeInteger(p.Sequence)&&p.Sequence>=0?p:null;
+}
 
 /** This is native observed-effect persistence, not a parser for arbitrary C#,
  * task/design correctness, visual review or saved persistence. All actual
@@ -16,16 +21,24 @@ function observation(v:unknown,fingerprint:string,session:string,targets:number[
  const p=row(v);
  if(p.scope!=='native_drafting_effect_state_v1'||p.complete!==true||p.documentFingerprint!==fingerprint||p.documentSessionId!==session
   ||!ids(p.requestedElementIds)||!same(p.requestedElementIds,targets)||!Array.isArray(p.items)||p.items.length!==targets.length)return null;
- let bytes=0;const seen=new Set<number>();
+ let bytes=0,opaque=false;const seen=new Set<number>();
  for(const item of p.items){const i=row(item);
   if(!targets.includes(i.elementId)||seen.has(i.elementId)||i.complete!==true||typeof i.found!=='boolean'
    ||typeof i.stateJson!=='string'||!i.stateJson||Buffer.byteLength(i.stateJson)>65536
    ||i.stateHash!=='sha256:'+sha(i.stateJson))return null;
   bytes+=Buffer.byteLength(i.stateJson);if(bytes>2*1024*1024)return null;
-  try{const state=row(JSON.parse(i.stateJson));if(state.elementId!==i.elementId||state.found!==i.found)return null;}catch{return null;}
+  try{const state=row(JSON.parse(i.stateJson));if(state.elementId!==i.elementId||state.found!==i.found)return null;
+   const shape=row(state.shape);
+   if(shape.kind==='opaque_element_public_state'){
+    if(i.found!==true||state.className!=='Element'||typeof state.uniqueId!=='string'||!state.uniqueId||state.typeUniqueId!==null
+     ||!Array.isArray(state.parameters)||shape.category!==null||shape.typeId!==-1||shape.location!==null||shape.box!==null||shape.privateStateInspected!==false)return null;
+    opaque=true;
+   }else if(state.className==='Element'&&shape.kind!=='view_extent_infrastructure')return null;
+  }catch{return null;}
   seen.add(i.elementId);
  }
- return p.items as Array<{elementId:number;found:boolean;stateJson:string;stateHash:string;complete:true}>;
+ const version=nativeVersion(p.nativeVersion,session);if(opaque&&!version)return null;
+ return {items:p.items as Array<{elementId:number;found:boolean;stateJson:string;stateHash:string;complete:true}>,opaque,version};
 }
 
 export function nativeProgramEffectStateV2(snapshot:AssignmentSnapshotV2,subject:OperationV2){
@@ -64,9 +77,11 @@ export function nativeProgramEffectStateV2(snapshot:AssignmentSnapshotV2,subject
   const targets=sorted([...new Set<number>([...tx.added_element_ids,...tx.modified_element_ids,...tx.deleted_element_ids])]);
   if(!targets.length||targets.length>4096||!same(sorted(tx.affected_element_ids),targets)
    ||!same([...r.affected_target_identities??[]].sort(),targets.map(n=>'element_id:'+n).sort()))continue;
-  const items=observation(receipt.effect_observation,fingerprint,doc.SessionId,targets);
-  if(!items||items.some(i=>i.found===tx.deleted_element_ids.includes(i.elementId)))continue;
-  return {fingerprint,session:doc.SessionId as string,targets,items};
+  const observed=observation(receipt.effect_observation,fingerprint,doc.SessionId,targets);
+  if(!observed||observed.items.some(i=>i.found===tx.deleted_element_ids.includes(i.elementId)))continue;
+  if(observed.opaque&&(!Number.isSafeInteger(receipt.document_revision_before)||receipt.document_revision_before<0
+   ||row(prepared.Scope).DocumentRevision!==receipt.document_revision_before||observed.version!.Sequence<=receipt.document_revision_before))continue;
+  return {fingerprint,session:doc.SessionId as string,targets,...observed};
  }}catch{/* Missing, corrupt, foreign, unsupported and historical evidence stays unverified. */}
  return null;
 }
@@ -98,6 +113,7 @@ export function nativeProgramEffectPostconditionSatisfiedV2(snapshot:AssignmentS
    &&sameAssignmentBindingV2(other.binding,subject.binding)&&Date.parse(other.opened_at)>=Date.parse(subject.result!.completed_at)))return false;
  const b=row(op.input.body);if(!same(Object.keys(b).sort(),['elementIds','includeNativeProgramEffectState'])||b.includeNativeProgramEffectState!==true||!same(b.elementIds,state.targets))return false;
  const fresh=observation(row(payload).nativeProgramEffectState,state.fingerprint,state.session,state.targets);
- return Boolean(fresh&&state.items.every(expected=>{const actual=fresh.find(i=>i.elementId===expected.elementId);return actual&&actual.found===expected.found
+ if(!fresh||fresh.opaque!==state.opaque||state.opaque&&!same(fresh.version,state.version))return false;
+ return Boolean(state.items.every(expected=>{const actual=fresh.items.find(i=>i.elementId===expected.elementId);return actual&&actual.found===expected.found
   &&actual.stateHash===expected.stateHash&&actual.stateJson===expected.stateJson;}));
 }

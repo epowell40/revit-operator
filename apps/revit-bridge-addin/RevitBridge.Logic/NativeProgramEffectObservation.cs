@@ -11,11 +11,11 @@ namespace RevitBridge.Logic
 {
     public static class NativeProgramEffectObservation
     {
-        internal static object Read(Document doc, IEnumerable<long> ids)
+        internal static object Read(Document doc, IEnumerable<long> ids, Func<string, OperatorDocumentChangeVersion>? version = null)
         {
             var clock=Stopwatch.StartNew();
             return OperatorNativeEffectState.Observe(Fingerprint(doc), OperatorNativeDocumentSessionAuthority.GetSessionId(doc), ids,
-                id=>clock.ElapsedMilliseconds>5000 ? OperatorNativeEffectState.Unavailable(id,"native_state_time_budget_exhausted") : ReadItem(doc,id));
+                id=>clock.ElapsedMilliseconds>5000 ? OperatorNativeEffectState.Unavailable(id,"native_state_time_budget_exhausted") : ReadItem(doc,id), version);
         }
         private static string Fingerprint(Document doc)
         {
@@ -26,8 +26,10 @@ namespace RevitBridge.Logic
         // Called after native settlement. Observation failure must NEVER turn a committed
         // write into no-effect/rollback, remove its audit or authorize another execution.
         public static void AttachCommitted(UIApplication app, Dictionary<string, object?> result)
+            => AttachCommitted(app, result, null);
+        public static void AttachCommitted(UIApplication app, Dictionary<string, object?> result, Func<string, OperatorDocumentChangeVersion>? version)
         {
-            OperatorNativeEffectState.AttachAfterCommit(result,ids=>Read(app.ActiveUIDocument.Document,ids));
+            OperatorNativeEffectState.AttachAfterCommit(result,ids=>Read(app.ActiveUIDocument.Document,ids,version));
         }
         private static OperatorNativeEffectState.Item ReadItem(Document doc, long id)
         {
@@ -68,6 +70,12 @@ namespace RevitBridge.Logic
                     right = Point(view.RightDirection), up = Point(view.UpDirection), direction = Point(view.ViewDirection) };
             else if (e.GetType() == typeof(Element) && e.Name == "ExtentElem")
                 shape = new { kind = "view_extent_infrastructure", box = Box(e) };
+            else if (e.GetType() == typeof(Element) && e.Category == null && e.GetTypeId() == ElementId.InvalidElementId &&
+                e.Location == null && e.get_BoundingBox(null) == null)
+                // These exact native base objects expose identity/parameters but no public geometry.
+                // Never infer their private role from a name or adjacent ID, or claim private fields read.
+                shape = new { kind = "opaque_element_public_state", category = (object?)null, typeId = -1,
+                    location = (object?)null, box = (object?)null, privateStateInspected = false };
             else return OperatorNativeEffectState.Unavailable(id, "unsupported_native_effect_class:" + e.GetType().Name);
             var type = doc.GetElement(e.GetTypeId());
             return OperatorNativeEffectState.Capture(id, true, new { elementId = id, found = true, uniqueId = e.UniqueId,

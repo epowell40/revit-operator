@@ -11,6 +11,9 @@ namespace RevitBridge.Logic.Handlers
 {
     public class GetElementSummaryHandler : IRequestHandler
     {
+        private readonly Func<string, OperatorDocumentChangeVersion>? _version;
+        public GetElementSummaryHandler() : this(null) { }
+        public GetElementSummaryHandler(Func<string, OperatorDocumentChangeVersion>? version) { _version = version; }
         public class Params
         {
             // Back-compat: earlier clients used { ids: [...] }.
@@ -159,7 +162,7 @@ namespace RevitBridge.Logic.Handlers
                 return Task.FromResult<object>(new { schema = "operator.electrical_membership_read.v1", complete = true,
                     requestedElementIds = ids, items = results, circuits = electricalCircuits.Values });
             if (p.includeNativeProgramEffectState)
-                return Task.FromResult<object>(new { result = results, nativeProgramEffectState = NativeProgramEffectObservation.Read(doc, ids) });
+                return Task.FromResult<object>(new { result = results, nativeProgramEffectState = NativeProgramEffectObservation.Read(doc, ids, _version) });
             if (p.preservationScheduleIds != null)
                 return Task.FromResult(AnnotationSchedulePreservation.AttachRead(doc, new { result = results }, p.preservationScheduleIds));
             return Task.FromResult<object>(results);
