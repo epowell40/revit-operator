@@ -47,10 +47,14 @@ namespace RevitBridge.Common
             var n = normal.Select(v => v / length).ToArray();
             // A full circle has no endpoints; reversing its normal does not
             // change its locus. Preserve native axes in the raw observation.
-            var sign = n.First(v => v != 0) < 0 ? -1d : 1d;
+            // Choose orientation after applying the stated comparison precision.
+            // Otherwise a tiny negative near-zero component can flip the whole
+            // normal and turn sub-tolerance native noise into a different key.
+            var rounded = n.Select(v => Math.Round(v, 9)).ToArray();
+            var sign = rounded.First(v => v != 0) < 0 ? -1d : 1d;
             return "circle:v1:relative-rounded9:" + string.Join(",", center.Select(v => Number(Math.Round(v, 9))))
                 + ":" + Number(Math.Round(radius, 9)) + ":"
-                + string.Join(",", n.Select(v => Number(Math.Round(v * sign, 9))));
+                + string.Join(",", rounded.Select(v => Number(v * sign)));
         }
 
         private static bool Point(double[]? p) => p != null && p.Length == 3 && p.All(Finite);

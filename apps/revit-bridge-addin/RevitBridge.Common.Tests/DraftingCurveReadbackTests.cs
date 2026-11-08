@@ -56,6 +56,9 @@ namespace RevitBridge.Common.Tests
             var c=new[]{2d,3,0};var plane=new[]{0d,0,1};var key=DraftingCurveReadback.CircleKey(c,2,plane);
             Assert.Equal(key,DraftingCurveReadback.CircleKey(c,2,new[]{0d,0,-1}));
             Assert.Equal(key,DraftingCurveReadback.CircleKey(c,2,new[]{0d,0,2}));
+            Assert.Equal(key,DraftingCurveReadback.CircleKey(c,2,new[]{-1e-20,0d,1}));
+            Assert.Equal(DraftingCurveReadback.CircleKey(c,2,new[]{1d,-1+1e-20,0}),
+                DraftingCurveReadback.CircleKey(c,2,new[]{1d-1e-20,-1,0}));
             Assert.NotEqual(key,DraftingCurveReadback.CircleKey(new[]{2d,4,0},2,plane));
             Assert.NotEqual(key,DraftingCurveReadback.CircleKey(c,3,plane));
             Assert.NotEqual(key,DraftingCurveReadback.CircleKey(c,2,new[]{0d,1,0}));
