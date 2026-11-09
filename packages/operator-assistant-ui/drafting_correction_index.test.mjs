@@ -13,6 +13,32 @@ function fixture(n=245){return {schema:'revit-operator.view-owned-detailing/v1',
  curve:{kind:'Line',start:{x:i/10,y:0,z:0},end:{x:i/10,y:2,z:0}},boundingBox:{min:{x:i/10,y:0,z:0},max:{x:i/10,y:2,z:0}}}))}]};}
 async function build(...args){const m=await import('./drafting_correction_index.mjs').catch(()=>null);assert.equal(typeof m?.buildDraftingCorrectionIndex,'function','fresh visual observation needs a native correction index');return m.buildDraftingCorrectionIndex(...args);}
 
+test('dense drawings expose bounded spatial retrieval for late identities without a new C# inventory',async()=>{
+ const raw=fixture(900),before=JSON.stringify(raw),r=await build(raw,scene,capture),s=r.spatial_selection;
+ assert.equal(s.scope,'retained_native_bounds_candidates');assert.deepEqual(s.axes,['x','y']);
+ assert.equal(s.regions.length,9);assert.equal(s.unbounded_rows,0);assert.equal(s.geometry_intersection_verified,false);
+ const last=s.regions.at(-1);assert(last[3]>0);
+ const selected=raw.views[0].items.filter(v=>s.axes.every((axis,i)=>v.boundingBox.min[axis]<=last[2][i]&&v.boundingBox.max[axis]>=last[1][i]));
+ assert.equal(selected.length,last[3]);assert(selected.some(v=>v.elementId===999));
+ assert(!r.rows.some(v=>v[0]===999),'late targets need spatial selection, not the truncated prefix');
+ assert.equal(JSON.stringify(raw),before);assert(Buffer.byteLength(JSON.stringify(r))<=16384);
+});
+
+test('spatial candidates retain missing bounds and partial source limits without absence claims',async()=>{
+ const raw=fixture(8);raw.views[0].items[7].boundingBox=null;raw.views[0].truncated=true;
+ raw.views[0].totalOwnedCount=99;raw.views[0].itemsComplete=false;raw.viewsComplete=false;
+ const r=await build(raw,scene,capture);assert.equal(r.spatial_selection.unbounded_rows,1);
+ assert.equal(r.coverage.source_inventory_complete,false);assert.equal(r.spatial_selection.geometry_intersection_verified,false);
+ assert.equal(r.spatial_selection.pixel_to_model_mapping,false);
+});
+
+test('degenerate or unrepresentable bounds cannot create invented spatial regions',async()=>{
+ const raw=fixture(1);raw.views[0].items[0].boundingBox={min:{x:1,y:1,z:1},max:{x:1,y:1,z:1}};
+ assert.equal((await build(raw,scene,capture)).spatial_selection.regions.length,1);
+ raw.views[0].items[0].boundingBox={min:{x:-1e308,y:0,z:0},max:{x:1e308,y:1,z:0}};
+ const s=(await build(raw,scene,capture)).spatial_selection;assert.equal(s.reason,'bounds_span_not_representable');assert.deepEqual(s.regions,[]);
+});
+
 test('current drawing index carries every small-detail line identity and endpoint without a C# rediscovery call',async()=>{
  const raw=fixture(),before=JSON.stringify(raw),r=await build(raw,scene,capture);
  assert.equal(r.state,'available');assert.equal(r.rows.length,245);assert.deepEqual(r.rows[144],[244,'Line',[[14.4,0,0],[14.4,2,0]]]);
@@ -89,6 +115,7 @@ test('drawing index respects the downstream evidence item cap and pages exact re
  assert.deepEqual(index.rows,r.drafting_correction_index.rows.slice(0,index.rows.length));
  assert.deepEqual(index.retrieval.source_row_indices,Array.from({length:index.rows.length},(_,i)=>i));
  assert.equal(index.source_sha256,r.drafting_correction_index.source_sha256);
+ assert.deepEqual(index.spatial_selection,r.drafting_correction_index.spatial_selection,'the full spatial directory survives prefix clipping');
  assert.equal(JSON.stringify(r),before,'model projection must not trim retained native evidence');
  assert.equal(delivered.output[1].image_url,'data:image/png;base64,'+f.bytes.toString('base64'));
  assert.deepEqual(visualWorkReviewModelOutput(delivered,r,'ev1_review'),delivered);

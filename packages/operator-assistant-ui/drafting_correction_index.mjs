@@ -8,6 +8,32 @@ const point=v=>object(v)&&['x','y','z'].every(k=>Number.isFinite(v[k]))
 const unavailable=reason=>({schema:'operator.drafting_correction_index.v1',state:'unavailable',reason,
  native_postcondition_verified:false,whole_task_verified:false});
 
+// A fixed-size directory over the already-read bounds, not a new collector or
+// a geometry/pixel matcher. This keeps late inventory IDs discoverable after
+// the model-visible prefix is clipped. The existing evidence reader performs
+// the actual typed selection and retains original row indices and partial flags.
+function spatialSelection(items){
+ const keys=['x','y','z'],bounded=items.filter(r=>{
+  const b=r.boundingBox;return b&&keys.every(k=>Number.isFinite(b.min?.[k])&&Number.isFinite(b.max?.[k])&&b.min[k]<=b.max[k]);
+ });
+ if(!bounded.length)return {scope:'retained_native_bounds_candidates',axes:[],regions:[],unbounded_rows:items.length,
+  geometry_intersection_verified:false,pixel_to_model_mapping:false};
+ const extents=keys.map(axis=>({axis,min:Math.min(...bounded.map(r=>r.boundingBox.min[axis])),max:Math.max(...bounded.map(r=>r.boundingBox.max[axis]))}));
+ const axes=extents.sort((a,b)=>(b.max-b.min)-(a.max-a.min)).slice(0,2);
+ const regions=[],divisions=axes.map(a=>a.max>a.min?3:1);
+ if(axes.some(a=>!Number.isFinite(a.max-a.min)))return {scope:'retained_native_bounds_candidates',axes:[],regions:[],unbounded_rows:items.length,
+  geometry_intersection_verified:false,pixel_to_model_mapping:false,reason:'bounds_span_not_representable'};
+ for(let j=0;j<divisions[1];j++)for(let i=0;i<divisions[0];i++){
+  const cell=[i,j],min=axes.map((a,k)=>a.min+(a.max-a.min)*cell[k]/divisions[k]),max=axes.map((a,k)=>a.min+(a.max-a.min)*(cell[k]+1)/divisions[k]);
+  const count=bounded.filter(r=>axes.every((a,k)=>r.boundingBox.min[a.axis]<=max[k]&&r.boundingBox.max[a.axis]>=min[k])).length;
+  regions.push([regions.length,min,max,count]);
+ }
+ return {scope:'retained_native_bounds_candidates',axes:axes.map(a=>a.axis),
+  columns:['region','min_on_axes','max_on_axes','intersecting_retained_bounds'],regions,unbounded_rows:items.length-bounded.length,
+  geometry_intersection_verified:false,pixel_to_model_mapping:false,
+  guidance:'Use operator_retrieve_evidence with this index retrieval evidence_id/path and itemRange fields. For each listed axis a, AND filters boundingBox.min.a lte region max and boundingBox.max.a gte region min; start:0,count:20. These are native feet, not pixels. Bounds may overlap multiple regions; counts are candidates, not missing-work or absence proof. Inspect exact returned curves/UniqueIds before repair. Follow selected-rank pagination; no new C# inventory is needed.'};
+}
+
 /** A small locator index from the existing owner-view native read. Its caller
  * brackets that read and the delivered image with unchanged native document
  * identity/epoch/sequence. This is neither pixel registration nor a verifier.
@@ -44,6 +70,7 @@ export function buildDraftingCorrectionIndex(raw,scene,capture){
    fields:['elementId','uniqueId','ownerViewId','className','curve','boundingBox','visibleText']},
   native_postcondition_verified:false,whole_task_verified:false,
   guidance:'Locate correction targets using these current native IDs and coordinates with the delivered drawing image. Line locators are endpoints; other locators are native bounding boxes, not full curve shapes. Coordinates are rounded for locating only; retrieve exact original rows for precision, UniqueIds, curves or full text. IDs belong only to this document session and observed revision. Several curves may share an endpoint or bounds: inspect the intended shape, never delete an arbitrary match. No pixel-to-model transform, visual correctness, hidden-content absence or permission to write is established.'};
+ result.spatial_selection=spatialSelection(items);
  // A dense curve page must not hide every annotation at the tail of the same
  // native inventory. Reserve a small lane within the existing total budget.
  // These are locators, not text fidelity or rendered-legibility judgments.
