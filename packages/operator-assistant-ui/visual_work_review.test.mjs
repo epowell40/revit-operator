@@ -345,6 +345,8 @@ test('combined review uses one provider request for visual checks and exact exec
  const r=await reviewCurrentWork({...request,code_evidence_ids:['ev1_'+'A'.repeat(32)]},f.h);
  assert.equal(f.calls.providers.length,1);assert.equal(r.state,'mismatch');assert.equal(r.code_review.status,'mismatch');assert(r.checks.every(c=>c.status==='matched'));
  const input=JSON.parse(f.calls.providers[0].input[0].content[0].text);assert.deepEqual(input.executed_code,packet);assert.deepEqual(f.calls.providers[0].tools,[]);
+ assert.equal(input.code_review_scope.kind,'selected_executed_code');assert.equal(input.code_review_scope.whole_task_completion,false);
+ assert(input.code_review_scope.separate_checks.includes('visual_fidelity'));assert.equal(input.checks.length,request.checks.length);
  assert.equal(r.whole_task_verified,false);assert.equal(r.native_postcondition_verified,false);
 });
 test('combined review cannot accept omitted code assessment as a visual pass',async()=>{
