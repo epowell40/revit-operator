@@ -82,6 +82,74 @@ function observationHost(){
  return {host,calls,bytes,change:()=>seq++,setType:value=>type=value};
 }
 const request={review_mode:'observe',view_id:41,capture_mode:'target_view',checks:[{id:'detail',expected:'Find remaining visible discrepancies.'}]};
+
+function assessmentHost(status='mismatch'){
+ const f=observationHost();f.host.requestResponse=async input=>{f.calls.push('review');return {id:'resp_review',status:'completed',model:'gpt-6.1-sol',output:[{type:'message'}],output_text:JSON.stringify({checks:input.input[0].content.filter(c=>c.type==='input_text').map(c=>JSON.parse(c.text)).flatMap(v=>v.checks).map(c=>({id:c.id,status,observed:'A symbol stroke needs closer comparison.',correction:status==='mismatch'?'Check the current stroke and source before correcting.':''}))})};};return f;
+}
+const assessmentRequest={view_id:41,capture_mode:'target_view',checks:request.checks};
+const reviewEnvelope={output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{evidence_id:'ev1_review'}]})};
+
+test('independent drafting discrepancy delivers fresh repair locators and pixels to the primary actor',async()=>{
+ for(const status of ['mismatch','uncertain']){
+  const f=assessmentHost(status),r=await reviewCurrentWork(assessmentRequest,f.host);
+  assert.equal(r.state,status);assert.equal(r.drafting_correction_index?.state,'available');
+  assert.equal(f.calls.filter(x=>x==='index').length,1);assert.equal(f.calls.filter(x=>x==='review').length,1);
+  assert(f.calls.indexOf('index')>f.calls.indexOf('review'));assert(f.calls.lastIndexOf('context')>f.calls.indexOf('index'));
+  const before=JSON.stringify(r),out=visualWorkReviewModelOutput(reviewEnvelope,r,'ev1_review');
+  const feedback=JSON.parse(out.output[0].text).evidence_projections[0].visual_work_review;
+  assert.deepEqual(feedback.checks,r.checks);assert.equal(feedback.drafting_correction_index.retrieval.evidence_id,'ev1_review');
+  assert.equal(out.output[1].image_url,'data:image/png;base64,'+f.bytes.toString('base64'));
+  assert.equal(feedback.native_postcondition_verified,false);assert.equal(feedback.whole_task_verified,false);
+  assert(Buffer.byteLength(out.output[0].text)<=8192);assert.equal(JSON.stringify(r),before);
+  assert.deepEqual(visualWorkReviewModelOutput(out,r,'ev1_review'),out);
+ }
+});
+
+test('matched assessments and non-drafting views do not incur correction inventory reads',async()=>{
+ for(const [status,type] of [['matched','DraftingView'],['mismatch','FloorPlan']]){
+  const f=assessmentHost(status);f.setType(type);const r=await reviewCurrentWork(assessmentRequest,f.host);
+  assert.equal(r.state,status);assert.equal(r.drafting_correction_index,undefined);assert(!f.calls.includes('index'));
+ }
+});
+
+test('post-review locator mutation prevents stale repair feedback',async()=>{
+ const f=assessmentHost();f.host.readDraftingDetail=async()=>{f.change();return fixture();};
+ const r=await reviewCurrentWork(assessmentRequest,f.host);
+ assert.equal(r.state,'unavailable');assert.equal(r.reason,'visual_review_scene_changed_before_correction_feedback');
+ assert.equal(r.drafting_correction_index,undefined);
+});
+
+test('failed or foreign optional repair inventory remains unavailable without replacing the visual finding',async()=>{
+ for(const read of [async()=>{throw Error('native collector unavailable');},async()=>{const v=fixture();v.documentTitle='foreign';return v;}]){
+  const f=assessmentHost();f.host.readDraftingDetail=read;const r=await reviewCurrentWork(assessmentRequest,f.host);
+  assert.equal(r.state,'mismatch');assert.equal(r.drafting_correction_index?.state,'unavailable');assert.equal(r.whole_task_verified,false);
+  const out=visualWorkReviewModelOutput(reviewEnvelope,r,'ev1_review');assert.equal(out.output[1].type,'input_image');
+ }
+});
+
+test('repair feedback reserves complete checks before optional dense locator rows',async()=>{
+ const f=assessmentHost(),r=await reviewCurrentWork(assessmentRequest,f.host);
+ r.checks=Array.from({length:3},(_,i)=>({id:'check'+i,expected:'Expected visible symbol. '.repeat(6),status:i===1?'mismatch':'matched',observed:'Actual observed appearance. '.repeat(9),correction:i===1?'Inspect the indicated stroke against the source and current native geometry. '.repeat(3):''}));
+ const out=visualWorkReviewModelOutput(reviewEnvelope,r,'ev1_review'),feedback=JSON.parse(out.output[0].text).evidence_projections[0].visual_work_review;
+ assert.deepEqual(feedback.checks,r.checks);assert.equal(feedback.coverage.complete,true);assert(feedback.drafting_correction_index);
+ assert(Buffer.byteLength(out.output[0].text)<=8192);
+});
+
+test('repair presentation preserves historical binding and exact findings without duplicating prior camera metadata',async()=>{
+ const f=assessmentHost(),r=await reviewCurrentWork(assessmentRequest,f.host);
+ r.baseline={evidence_id:'ev1_before',location:{...scene,view_name:'Prior'},capture,frame:{kind:'native_target_view',width:4000,height:1993,viewport:{description:'Retained historical camera. '.repeat(80)}}};
+ r.code_review={status:'matched',observed:'The selected code modifies only the requested detail. '.repeat(12),correction:''};
+ r.request.code_evidence_ids=['ev1_code'];const before=JSON.stringify(r);
+ const out=visualWorkReviewModelOutput(reviewEnvelope,r,'ev1_review'),v=JSON.parse(out.output[0].text).evidence_projections[0].visual_work_review;
+ assert.deepEqual(v.checks,r.checks);assert.equal(v.baseline.evidence_id,'ev1_before');assert.deepEqual(v.baseline.capture,capture);
+ assert.equal(v.baseline.location.document_session_id,scene.document_session_id);assert.equal(v.baseline.location.through_sequence,scene.through_sequence);
+ assert.equal(v.baseline.historical_context,true);assert.equal(v.baseline.presentation_complete,false);assert.equal(v.retrieval.baseline_path,'baseline');
+ assert.equal(v.code_review.status,'matched');assert.equal(v.code_review.details_complete,false);assert.equal(v.retrieval.code_review_path,'code_review');
+ assert.deepEqual(v.code_review_evidence_ids,['ev1_code']);assert.equal(JSON.stringify(r),before);
+ r.code_review={status:'mismatch',observed:'An unrelated deletion is present.',correction:'Do not accept this execution.'};
+ const bad=JSON.parse(visualWorkReviewModelOutput(reviewEnvelope,r,'ev1_review').output[0].text).evidence_projections[0].visual_work_review;
+ assert.deepEqual(bad.code_review,r.code_review);assert.equal(bad.whole_task_verified,false);
+});
 test('production observation sends actual current image and native locators together through the model-visible consumer',async()=>{
  const f=observationHost(),r=await reviewCurrentWork(request,f.host);assert.equal(r.state,'observed');assert.equal(r.drafting_correction_index.rows.length,245);
  assert.equal(f.calls.filter(v=>v==='index').length,1);assert(f.calls.lastIndexOf('context')>f.calls.indexOf('index'));

@@ -631,8 +631,22 @@ export async function reviewCurrentWork(input,host){
       if(!sameTargetScene(complementaryScene,finalScene)||finalScene.active_view_id!==request.view_id)throw Error('visual_review_complementary_state_changed');
     }
     const result=parseVisualWorkReview(response,request);
-    const reviewed=retained({...base,ok:true,request_dispatched:true,...result,location:initial,capture:{evidence_id:captureRef.evidence_id,content_hash:captureRef.content_hash,byte_count:captureRef.byte_count,frame},reference:reference?{filename:reference.filename,evidence_id:reference.evidence_ref.evidence_id,content_hash:reference.evidence_ref.content_hash,...(reference.source_render?{source_render:reference.source_render}:{})}:null,reviewer_response_id:responseId,reviewer_model:response.model??settings.model,
-      guidance:result.state==='mismatch'?'Inspect each discrepancy, correct only the confirmed in-scope mismatch, then obtain fresh native readback and another visual review. Do not replay an uncertain write.':result.state==='uncertain'?'Obtain a closer view, relevant source or native attributes for the uncertain checks; do not treat missing evidence as an instruction to repeat edits.':'These visible checks match at this observation. Preserve native/readback and scope requirements; this is not whole-task completion.'});
+    // A repair request needs current native locators, just as a primary visual
+    // observation does. Reuse the existing collector once after the assessment;
+    // do not ask another model, reuse a pre-correction index, or infer absence
+    // from a visual claim. Optional read failure cannot erase the visual result.
+    let correctionIndex=null;
+    if(['mismatch','uncertain'].includes(result.state)&&target&&initial.view_type==='DraftingView'&&typeof host.readDraftingDetail==='function'){
+      await control();
+      try{raw.drafting_native_read=await host.readDraftingDetail(initial);}
+      catch{raw.drafting_native_read={error:'native_locator_read_failed'};}
+      correctionIndex=buildDraftingCorrectionIndex(raw.drafting_native_read,initial,captureRef);
+      await control();if(!same(initial,makeScene(await observed())))throw Error('visual_review_scene_changed_before_correction_feedback');
+    }
+    const reviewed=retained({...base,ok:true,request_dispatched:true,...result,location:initial,
+      ...(correctionIndex?{drafting_correction_index:correctionIndex}:{}),
+      capture:{evidence_id:captureRef.evidence_id,content_hash:captureRef.content_hash,byte_count:captureRef.byte_count,frame},reference:reference?{filename:reference.filename,evidence_id:reference.evidence_ref.evidence_id,content_hash:reference.evidence_ref.content_hash,...(reference.source_render?{source_render:reference.source_render}:{})}:null,reviewer_response_id:responseId,reviewer_model:response.model??settings.model,
+      guidance:result.state==='mismatch'?'Use the delivered current image and native correction index to inspect each discrepancy. A reported missing stroke may already exist: corroborate appearance before adding geometry. If native geometry conflicts with the visual finding, use one focused observation with neighboring context instead of repeating inventories or duplicating the stroke. Inspect and correct only confirmed in-scope mismatches, then read back and recheck. Do not replay an uncertain write.':result.state==='uncertain'?'Use current correction locators and a closer view with source/model context for uncertain checks; do not treat missing evidence as native absence or an instruction to repeat edits.':'These visible checks match at this observation. Preserve native/readback and scope requirements; this is not whole-task completion.'});
     // The primary must see the actual work that was judged, especially when a
     // correction is requested. Reuse the same guarded captures; no second
     // screenshot, reviewer request, or imported verdict is needed.
@@ -671,7 +685,7 @@ export function visualWorkReviewModelOutput(modelOutput,result,evidenceId,inspec
   const location=result.location?Object.fromEntries(['process_id','document_session_id','epoch','through_sequence','view_id','view_name','view_unique_id','view_type','sheet_number','document_title','identity_authority'].map(k=>[k,result.location[k]])):null;
   const identityDiagnostic=visualReviewIdentityFailureV1({visual_review_identity_failure:result.identity_read_failure});
   const feedback={schema:'operator.visual_work_review_feedback.v1',source_evidence_id:evidenceId,
-    ...(result.state==='observed'&&result.drafting_correction_index?{drafting_correction_index:{...structuredClone(result.drafting_correction_index),
+    ...(['observed','mismatch','uncertain'].includes(result.state)&&result.drafting_correction_index?{drafting_correction_index:{...structuredClone(result.drafting_correction_index),
       ...(result.drafting_correction_index.retrieval?{retrieval:{...structuredClone(result.drafting_correction_index.retrieval),evidence_id:evidenceId}}:{})}}:{}),
     ...(inspectionCloseout?{inspection_closeout:{state:inspectionCloseout.state,reason:inspectionCloseout.reason??null,
       item_id:inspectionCloseout.item_id??null,outcome:inspectionCloseout.outcome??null,native_postcondition_verified:false,whole_task_verified:false}}:{}),
@@ -707,6 +721,25 @@ export function visualWorkReviewModelOutput(modelOutput,result,evidenceId,inspec
   const projection={...original,key_counts:{'checks.length':checks.length},key_facts:{},diagnostics:[],
     effect_state:null,before_hash:null,after_hash:null,truncated:true,visual_work_review:feedback};
   for(const key of ['inline_payload','tool_documentation','connector_graph','helper_findings'])delete projection[key];
+  // The typed feedback already supplies exact review/check/native selectors.
+  // Duplicating the generic retrieval catalogue can hide the very discrepancy
+  // the caller needs to repair. Full immutable evidence stays addressable.
+  delete projection.retrieval;
+  if(['mismatch','uncertain'].includes(result.state)&&feedback.drafting_correction_index){
+    // Prior camera identity is already bound by the retained review. Keep the
+    // binding and revision in the repair packet, not a second copy of viewport
+    // names, hashes and frame identity. Full context remains explicitly linked.
+    if(feedback.baseline){const b=feedback.baseline;
+      feedback.baseline={evidence_id:b.evidence_id,capture:b.capture,
+        location:b.location?Object.fromEntries(['process_id','document_session_id','epoch','through_sequence','view_id','view_unique_id'].map(k=>[k,b.location[k]])):null,
+        historical_context:true,presentation_complete:false,full_path:'baseline'};
+      feedback.retrieval.baseline_path='baseline';
+    }
+    if(feedback.code_review?.status==='matched'){
+      feedback.code_review={status:'matched',details_complete:false,full_path:'code_review'};
+      feedback.retrieval.code_review_path='code_review';
+    }
+  }
   const wire=()=>JSON.stringify({...envelope,evidence_projections:envelope.evidence_projections.map(p=>p===original?projection:p)});
   // The actor's downstream evidence-item limit also applies to the locator
   // index. Keep a whole-row prefix and the exact first omitted native row;
@@ -714,12 +747,33 @@ export function visualWorkReviewModelOutput(modelOutput,result,evidenceId,inspec
   const indexBytes=feedback.drafting_correction_index?Buffer.byteLength(JSON.stringify(feedback.drafting_correction_index),'utf8'):0;
   if(indexBytes>16896)throw Error('visual_review_projection_budget_exceeded');
   const outputBudget=8192,index=feedback.drafting_correction_index;
+  const retainedIndex=()=>({schema:index.schema,state:'retained_only',
+    source_sha256:index.source_sha256,location:index.location,capture:index.capture,
+    coverage:{...index.coverage,returned_rows:0,source_rows_exhausted:false},
+    retrieval:{evidence_id:evidenceId,index_path:'drafting_correction_index',path:index.retrieval.path,fields:index.retrieval.fields,next_start:0},
+    native_postcondition_verified:false,whole_task_verified:false,pixel_to_model_mapping:false,
+    guidance:'Native locators are retained, not absent. Retrieve the index or select exact raw rows by evidence ID. Inspect the delivered pixels; no correctness or completion is established.'});
+  // Reserve complete finding entries before optional locator rows, retaining
+  // the established original-order prefix and exact next_start semantics.
+  if(index?.state==='available')feedback.drafting_correction_index=retainedIndex();
+  if(Buffer.byteLength(wire(),'utf8')>outputBudget)throw Error('visual_review_projection_budget_exceeded');
+  for(const check of checks){
+    feedback.checks.push(check);const count=feedback.checks.length;
+    feedback.coverage={total:checks.length,returned:count,complete:count===checks.length,next_start:count===checks.length?null:count};
+    if(Buffer.byteLength(wire(),'utf8')>outputBudget){feedback.checks.pop();const returned=feedback.checks.length;
+      feedback.coverage={total:checks.length,returned,complete:false,next_start:returned};break;}
+  }
+  if(checks.length&&!feedback.checks.length)throw Error('visual_review_projection_budget_exceeded');
+  if(index?.state==='available')feedback.drafting_correction_index=index;
   if(index?.state==='available'){
     // The typed feedback already carries the exact evidence ID, native row
     // selector, fields and full-review selectors. Do not spend its repair budget
     // repeating the generic selector catalogue and the longer stored guidance.
     delete projection.retrieval;
     index.guidance='Current native IDs; rounded line endpoints or bounds for other shapes. Retrieve exact rows for precision, curves and UniqueIds. Bounds are candidates, not pixel mapping, visual correctness or write permission.';
+    if(['mismatch','uncertain'].includes(result.state)&&index.spatial_selection){
+      index.spatial_selection.guidance='Select nearby candidates via itemRange AND filters: boundingBox.min.a lte region max, boundingBox.max.a gte region min for each axis; count:20. Native feet, not pixels; follow selected-rank pagination. Full guidance: drafting_correction_index.spatial_selection.';
+    }
     while(Buffer.byteLength(wire(),'utf8')>outputBudget&&index.rows.length){
       index.rows.pop();const next=index.retrieval.source_row_indices.pop();
       index.coverage.returned_rows=index.rows.length;index.coverage.source_rows_exhausted=false;
@@ -740,23 +794,10 @@ export function visualWorkReviewModelOutput(modelOutput,result,evidenceId,inspec
     if(Buffer.byteLength(wire(),'utf8')>outputBudget){
       // Optional discovery data must not abort valid image delivery. This is a
       // reference to available evidence, not an unavailable read or zero items.
-      feedback.drafting_correction_index={schema:index.schema,state:'retained_only',
-        source_sha256:index.source_sha256,location:index.location,capture:index.capture,
-        coverage:{...index.coverage,returned_rows:0,source_rows_exhausted:false},
-        retrieval:{evidence_id:evidenceId,index_path:'drafting_correction_index',
-          path:index.retrieval.path,fields:index.retrieval.fields,next_start:0},
-        native_postcondition_verified:false,whole_task_verified:false,pixel_to_model_mapping:false,
-        guidance:'Native locators are retained, not absent. Retrieve the index or select exact raw rows by evidence ID. Inspect the delivered pixels; no correctness or completion is established.'};
+      feedback.drafting_correction_index=retainedIndex();
     }
   }
   if(Buffer.byteLength(wire(),'utf8')>outputBudget)throw Error('visual_review_projection_budget_exceeded');
-  for(const check of checks){
-    feedback.checks.push(check);const count=feedback.checks.length;
-    feedback.coverage={total:checks.length,returned:count,complete:count===checks.length,next_start:count===checks.length?null:count};
-    if(Buffer.byteLength(wire(),'utf8')>outputBudget){feedback.checks.pop();const returned=feedback.checks.length;
-      feedback.coverage={total:checks.length,returned,complete:false,next_start:returned};break;}
-  }
-  if(checks.length&&!feedback.checks.length)throw Error('visual_review_projection_budget_exceeded');
   const output=wire();if(Buffer.byteLength(output,'utf8')>outputBudget)throw Error('visual_review_projection_budget_exceeded');
   if(result.state==='observed'&&(result.ok!==true||result.request?.review_mode!=='observe'||!images?.length||inspectionCloseout))throw Error('visual_review_observation_pixels_unavailable');
   if(deliveredImages.length)return {...modelOutput,output:[{type:'input_text',text:output},...deliveredImages]};
