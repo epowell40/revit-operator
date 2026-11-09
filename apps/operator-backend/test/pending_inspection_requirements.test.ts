@@ -14,7 +14,21 @@ function largerVerifiedScope(count=200) {
   const read=s.operations[observation.operation_id];
   if(read?.verification_of_operation_id!==item.operation_ids[0])continue;
   const fact=observation.facts.find((x:any)=>x.fact_id==='verification.deliverable_target_identities');
-  if(fact)fact.value=ids.map(id=>'element_id:'+id);
+  if(fact) {
+   // Each authoritative observation has its own existing 256-target bound.
+   // Larger drawings aggregate independently verified batches, not one
+   // oversized fact that the unchanged domain correctly rejects.
+   fact.value=ids.slice(0,256).map(id=>'element_id:'+id);
+   for(let offset=256;offset<ids.length;offset+=256) {
+    const copy=structuredClone(read),copyObservation=structuredClone(observation);
+    copy.operation_id=read.operation_id+'-batch-'+offset;
+    const oid=observation.observation_id+'-batch-'+offset;
+    copy.observation_ids=[oid];copyObservation.observation_id=oid;copyObservation.operation_id=copy.operation_id;
+    copyObservation.facts.find((x:any)=>x.fact_id==='verification.deliverable_target_identities').value=ids.slice(offset,offset+256).map(id=>'element_id:'+id);
+    s.operations[copy.operation_id]=copy;s.observations[oid]=copyObservation;
+    s.operations[item.operation_ids[0]].verification_operation_ids.push(copy.operation_id);
+   }
+  }
  }
  s.operations[f.read_id].input.body.elementIds=ids;
  return {s,ids,readId:f.read_id};
