@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto';
 
+export function desktopToolHistoryCacheSupported(model: unknown): boolean {
+  return typeof model === 'string' && ['gpt-6.1-sol','gpt-6.1-terra'].includes(model);
+}
+
 /** Transport-only cache hints. They do not change retained evidence, history,
  * model/tool settings, compaction, budgets or native/task authority.
  * Explicit tool-result endpoints let a later request reuse history when the
@@ -10,7 +14,7 @@ export function desktopToolHistoryCache(input: unknown, model: string, enabled: 
   const unchanged = { input, options: undefined as undefined | {mode:'implicit';comparison_response_id?:string},
     diagnostic: { enabled:false, breakpoints:[] as {index:number;prefix_sha256:string}[] } };
   // Qualify the current actor models first; do not infer future model support.
-  if (!enabled || !['gpt-6.1-sol','gpt-6.1-terra'].includes(model) || !Array.isArray(input)) return unchanged;
+  if (!enabled || !desktopToolHistoryCacheSupported(model) || !Array.isArray(input)) return unchanged;
   const candidates:number[]=[];
   const rows=input.map((item:any,index:number)=>{
     if(item?.type!=='function_call_output')return item;

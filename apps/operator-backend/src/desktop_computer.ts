@@ -359,7 +359,7 @@ export async function relayBoundDesktopComputerResponse(rawBody: unknown,
       instructions:(body.instructions??'')+'\nAn existing native placement call is outstanding. Only operate that Revit placement UI, then Escape and use native__await_interactive_placement for its actual result. Do not save, report or finish the task, call another native tool, or treat input readiness as a committed edit.'};
     retainedTurnUsage=assertBoundedModelEvidencePayload((providerBody as DesktopComputerRelayRequest).input);
     providerBody=prepareDesktopProviderInput(binding,messageId,{
-      ...providerBody as Record<string,unknown>,model,reasoning_effort:reasoning },ownerContext?{hostFeedback:ownerInput!.at(-1)}:{});
+      ...providerBody as Record<string,unknown>,model,reasoning_effort:reasoning },ownerContext?{hostFeedback:ownerInput!.at(-1),cacheStableHistory:true}:{});
     // Only after the bound predecessor and raw tool outputs have passed the
     // existing checks. Neither client JSON nor the actor selects cache policy.
     cacheContext=ownerContext?{cacheToolHistory:true,comparisonResponseId:body.previous_response_id}:{};

@@ -8,6 +8,7 @@ import type { AssignmentKernelBindingInputV2 } from "./assignments/assignment_ke
 import {getAssignmentKernelSnapshotV2} from './assignments/assignment_kernel_v2_store.js';
 import {resolveOpenAiDataPolicy} from './openai_data_policy.js';
 import {packHistoricalObservationFields} from './desktop_observation_replay.js';
+import {desktopToolHistoryCacheSupported} from './desktop_prompt_cache.js';
 
 function writeDurable(file: string, value: unknown): void {
   const fd = fs.openSync(file, "wx");
@@ -474,7 +475,7 @@ export function desktopModelInputPackage(body: any) {
 }
 
 export function prepareDesktopProviderInput(binding: Binding, messageId: unknown, body: any,
-  internal: { hostFeedback?: unknown } = {}): any {
+  internal: { hostFeedback?: unknown; cacheStableHistory?: boolean } = {}): any {
   if (!desktopResponseOwnsContext(body)) return body;
   const current = loadContext(binding);
   if (!current || current.message_id !== messageId) return body; // legacy/direct relay
@@ -503,7 +504,15 @@ export function prepareDesktopProviderInput(binding: Binding, messageId: unknown
     omittedFeedback = superseded.size;
     const visuals = boundedHistoricalVisuals(retained, body.input, Boolean(body.tools?.some((tool: any) => tool?.type === 'computer')));
     omittedVisuals = visuals.omitted;
-    const observations = packHistoricalObservationFields(visuals.input, body.input);
+    // Deduplicating small repeated fields rewrites earlier tool outputs and
+    // invalidates the larger cached prefix. Preserve those already-delivered
+    // bytes for the bound cache-enabled owner. Fresh host feedback, image
+    // retirement, window limits and genuine compaction remain independent.
+    // Legacy forward references remain valid because their literal anchors
+    // are retained; no new reference chains or verification claims are made.
+    const observations = internal.cacheStableHistory && desktopToolHistoryCacheSupported(body.model)
+      ? {input:visuals.input,omittedFields:0,bytesSaved:0}
+      : packHistoricalObservationFields(visuals.input, body.input);
     omittedObservationFields = observations.omittedFields;
     observationBytesSaved = observations.bytesSaved;
     const pixels = uniqueHistoricalPixels(observations.input, body.input);

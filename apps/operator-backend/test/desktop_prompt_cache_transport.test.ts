@@ -32,29 +32,34 @@ test('actual SDK transport marks retained tool history and accounts cache usage 
  }finally{for(const k of keys)prior[k]===undefined?delete process.env[k]:process.env[k]=prior[k];await new Promise<void>(r=>server.close(()=>r()));}
 });
 
-test('bound owner continuation sends cache hints only after persisted predecessor validation and remains unfinished',async()=>{
+test('bound owner continuation preserves cached observation history through the actual SDK and remains unfinished',async()=>{
  const keys=['OPERATOR_WORKSPACE_ROOT','OPERATOR_OPENAI_API_KEY','OPERATOR_OPENAI_BASE_URL'],prior=Object.fromEntries(keys.map(k=>[k,process.env[k]]));
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'cache-bound-')),submitted:any[]=[];
  const server=http.createServer((req,res)=>{const parts:Buffer[]=[];req.on('data',c=>parts.push(Buffer.from(c)));req.on('end',()=>{
   submitted.push(JSON.parse(Buffer.concat(parts).toString('utf8')));const n=submitted.length;res.writeHead(200,{'content-type':'application/json'});
-  res.end(JSON.stringify({id:'resp_cache'+n,model:'gpt-6.1-sol',status:'completed',output:n===1?[{type:'function_call',name:'read_model',call_id:'read1',arguments:'{}'}]:[],usage:{input_tokens:1000,input_tokens_details:{cached_tokens:700,cache_write_tokens:200},output_tokens:10,total_tokens:1010}}));
+  res.end(JSON.stringify({id:'resp_cache'+n,model:'gpt-6.1-sol',status:'completed',output:n<3?[{type:'function_call',name:'native__revit_call_tool',call_id:'read'+n,arguments:'{}'}]:[],usage:{input_tokens:1000,input_tokens_details:{cached_tokens:700,cache_write_tokens:200},output_tokens:10,total_tokens:1010}}));
  });});
  try{
   process.env.OPERATOR_WORKSPACE_ROOT=root;process.env.OPERATOR_OPENAI_API_KEY='synthetic-local-only';
   await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));process.env.OPERATOR_OPENAI_BASE_URL='http://127.0.0.1:'+(server.address() as {port:number}).port;__testOnlyResetGoalListCache();
   const goal=createGoal({title:'Inspect partial',objective:'Read current model and keep remaining work.',acceptance_criteria:['Checked drawing'],status:'active',related_session_id:'cache-session',created_by:'test',work_budget:{requested_effect:'read'}});
   const binding={...createAssignmentKernelForGoalV2({goal,run_id:'cache-run'}),kernelVersion:2 as const};
-  const common={model:'gpt-6.1-sol',reasoning_effort:'medium',tools:[{type:'function',name:'read_model',parameters:{type:'object',properties:{}}}]};
+  const common={model:'gpt-6.1-sol',reasoning_effort:'medium',tools:[{type:'function',name:'native__revit_call_tool',parameters:{type:'object',properties:{}}}]};
   const first={...common,message_id:'one',input:[{role:'user',content:'Inspect remaining work'}]};
   await retainDesktopResponse(binding,'one',first,()=>relayBoundDesktopComputerResponse(first,binding),e=>({error:String(e)}),true);
-  const outputs=[{type:'function_call_output',call_id:'read1',output:'drafting incomplete'}];retainDesktopContext(binding,'one',outputs);
+  const observation=JSON.stringify({schema:'revit-operator.model-observation-index/v2',verified_postconditions:[{operation_id:'read',scope:'Not whole-task completion',checked_preservation_ids:Array.from({length:80},(_,i)=>'element:'+i)}],pending_verification:[{check_state:'previous_check_stale'}]});
+  const outputs=[{type:'function_call_output',call_id:'read1',output:[{type:'input_text',text:observation}]}],raw=structuredClone(outputs);retainDesktopContext(binding,'one',outputs);
   const next={...common,message_id:'two',previous_response_id:'resp_cache1',input:outputs};
   await retainDesktopResponse(binding,'two',next,()=>relayBoundDesktopComputerResponse(next,binding),e=>({error:String(e)}),true);
-  assert.equal(submitted.length,2);assert.equal(submitted[0].prompt_cache_options,undefined);
+  const second=[{...outputs[0],call_id:'read2'}];retainDesktopContext(binding,'two',second);
+  const third={...common,message_id:'three',previous_response_id:'resp_cache2',input:second};
+  await retainDesktopResponse(binding,'three',third,()=>relayBoundDesktopComputerResponse(third,binding),e=>({error:String(e)}),true);
+  assert.equal(submitted.length,3);assert.equal(submitted[0].prompt_cache_options,undefined);
   assert.deepEqual(submitted[1].prompt_cache_options,{mode:'implicit',comparison_response_id:'resp_cache1'});
   assert.equal(submitted[1].input.find((x:any)=>x.type==='function_call_output').output[0].prompt_cache_breakpoint.mode,'explicit');
+  assert.deepEqual(submitted[2].input.find((x:any)=>x.type==='function_call_output'&&x.call_id==='read1'),submitted[1].input.find((x:any)=>x.type==='function_call_output'&&x.call_id==='read1'));
   const snapshot=getAssignmentKernelSnapshotV2(goal.id)!;assert.equal(snapshot.outcome,'active');assert.equal(snapshot.terminal,false);
-  assert.equal(snapshot.in_flight_provider_call_ids.length,0);assert.equal(Object.keys(snapshot.provider_calls).length,2);
-  assert.deepEqual(outputs,[{type:'function_call_output',call_id:'read1',output:'drafting incomplete'}]);
+  assert.equal(snapshot.in_flight_provider_call_ids.length,0);assert.equal(Object.keys(snapshot.provider_calls).length,3);
+  assert.deepEqual(outputs,raw);
  }finally{await new Promise<void>(r=>server.close(()=>r()));for(const k of keys)prior[k]===undefined?delete process.env[k]:process.env[k]=prior[k];__testOnlyResetGoalListCache();assert(path.resolve(root).startsWith(path.resolve(os.tmpdir())+path.sep));fs.rmSync(root,{recursive:true,force:true});}
 });

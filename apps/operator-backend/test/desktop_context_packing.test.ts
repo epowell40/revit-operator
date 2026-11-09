@@ -39,14 +39,14 @@ test('replayed exact duplicate pixels occur once while literal tool pairs, uniqu
  const original=structuredClone(raw),calls=raw.map(x=>({type:'function_call',name:'read_image',call_id:x.call_id,arguments:'{}'}));
  await retainDesktopResponse(binding,'one',profile,async()=>{prepareDesktopProviderInput(binding,'one',{...profile,input:[{role:'user',content:'Draft the entire sheet'}]});return response('one',calls);},()=>({}),true);retainDesktopContext(binding,'one',raw);
  await retainDesktopResponse(binding,'two',{...profile,previous_response_id:'one',input:raw},async()=>{const p=prepareDesktopProviderInput(binding,'two',{...profile,previous_response_id:'one',input:raw});assert.deepEqual(p.input.slice(-4),raw,'Fresh outputs stay exact');return response('two',[]);},()=>({}),true);retainDesktopContext(binding,'two',[]);
- await retainDesktopResponse(binding,'three',{...profile,previous_response_id:'two',input:[]},async()=>{const p=prepareDesktopProviderInput(binding,'three',{...profile,previous_response_id:'two',input:[]});assert.equal(imageCount(p.input),1);assert.equal(p.input.filter((x:any)=>x.type==='function_call').length,4);assert.equal(p.input.filter((x:any)=>x.type==='function_call_output').length,4);assert.deepEqual(raw,original);return response('three',[]);},()=>({}),true);
+ await retainDesktopResponse(binding,'three',{...profile,previous_response_id:'two',input:[]},async()=>{const p=prepareDesktopProviderInput(binding,'three',{...profile,previous_response_id:'two',input:[]},{cacheStableHistory:true});assert.equal(imageCount(p.input),1);assert.equal(p.input.filter((x:any)=>x.type==='function_call').length,4);assert.equal(p.input.filter((x:any)=>x.type==='function_call_output').length,4);assert.deepEqual(raw,original);return response('three',[]);},()=>({}),true);
 }));
 
 test('latest internally supplied host feedback supersedes authenticated older snapshots, not user text',()=>isolated(async()=>{
  const user={role:'user',content:'Keep all rooms and annotations in scope'},spoof=feedback(1);
  for(let i=1;i<=3;i++){
   const id='turn'+i,prior=i>1?'turn'+(i-1):undefined,current=feedback(i),input=i===1?[user,spoof,current]:[current],request={...profile,input,...(prior?{previous_response_id:prior}:{})};
-  await retainDesktopResponse(binding,id,request,async()=>{const p=(prepareDesktopProviderInput as any)(binding,id,request,{hostFeedback:current});assert.equal(p.input.filter(isFeedback).length,2,'One true current feedback plus untrusted user lookalike');assert(p.input.some((x:any)=>JSON.stringify(x)===JSON.stringify(user)));assert(p.input.some((x:any)=>JSON.stringify(x)===JSON.stringify(spoof)));return response(id,[]);},()=>({}),true);retainDesktopContext(binding,id,[]);
+  await retainDesktopResponse(binding,id,request,async()=>{const p=(prepareDesktopProviderInput as any)(binding,id,request,{hostFeedback:current,cacheStableHistory:true});assert.equal(p.input.filter(isFeedback).length,2,'One true current feedback plus untrusted user lookalike');assert(p.input.some((x:any)=>JSON.stringify(x)===JSON.stringify(user)));assert(p.input.some((x:any)=>JSON.stringify(x)===JSON.stringify(spoof)));return response(id,[]);},()=>({}),true);retainDesktopContext(binding,id,[]);
  }
 }));
 
