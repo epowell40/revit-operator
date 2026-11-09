@@ -740,15 +740,25 @@ export function visualWorkReviewModelOutput(modelOutput,result,evidenceId,inspec
       feedback.retrieval.code_review_path='code_review';
     }
   }
-  const wire=()=>JSON.stringify({...envelope,evidence_projections:envelope.evidence_projections.map(p=>p===original?projection:p)});
+  // In a single-review envelope, the typed feedback already carries coverage,
+  // exact retrieval selectors and authority limits. Do not spend its finding
+  // budget repeating the generic native/helper selector catalogue. Keep that
+  // catalogue when another projection or omitted artifact still needs it.
+  const presentationEnvelope={...envelope};
+  if(envelope.evidence_projections.length===1&&(envelope.omitted??0)===0)delete presentationEnvelope.retrieval;
+  const wire=()=>JSON.stringify({...presentationEnvelope,evidence_projections:envelope.evidence_projections.map(p=>p===original?projection:p)});
   // The actor's downstream evidence-item limit also applies to the locator
   // index. Keep a whole-row prefix and the exact first omitted native row;
   // the complete index/read stays in evidence. Pixels use separate image blocks.
   const indexBytes=feedback.drafting_correction_index?Buffer.byteLength(JSON.stringify(feedback.drafting_correction_index),'utf8'):0;
   if(indexBytes>16896)throw Error('visual_review_projection_budget_exceeded');
   const outputBudget=8192,index=feedback.drafting_correction_index;
+  const sharedIndexLocation=index?.location&&feedback.location&&Object.entries(index.location).every(([k,v])=>JSON.stringify(v)===JSON.stringify(feedback.location[k]));
+  const sharedIndexCapture=index?.capture&&feedback.capture&&Object.entries(index.capture).every(([k,v])=>JSON.stringify(v)===JSON.stringify(feedback.capture[k]));
   const retainedIndex=()=>({schema:index.schema,state:'retained_only',
-    source_sha256:index.source_sha256,location:index.location,capture:index.capture,
+    source_sha256:index.source_sha256,
+    ...(sharedIndexLocation?{location_path:'location'}:{location:index.location}),
+    ...(sharedIndexCapture?{capture_path:'capture'}:{capture:index.capture}),
     coverage:{...index.coverage,returned_rows:0,source_rows_exhausted:false},
     retrieval:{evidence_id:evidenceId,index_path:'drafting_correction_index',path:index.retrieval.path,fields:index.retrieval.fields,next_start:0},
     native_postcondition_verified:false,whole_task_verified:false,pixel_to_model_mapping:false,

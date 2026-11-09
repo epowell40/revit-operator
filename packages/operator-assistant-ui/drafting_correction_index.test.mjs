@@ -234,19 +234,57 @@ test('actual model-visible observation preserves annotation locators and fresh p
 
 test('bounded locator lanes cannot crowd fresh pixels out of a production-sized evidence envelope',async()=>{
  let partial=false,retained=false;
- for(const scopeCount of [25,45,65,85]){
+ for(const scopeCount of [25,45,65,85,100]){
   const f=observationHost();f.host.readDraftingDetail=async()=>{
    const raw=fixture(800);for(let i=788;i<800;i++)Object.assign(raw.views[0].items[i],{className:'TextNote',curve:null,visibleText:'Annotation '.repeat(23)});return raw;
   };
   const r=await reviewCurrentWork(request,f.host),before=JSON.stringify(r);
   const envelope={output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{evidence_id:'ev1_review',content_hash:'sha256:'+'c'.repeat(64),artifact_ref:'ev1_review',target_scope:Array.from({length:scopeCount},(_,i)=>'element_unique_id:12345678-1234-1234-1234-123456789012-'+i)}]})};
-  if(scopeCount===85){assert.throws(()=>visualWorkReviewModelOutput(envelope,r,'ev1_review'),/projection_budget_exceeded/,'do not discard required source/target bindings to fit an oversized envelope');assert.equal(JSON.stringify(r),before);continue;}
+  if(scopeCount===100){assert.throws(()=>visualWorkReviewModelOutput(envelope,r,'ev1_review'),/projection_budget_exceeded/,'do not discard required source/target bindings to fit an oversized envelope');assert.equal(JSON.stringify(r),before);continue;}
   const out=visualWorkReviewModelOutput(envelope,r,'ev1_review'),feedback=JSON.parse(out.output[0].text).evidence_projections[0].visual_work_review,index=feedback.drafting_correction_index;
   assert(Buffer.byteLength(out.output[0].text)<=8192);assert.equal(out.output[1].image_url,'data:image/png;base64,'+f.bytes.toString('base64'));
+  assert.deepEqual(JSON.parse(out.output[0].text).evidence_projections[0].target_scope,JSON.parse(envelope.output).evidence_projections[0].target_scope,'smaller duplicate metadata must preserve every target binding');
   assert.equal(index.source_sha256,r.drafting_correction_index.source_sha256);assert.equal(feedback.whole_task_verified,false);
   if(index.annotations){assert.equal(index.annotations.returned_text_notes,index.annotations.rows.length);assert.equal(index.annotations.all_observed_notes_returned,index.annotations.rows.length===12);partial||=index.annotations.rows.length<r.drafting_correction_index.annotations.rows.length;}
   if(index.state==='retained_only'){retained=true;assert.equal(index.retrieval.index_path,'drafting_correction_index');assert.equal(index.retrieval.evidence_id,'ev1_review');}
   assert.equal(JSON.stringify(r),before);assert.deepEqual(visualWorkReviewModelOutput(out,r,'ev1_review'),out);
  }
  assert(partial,'exercise whole annotation-row clipping');assert(retained,'exercise reference-only fallback');
+});
+
+test('single review feedback reserves finding space by sharing identical locator identity and omitting generic retrieval prose',async()=>{
+ const f=assessmentHost();f.host.readDraftingDetail=async()=>fixture(900);
+ const r=await reviewCurrentWork(assessmentRequest,f.host),before=JSON.stringify(r);
+ const projection={evidence_id:'ev1_review',content_hash:'sha256:'+'c'.repeat(64),artifact_ref:'ev1_review',
+  target_scope:Array.from({length:65},(_,i)=>'element_unique_id:12345678-1234-1234-1234-123456789012-'+i)};
+ const source={schema:'revit-operator.model-evidence-envelope.v1',omitted:0,retrieval:'Generic selector catalogue retained in the original evidence.',evidence_projections:[projection]};
+ const envelope={output:JSON.stringify(source)};
+ const out=visualWorkReviewModelOutput(envelope,r,'ev1_review'),parsed=JSON.parse(out.output[0].text),v=parsed.evidence_projections[0].visual_work_review,index=v.drafting_correction_index;
+ assert.equal(parsed.retrieval,undefined);assert.equal(index.state,'retained_only');
+ assert.equal(index.location_path,'location');assert.equal(index.capture_path,'capture');
+ for(const [k,value]of Object.entries(r.drafting_correction_index.location))assert.deepEqual(v.location[k],value);
+ for(const [k,value]of Object.entries(r.drafting_correction_index.capture))assert.deepEqual(v.capture[k],value);
+ assert.deepEqual(v.checks,r.checks);assert.equal(v.coverage.complete,true);
+ assert.equal(index.source_sha256,r.drafting_correction_index.source_sha256);assert.equal(index.retrieval.evidence_id,'ev1_review');
+ assert.equal(v.native_postcondition_verified,false);assert.equal(v.whole_task_verified,false);
+ assert.equal(JSON.stringify(r),before);assert.equal(envelope.output,JSON.stringify(source));
+ assert.equal(out.output[1].image_url,'data:image/png;base64,'+f.bytes.toString('base64'));
+ assert(Buffer.byteLength(out.output[0].text)<=8192);assert.deepEqual(visualWorkReviewModelOutput(out,r,'ev1_review'),out);
+});
+
+test('different locator identities and other evidence retain their own bindings and retrieval instructions',async()=>{
+ for(const variant of ['location','capture','other_projection','omitted']){
+  const f=assessmentHost();f.host.readDraftingDetail=async()=>fixture(900);
+  const r=await reviewCurrentWork(assessmentRequest,f.host);
+  if(variant==='location')r.drafting_correction_index.location.document_session_id='different-session';
+  if(variant==='capture')r.drafting_correction_index.capture.content_hash='sha256:'+'d'.repeat(64);
+  const source={schema:'revit-operator.model-evidence-envelope.v1',omitted:variant==='omitted'?1:0,retrieval:'Other retained evidence still needs this selector catalogue.',
+   evidence_projections:[{evidence_id:'ev1_review',target_scope:Array.from({length:65},(_,i)=>'element_unique_id:12345678-1234-1234-1234-123456789012-'+i)},...(variant==='other_projection'?[{evidence_id:'ev1_other'}]:[])]};
+  const before=JSON.stringify(r),out=visualWorkReviewModelOutput({output:JSON.stringify(source)},r,'ev1_review'),parsed=JSON.parse(out.output[0].text),v=parsed.evidence_projections[0].visual_work_review,index=v.drafting_correction_index;
+  assert.equal(index.state,'retained_only');
+  if(variant==='location'){assert.deepEqual(index.location,r.drafting_correction_index.location);assert.equal(index.location_path,undefined);}
+  if(variant==='capture'){assert.deepEqual(index.capture,r.drafting_correction_index.capture);assert.equal(index.capture_path,undefined);}
+  if(['other_projection','omitted'].includes(variant))assert.equal(parsed.retrieval,source.retrieval);
+  assert.equal(JSON.stringify(r),before);assert.equal(v.whole_task_verified,false);assert(Buffer.byteLength(out.output[0].text)<=8192);
+ }
 });
