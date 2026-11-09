@@ -75,3 +75,17 @@ test('envelope diagnostics count exact transport, images and text without copyin
  const text='PRIVATE CONTENT TO COUNT ONLY',body={instructions:text,tools:[{type:'function',name:'test'}],input:[{role:'user',content:[{type:'input_text',text},image,{...image}]}]};
  const p=desktopModelInputPackage(body);assert.equal(p.input_utf8_bytes,Buffer.byteLength(JSON.stringify(body.input)));assert.equal(p.instructions_utf8_bytes,Buffer.byteLength(text));assert.equal(p.image_inputs,2);assert.equal(p.unique_image_parts,1);assert.equal(p.tools_count,1);assert(!JSON.stringify(p).includes(text));assert(!JSON.stringify(p).includes('data:image'));
 });
+
+test('actual persisted continuation packs duplicate observation fields without changing raw outputs or compaction state',()=>isolated(async()=>{
+ const field=[{operation_id:'apply',evidence_id:'evidence',checked_preservation_ids:Array.from({length:80},(_,i)=>'element:'+i)}];
+ const outputs=(id:string)=>[{type:'function_call_output',call_id:id,output:[{type:'input_text',text:JSON.stringify({schema:'revit-operator.model-observation-index/v2',verified_postconditions:field,pending_verification:[{check_state:'previous_check_stale'}]})}]}];
+ const calls=(id:string)=>[{type:'function_call',name:'native__revit_call_tool',call_id:id,arguments:'{}'}];
+ const compact={type:'compaction',encrypted_content:'opaque-preserved'};
+ await retainDesktopResponse(binding,'a',profile,async()=>{prepareDesktopProviderInput(binding,'a',{...profile,input:[{role:'user',content:'Draft'}]});return response('a',[compact,...calls('a')]);},()=>({}),true);retainDesktopContext(binding,'a',outputs('a'));
+ await retainDesktopResponse(binding,'b',{...profile,previous_response_id:'a',input:outputs('a')},async()=>{prepareDesktopProviderInput(binding,'b',{...profile,previous_response_id:'a',input:outputs('a')});return response('b',calls('b'));},()=>({}),true);retainDesktopContext(binding,'b',outputs('b'));
+ await retainDesktopResponse(binding,'c',{...profile,previous_response_id:'b',input:outputs('b')},async()=>{const p=prepareDesktopProviderInput(binding,'c',{...profile,previous_response_id:'b',input:outputs('b')});
+  const old=p.input.find((x:any)=>x.type==='function_call_output'&&x.call_id==='a');
+  const v=JSON.parse(old.output[0].text);assert.equal(v.replay_exact_fields.verified_postconditions.call_id,'b');assert.equal(v.verified_postconditions,undefined);
+  assert.deepEqual(p.input[0],compact);assert.deepEqual(p.input.at(-1),outputs('b')[0]);assert.deepEqual(v.pending_verification,[{check_state:'previous_check_stale'}]);return response('c',[]);
+ },()=>({}),true);
+}));

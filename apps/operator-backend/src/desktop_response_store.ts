@@ -7,6 +7,7 @@ import { canonicalJsonV2, type AssignmentSnapshotV2 } from "./domain/assignment-
 import type { AssignmentKernelBindingInputV2 } from "./assignments/assignment_kernel_v2_lifecycle.js";
 import {getAssignmentKernelSnapshotV2} from './assignments/assignment_kernel_v2_store.js';
 import {resolveOpenAiDataPolicy} from './openai_data_policy.js';
+import {packHistoricalObservationFields} from './desktop_observation_replay.js';
 
 function writeDurable(file: string, value: unknown): void {
   const fd = fs.openSync(file, "wx");
@@ -480,6 +481,7 @@ export function prepareDesktopProviderInput(binding: Binding, messageId: unknown
   // prefix/schema in caller input is never sufficient to mark or delete it.
   const latestFeedback = hostFeedback(binding, body.input, internal.hostFeedback);
   let markers: FeedbackMarker[] = [], omittedFeedback = 0, omittedImages = 0, omittedStartupImages = 0, omittedVisuals = 0;
+  let omittedObservationFields = 0, observationBytesSaved = 0;
   let prepared = body;
   if (current.predecessor) {
     const prior = current.predecessor;
@@ -500,7 +502,10 @@ export function prepareDesktopProviderInput(binding: Binding, messageId: unknown
     omittedFeedback = superseded.size;
     const visuals = boundedHistoricalVisuals(retained, body.input, Boolean(body.tools?.some((tool: any) => tool?.type === 'computer')));
     omittedVisuals = visuals.omitted;
-    const pixels = uniqueHistoricalPixels(visuals.input, body.input);
+    const observations = packHistoricalObservationFields(visuals.input, body.input);
+    omittedObservationFields = observations.omittedFields;
+    observationBytesSaved = observations.bytesSaved;
+    const pixels = uniqueHistoricalPixels(observations.input, body.input);
     omittedImages = pixels.omitted;
     if (!latestFeedback) markers = known;
     const input = [...pixels.input, ...body.input];
@@ -520,6 +525,8 @@ export function prepareDesktopProviderInput(binding: Binding, messageId: unknown
     provider_input: providerInput, continuation_transport: providerInput ? 'durable_input_array' : 'previous_response_id',
     feedback_markers: markers, host_feedback_item: latestFeedback,
     context_packing: { superseded_host_snapshots: omittedFeedback, duplicate_historical_images: omittedImages,
+      ...(omittedObservationFields ? { duplicate_observation_fields: omittedObservationFields,
+        observation_utf8_bytes_saved: observationBytesSaved } : {}),
       ...(omittedVisuals ? { superseded_historical_visuals: omittedVisuals } : {}),
       ...(omittedStartupImages ? { superseded_startup_images: omittedStartupImages } : {}) } });
   return prepared;
