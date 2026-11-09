@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {buildNativeCodeReviewPacket,reviewExecutedCode,parseNativeCodeReview,NATIVE_CODE_REVIEW_INSTRUCTIONS,nativeCodeReviewModelOutput} from './native_code_review.mjs';
 import {normalizeVisualReviewRequest,VISUAL_WORK_REVIEW_TOOL} from './visual_work_review.mjs';
+import {captureNativeCodeReviewStart,bindNativeCodeReviewStart} from './native_code_review.mjs';
 const digest=s=>'sha256:'+createHash('sha256').update(s).digest('hex');
 function fixture(){
   const owner={assignment_id:'assignment',session_id:'session',run_id:'run',generation:1,principal_id:'principal',document_fingerprint:'a'.repeat(64)};
@@ -136,6 +137,21 @@ function reviewIdentity(f){
     context:{process_id:42,document:{title:'Detail model',sessionId:'native-session',projectIdentity:{fingerprint:f.owner.document_fingerprint},activeView:{id:975109,name:'Fan Installation Demo',type:'DraftingView'}},
       nativeChangeObservations:{schema:'operator.native_document_changes.v1',authority:'observed_changes_only',processId:42,epoch:'epoch',documentSessionId:'native-session',throughSequence:4,retainedFromSequence:5,maxEvents:16,maxIdsPerEvent:64,events:[]}}};
 }
+
+test('exact execution packet carries captured request-start identity to independent review without current-view substitution',async()=>{
+ const f=fixture(),at=Date.parse(f.row.recorded_at)-1000;let delivered;
+ const c={revit:{schema:'revit-operator.context.v1',source:{live:true},observed_at_utc:new Date(at).toISOString(),process_id:42,
+  document:{title:'Original detail',sessionId:'native-session',projectIdentity:{fingerprint:f.owner.document_fingerprint},activeView:{id:975109,name:'Original view',type:'DraftingView'}}}};
+ const request='Draft the detail in the active view.';
+ const token=bindNativeCodeReviewStart(captureNativeCodeReviewStart(c,request,at),f.owner);
+ f.host.requestStart=()=>token;f.host.userRequest=()=>request;
+ const h={...f.host,codeReviewPacket:ids=>buildNativeCodeReviewPacket(ids,f.host),settings:()=>({model:'test',reasoning_effort:'medium'}),
+  requestResponse:async body=>{delivered=JSON.parse(body.input[0].content[0].text);return {status:'completed',output:[],output_text:JSON.stringify({code_review:{status:'uncertain',observed:'Stub does not assess code.',correction:'No live verdict claimed.'}})};}};
+ const result=await reviewExecutedCode({review_mode:'code_execution',code_evidence_ids:[f.ref.evidence_id]},h);
+ assert.equal(delivered.current_context,null);assert.equal(delivered.executed_code.request_start_context.view_id,975109);
+ assert.equal(result.raw_review_evidence.packet.request_start_context.document_title,'Original detail');
+ assert.equal(result.native_postcondition_verified,false);assert.equal(result.state,'uncertain');
+});
 test('standalone code reviewer receives same-session current view identity without pixels or another native action',async()=>{
   const f=fixture(),snapshot=reviewIdentity(f);let sent,reads=0;
   const h={...f.host,codeReviewPacket:ids=>buildNativeCodeReviewPacket(ids,f.host),readContext:async()=>{reads++;return snapshot;},

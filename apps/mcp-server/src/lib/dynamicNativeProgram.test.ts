@@ -27,6 +27,12 @@ test('native drafting guide avoids unsupported DetailCurve class filters and cro
   assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/SetGeometryCurve.*same curve kind/);
   assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/different curve kind.*replace only the confirmed element/);
 });
+test('native apply guide prevents an oversized all-element return from rolling back useful construction',()=>{
+  assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/BOTH read and apply.*32768characters.*apply rolls back/);
+  assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/component counts, representative actual Element.UniqueIds/);
+  assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/focused reads.*report omitted counts/);
+  assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/Unknown effects require reconciliation/);
+});
 const env = { REVIT_OPERATOR_MODE: "development", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" };
 type RecordValue = Record<string, any>;
 
