@@ -83,6 +83,33 @@ function attachmentReviewSelector(call,result) {
     usage:'For review_current_work, copy the matching page selector into reference_attachment_read. Reuse these delivered source pixels; read again only for a different page or crop. The host still checks source ownership and scope.'};
 }
 
+// A native program and its automatic get-element-summary readback share one
+// response. Identify only the executed program for the existing code reviewer.
+// This is a lookup hint, never source authentication or a verification result;
+// the reviewer still resolves and validates the canonical artifact itself.
+function codeReviewSelector(call,result,binding) {
+  if(result.result.success!==true||result.stop_reason)return null;
+  let args;try{args=typeof call.arguments==='string'?JSON.parse(call.arguments):call.arguments;}catch{return null;}
+  if(call.name==='native__invoke')args=args?.tool==='operator_run_dynamic_revit_program'?args.arguments:null;
+  else if(call.name!=='native__operator_run_dynamic_revit_program')return null;
+  if(!args||!['apply','read'].includes(args.mode)||typeof args.source!=='string'||!args.source
+    ||!args.native_program||typeof args.native_program!=='object'||Array.isArray(args.native_program))return null;
+  const projections=[];
+  for(const block of result.result.contentItems){
+    if(block?.type!=='inputText'||typeof block.text!=='string'||block.text.length>32768)continue;
+    try{const envelope=JSON.parse(block.text);if(envelope?.schema==='revit-operator.model-evidence-envelope.v1'&&Array.isArray(envelope.evidence_projections))
+      projections.push(...envelope.evidence_projections.filter(p=>p?.source==='assignment_kernel_v2:operator_run_dynamic_revit_program'));}catch{}
+  }
+  if(projections.length!==1)return null;
+  const p=projections[0];
+  if(!/^ev1_[A-Za-z0-9_-]{32}$/.test(p.evidence_id??'')||!/^sha256:[a-f0-9]{64}$/.test(p.content_hash??'')
+    ||!/^opv2_[a-f0-9]{64}$/.test(p.attempt_id??'')||p.trust_level!=='authoritative_native'
+    ||!['applied','none'].includes(p.effect_state)||!['assignment_id','run_id','generation'].every(k=>p[k]===binding[k]))return null;
+  return {schema:'operator.code-review-selector.v1',code_evidence_ids:[p.evidence_id],
+    native_postcondition_verified:false,whole_task_verified:false,
+    usage:'For a needed code review, select this executed C# evidence ID. Automatic native readback IDs in this response are not C# executions. Prefer a combined review_current_work visual check or recheck with these code_evidence_ids when both are needed. The host still validates source, outcome, ownership and document session; this selector grants no review or completion.'};
+}
+
 export async function invokeDesktopNativeTool({assignment,messageId,responseId,call,context,request}) {
   if(!call?.name?.startsWith('native__')||!messageId||!responseId||!call.call_id)
     throw Error('desktop_native_provider_identity_required');
@@ -106,6 +133,8 @@ export async function invokeDesktopNativeTool({assignment,messageId,responseId,c
   });
   const selector=attachmentReviewSelector(call,result);
   if(selector)content.push({type:'input_text',text:JSON.stringify(selector)});
+  const codeSelector=codeReviewSelector(call,result,desktopNativeBinding(assignment));
+  if(codeSelector)content.push({type:'input_text',text:JSON.stringify(codeSelector)});
   // Images stay images. A transport/parser failure must not trigger redispatch.
   const output={type:'function_call_output',call_id:call.call_id,output:JSON.stringify({ok:result.result.success,
     native_stop_reason:result.stop_reason??null,content:result.result.contentItems})};
