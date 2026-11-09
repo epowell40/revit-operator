@@ -469,6 +469,7 @@ export function desktopModelInputPackage(body: any) {
     host_feedback_count:feedbackCount,host_feedback_utf8_bytes:feedbackBytes,
     instructions_utf8_bytes:Buffer.byteLength(instructions),instructions_sha256:createHash('sha256').update(instructions).digest('hex'),
     tools_count:Array.isArray(body.tools)?body.tools.length:0,tools_utf8_bytes:Buffer.byteLength(JSON.stringify(body.tools??[])),
+    tools_sha256:createHash('sha256').update(JSON.stringify(body.tools??[])).digest('hex'),
     limits:'Encoded transport bytes and item counts only; no provider token attribution, billing, evidence authority or task completion.'};
 }
 

@@ -28,6 +28,7 @@ import {withSerializedProviderTurn} from './provider_turn_queue.js';
 import {prepareDesktopProviderInput,desktopModelInputPackage,desktopResponseOwnsContext} from './desktop_response_store.js';
 import {resolveOpenAiDataPolicy} from './openai_data_policy.js';
 import {getWorkspaceRoot} from './workspace.js';
+import {desktopToolHistoryCache,boundedPromptCacheDiagnostic} from './desktop_prompt_cache.js';
 import {desktopNativeInteractionTools,retainNativeInteractiveProviderResponse,withDesktopNativeProviderReadiness} from './assignments/desktop_native_tools.js';
 
 export type DesktopComputerRelayRequest = {
@@ -52,6 +53,7 @@ type DesktopComputerRelayResponse = {
   model_call_receipt: ModelCallReceipt;
   provider_response_usage?: ProviderResponseUsageV1;
   model_context_package?: ReturnType<typeof desktopModelInputPackage>;
+  prompt_cache_diagnostic?: ReturnType<typeof boundedPromptCacheDiagnostic>;
 };
 
 class DesktopComputerProviderError extends Error {
@@ -232,7 +234,8 @@ function simplifyRelayResponse(response: any, modelCallReceipt: ModelCallReceipt
 }
 
 export async function relayDesktopComputerResponse(rawBody: unknown,
-  retainedTurnUsage?: ModelEvidencePayloadUsage): Promise<DesktopComputerRelayResponse> {
+  retainedTurnUsage?: ModelEvidencePayloadUsage,
+  internal: {cacheToolHistory?:boolean;comparisonResponseId?:string} = {}): Promise<DesktopComputerRelayResponse> {
   const apiKey = resolveOpenAiApiKey();
   if (!apiKey) {
     throw new Error("OPERATOR_OPENAI_API_KEY (or OPENAI_API_KEY) is not set.");
@@ -254,7 +257,10 @@ export async function relayDesktopComputerResponse(rawBody: unknown,
   const startedMs = Date.now();
   const instructions = body.instructions?.includes(REUSED_DETAIL_GUIDANCE)
     ? body.instructions : [body.instructions, REUSED_DETAIL_GUIDANCE].filter(Boolean).join("\n");
-  const contextPackage = desktopModelInputPackage({...body,instructions});
+  const cache=desktopToolHistoryCache(body.input,model,Boolean(internal.cacheToolHistory&&!body.previous_response_id));
+  const cacheOptions=cache.options&&internal.comparisonResponseId&&/^resp_[A-Za-z0-9]{1,200}$/.test(internal.comparisonResponseId)
+    ? {...cache.options,comparison_response_id:internal.comparisonResponseId}:cache.options;
+  const contextPackage = {...desktopModelInputPackage({...body,input:cache.input,instructions}),prompt_cache:cache.diagnostic};
   let response: unknown;
   try {
     response = await client.responses.create({
@@ -271,7 +277,8 @@ export async function relayDesktopComputerResponse(rawBody: unknown,
       include: ['reasoning.encrypted_content'],
       instructions,
       tools: body.tools,
-      input: body.input,
+      input: cache.input,
+      ...(cacheOptions?{prompt_cache_options:cacheOptions}:{}),
       previous_response_id: body.previous_response_id
     } as any);
   } catch (error) {
@@ -295,7 +302,9 @@ export async function relayDesktopComputerResponse(rawBody: unknown,
     response
   });
   recordDesktopEvidenceUsage(evidenceUsage, body.evidence_scope, receipt);
-  return {...simplifyRelayResponse(response, receipt), provider_data_policy:dataPolicy,input_images:imageInputManifest(body.input),model_context_package:contextPackage};
+  const cacheDiagnostic=boundedPromptCacheDiagnostic((response as any)?.prompt_cache_diagnostics);
+  return {...simplifyRelayResponse(response, receipt), provider_data_policy:dataPolicy,input_images:imageInputManifest(body.input),model_context_package:contextPackage,
+    ...(cacheDiagnostic?{prompt_cache_diagnostic:cacheDiagnostic}:{})};
 }
 
 /** The authenticated HTTP edge supplies this binding, never the model input. */
@@ -306,6 +315,7 @@ export async function relayBoundDesktopComputerResponse(rawBody: unknown,
   const messageId = request.message_id;
   let providerBody:unknown=rawBody;
   let retainedTurnUsage: ModelEvidencePayloadUsage | undefined;
+  let cacheContext: {cacheToolHistory?:boolean;comparisonResponseId?:string} = {};
   if (messageId !== undefined && (typeof messageId !== "string" || !messageId.length || messageId.length > 256 || /[\u0000-\u001f]/.test(messageId)))
     throw new Error("desktop_provider_message_identity_invalid");
   const usage = (receipt: ModelCallReceipt) => messageId === undefined ? undefined : parseProviderResponseUsageV1({
@@ -314,7 +324,7 @@ export async function relayBoundDesktopComputerResponse(rawBody: unknown,
   });
   const invoke = async () => {
     try {
-      const result = await relayDesktopComputerResponse(providerBody,retainedTurnUsage);
+      const result = await relayDesktopComputerResponse(providerBody,retainedTurnUsage,cacheContext);
       const observed = usage(result.model_call_receipt);
       return { ...result, ...(observed ? { provider_response_usage: observed } : {}) };
     } catch (error) {
@@ -350,6 +360,9 @@ export async function relayBoundDesktopComputerResponse(rawBody: unknown,
     retainedTurnUsage=assertBoundedModelEvidencePayload((providerBody as DesktopComputerRelayRequest).input);
     providerBody=prepareDesktopProviderInput(binding,messageId,{
       ...providerBody as Record<string,unknown>,model,reasoning_effort:reasoning },ownerContext?{hostFeedback:ownerInput!.at(-1)}:{});
+    // Only after the bound predecessor and raw tool outputs have passed the
+    // existing checks. Neither client JSON nor the actor selects cache policy.
+    cacheContext=ownerContext?{cacheToolHistory:true,comparisonResponseId:body.previous_response_id}:{};
     const response=await executeExternalProviderCallV2({ binding, model, reasoning_effort: reasoning,
       ...(interactiveTools?{nativeInteractiveInput:true as const}:{}),
       invoke, receipt: result => result.model_call_receipt,

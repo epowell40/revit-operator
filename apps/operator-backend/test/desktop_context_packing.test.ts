@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
 import {retainDesktopResponse,retainDesktopContext,prepareDesktopProviderInput,desktopModelInputPackage} from '../src/desktop_response_store.js';
+import {desktopToolHistoryCache} from '../src/desktop_prompt_cache.js';
 const binding={session_id:'s',assignment_id:'a',run_id:'r',generation:1,kernelVersion:2 as const};
 const profile={model:'gpt-6.1-terra',reasoning_effort:'medium'};
 const image={type:'input_image',image_url:'data:image/png;base64,AQID',detail:'original'};
@@ -11,6 +12,27 @@ async function isolated(run:()=>Promise<void>){const old=process.env.OPERATOR_WO
  try{await run();}finally{if(old===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=old;assert(root.startsWith(os.tmpdir()+path.sep));fs.rmSync(root,{recursive:true,force:true});}}
 function imageCount(v:any):number{return !v||typeof v!=='object'?0:(v.type==='input_image'?1:0)+Object.values(v).reduce<number>((n,x)=>n+imageCount(x),0);}
 const isFeedback=(x:any)=>x.role==='user'&&Array.isArray(x.content)&&x.content.some((p:any)=>p.text?.startsWith('HOST CURRENT CHECK FEEDBACK.'));
+
+test('persisted owner feedback replacement retains reusable tool boundary without marking raw evidence or stale status',()=>isolated(async()=>{
+ const calls=(id:string)=>[{type:'function_call',name:'read_model',call_id:id,arguments:'{}'}];
+ const out=(id:string)=>[{type:'function_call_output',call_id:id,output:'native checked result '+id}];
+ const wire:any[]=[];
+ for(let n=1;n<=3;n++){
+  const id='cache'+n,current=feedback(n),input=n===1?[{role:'user',content:'Draft'},current]:[...out('c'+(n-1)),current];
+  const request={...profile,input,...(n>1?{previous_response_id:'cache'+(n-1)}:{})};
+  await retainDesktopResponse(binding,id,request,async()=>{
+   const p=prepareDesktopProviderInput(binding,id,request,{hostFeedback:current});
+   const raw=structuredClone(p.input),cached=desktopToolHistoryCache(p.input,profile.model,true);
+   assert.deepEqual(p.input,raw);assert.equal(p.input.filter(isFeedback).length,1);wire.push(cached);
+   return response(id,calls('c'+n));
+  },()=>({}),true);retainDesktopContext(binding,id,out('c'+n));
+ }
+ assert.equal(wire[1].diagnostic.breakpoints[0].prefix_sha256,wire[2].diagnostic.breakpoints[0].prefix_sha256);
+ const dir=path.join(process.env.OPERATOR_WORKSPACE_ROOT!,'runs/desktop-responses');
+ for(const name of fs.readdirSync(dir).filter(n=>n.endsWith('.context'))){
+  const raw=fs.readFileSync(path.join(dir,name),'utf8');assert(!raw.includes('prompt_cache_breakpoint'),'Hints stay outside authoritative retained evidence');
+ }
+}));
 
 test('replayed exact duplicate pixels occur once while literal tool pairs, unique pixels and raw results survive',()=>isolated(async()=>{
  const raw=[0,1,2,3].map(i=>({type:'function_call_output',call_id:'c'+i,output:[{type:'input_text',text:'Native source and revision '+i},{...image}]}));
