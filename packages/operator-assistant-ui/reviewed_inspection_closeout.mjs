@@ -102,7 +102,16 @@ export async function closeReviewedInspection({binding,review,evidenceRef,curren
   const status=await request('/api/assignments/v2/work-plan',{method:'POST',body:JSON.stringify({...binding,action:'status'})});
   const p=status?.work_plan?.next_native_inspection;
   if(status?.ok!==true||status.verification_policy!=='strict'||p?.item_id!==itemId||p.validation_required!==true||p.coverage_only!==true)return no('native_inspection_candidate_unavailable');
-  const ids=[...new Set([...(p.existing_element_read_candidates??[]),...(p.paired_artifact_read_candidates??[])])];
+  // These are alternatives, ordered newest first by the backend. Each covers
+  // the entire required element request scope. Unioning them can poison a
+  // valid read with an older inventory containing unproved deleted identities.
+  // Submit one candidate plus the required artifact reads; the existing
+  // command still validates native bytes, full coverage, freshness and version.
+  // A refusal stays a refusal, with no fallback loop or optimistic completion.
+  const candidates=p.existing_element_read_candidates??[],artifacts=p.paired_artifact_read_candidates??[];
+  if(!Array.isArray(candidates)||candidates.length>4||!Array.isArray(artifacts)||artifacts.length>8
+   ||[...candidates,...artifacts].some(id=>!validId(id)||!s.operations[id]||s.operations[id].requested_effect!=='read'))return no('native_inspection_candidate_unavailable');
+  const ids=[...new Set([...candidates.slice(0,1),...artifacts])];
   if(!ids.length||ids.length>8||ids.some(id=>!validId(id)||!s.operations[id]||s.operations[id].requested_effect!=='read'))return no('native_inspection_candidate_unavailable');
   const result=await request('/api/assignments/v2/work-plan',{method:'POST',body:JSON.stringify({...binding,action:'complete',
     item_id:itemId,operation_ids:ids,expected_assignment_version:s.assignment_version})});

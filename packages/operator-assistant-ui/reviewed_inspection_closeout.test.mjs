@@ -115,3 +115,31 @@ test('multi-region visual focus retains all native dependency targets without de
  }
  assert.equal(JSON.stringify(f),before);assert(calls.every(c=>c.action==='status'));
 });
+
+test('alternative complete-scope reads do not contaminate a current inspection with an older rejected read',async()=>{
+ const {closeReviewedInspection}=await load(),f=fixture(),calls=[];
+ f.snapshot.operations.older={requested_effect:'read',persistent_effect:'none'};
+ f.snapshot.operations.file={requested_effect:'read',persistent_effect:'none'};
+ const p=f.status.work_plan.next_native_inspection;
+ p.existing_element_read_candidates=['read','older'];p.paired_artifact_read_candidates=['file'];
+ const before=JSON.stringify(f);
+ const result=await closeReviewedInspection({...f,readSnapshot:async()=>f.snapshot,request:async(_path,options)=>{
+  const body=JSON.parse(options.body);calls.push(body);if(body.action==='status')return f.status;
+  // Exact PNG16 failure shape: the newest read covers current identities;
+  // an older broad read includes deleted lines without their native witness.
+  if(body.operation_ids.includes('older'))throw Error('work_plan_inspection_incomplete_native_read');
+  assert.deepEqual(body.operation_ids,['read','file']);return {ok:true,outcome:'complete'};
+ }});
+ assert.equal(result.state,'submitted');assert.equal(calls.length,2);assert.equal(JSON.stringify(f),before);
+});
+
+test('a refused newest read is not silently replaced, retried or treated as completed',async()=>{
+ const {closeReviewedInspection}=await load(),f=fixture(),writes=[];
+ f.snapshot.operations.older={requested_effect:'read',persistent_effect:'none'};
+ f.status.work_plan.next_native_inspection.existing_element_read_candidates=['read','older'];
+ const result=await closeReviewedInspection({...f,readSnapshot:async()=>f.snapshot,request:async(_path,options)=>{
+  const body=JSON.parse(options.body);if(body.action==='status')return f.status;
+  writes.push(body);throw Error('work_plan_inspection_unverified');
+ }});
+ assert.equal(result.state,'not_submitted');assert.deepEqual(writes.map(b=>b.operation_ids),[['read']]);
+});
