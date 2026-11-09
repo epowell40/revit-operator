@@ -130,3 +130,42 @@ test('existing review tool exposes code-only and combined visual-code options',(
   assert.deepEqual(normalizeVisualReviewRequest({view_id:41,checks:[{id:'c',expected:'Duct layout readable'}],code_evidence_ids:['ev1_'+'A'.repeat(32)]}).code_evidence_ids,['ev1_'+'A'.repeat(32)]);
   assert.match(VISUAL_WORK_REVIEW_TOOL.description,/code_execution/);
 });
+
+function reviewIdentity(f){
+  return {schema:'revit-operator.ui-context/v1',state:'available',authority:'ui_identity_only',revision:7,captured_at_utc:new Date().toISOString(),
+    context:{process_id:42,document:{title:'Detail model',sessionId:'native-session',projectIdentity:{fingerprint:f.owner.document_fingerprint},activeView:{id:975109,name:'Fan Installation Demo',type:'DraftingView'}},
+      nativeChangeObservations:{schema:'operator.native_document_changes.v1',authority:'observed_changes_only',processId:42,epoch:'epoch',documentSessionId:'native-session',throughSequence:4,retainedFromSequence:5,maxEvents:16,maxIdsPerEvent:64,events:[]}}};
+}
+test('standalone code reviewer receives same-session current view identity without pixels or another native action',async()=>{
+  const f=fixture(),snapshot=reviewIdentity(f);let sent,reads=0;
+  const h={...f.host,codeReviewPacket:ids=>buildNativeCodeReviewPacket(ids,f.host),readContext:async()=>{reads++;return snapshot;},
+    userRequest:()=> 'Recreate the detail in the active drafting view.',settings:()=>({model:'approved',reasoning_effort:'medium'}),
+    requestResponse:async body=>{sent=JSON.parse(body.input[0].content[0].text);return {status:'completed',output:[],output_text:JSON.stringify({code_review:{status:'uncertain',observed:'Current identity is context, not original target proof.',correction:'Assess selected actions with original intent.'}})};}};
+  const r=await reviewExecutedCode({review_mode:'code_execution',code_evidence_ids:[f.ref.evidence_id]},h);
+  assert.equal(reads,1);assert.equal(sent.current_context.view_id,975109);assert.equal(sent.current_context.document_session_id,'native-session');
+  assert.equal(sent.current_context.authority,'cached_ui_identity_only');assert.equal(sent.current_context.historical_target_verified,false);
+  assert.equal(r.raw_review_evidence.current_context.view_name,'Fan Installation Demo');assert.equal(r.state,'uncertain');
+  assert.equal(r.native_postcondition_verified,false);assert.equal(r.whole_task_verified,false);
+});
+test('missing stale foreign or unknown UI context cannot enter the independent code reviewer',async()=>{
+  for(const kind of ['missing','throw','stale','future','foreign-document','foreign-session','unknown','bad-observation','untrusted','invalid-view']){
+    const f=fixture(),s=reviewIdentity(f);let sent;
+    if(kind==='stale')s.captured_at_utc=new Date(Date.now()-300001).toISOString();if(kind==='future')s.captured_at_utc=new Date(Date.now()+60000).toISOString();
+    if(kind==='foreign-document')s.context.document.projectIdentity.fingerprint='b'.repeat(64);if(kind==='foreign-session')s.context.document.sessionId='other';
+    if(kind==='unknown')s.context.outcome_unknown=true;if(kind==='bad-observation')delete s.context.nativeChangeObservations;
+    if(kind==='untrusted')s.authority='caller';if(kind==='invalid-view')s.context.document.activeView.id=-1;
+    const h={...f.host,codeReviewPacket:ids=>buildNativeCodeReviewPacket(ids,f.host),readContext:async()=>{if(kind==='throw')throw Error('no connection');return kind==='missing'?null:s;},
+      userRequest:()=> 'Read model.',settings:()=>({model:'approved',reasoning_effort:'medium'}),requestResponse:async body=>{sent=JSON.parse(body.input[0].content[0].text);return {status:'completed',output:[],output_text:JSON.stringify({code_review:{status:'uncertain',observed:'Target context not supplied.',correction:'Identify target.'}})};}};
+    const r=await reviewExecutedCode({review_mode:'code_execution',code_evidence_ids:[f.ref.evidence_id]},h);
+    assert.equal(r.state,'uncertain',kind);assert.equal(sent.current_context,null,kind);
+  }
+});
+test('Pause or ownership change during optional identity read prevents reviewer dispatch',async()=>{
+  for(const kind of ['pause','owner']){
+    const f=fixture();let paused=false,calls=0;
+    const h={...f.host,assertControl:async()=>{if(paused)throw Error('paused');},codeReviewPacket:ids=>buildNativeCodeReviewPacket(ids,f.host),
+      readContext:async()=>{if(kind==='pause')paused=true;else f.owner.run_id='changed';return reviewIdentity(f);},userRequest:()=> 'Draft.',settings:()=>({model:'approved',reasoning_effort:'medium'}),requestResponse:async()=>{calls++;throw Error('must not dispatch');}};
+    const r=await reviewExecutedCode({review_mode:'code_execution',code_evidence_ids:[f.ref.evidence_id]},h);
+    assert.equal(r.state,'unavailable');assert.equal(calls,0,kind);
+  }
+});
