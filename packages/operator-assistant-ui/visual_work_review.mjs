@@ -669,8 +669,8 @@ export function visualWorkReviewModelOutput(modelOutput,result,evidenceId,inspec
   const location=result.location?Object.fromEntries(['process_id','document_session_id','epoch','through_sequence','view_id','view_name','view_unique_id','view_type','sheet_number','document_title','identity_authority'].map(k=>[k,result.location[k]])):null;
   const identityDiagnostic=visualReviewIdentityFailureV1({visual_review_identity_failure:result.identity_read_failure});
   const feedback={schema:'operator.visual_work_review_feedback.v1',source_evidence_id:evidenceId,
-    ...(result.state==='observed'&&result.drafting_correction_index?{drafting_correction_index:{...result.drafting_correction_index,
-      ...(result.drafting_correction_index.retrieval?{retrieval:{...result.drafting_correction_index.retrieval,evidence_id:evidenceId}}:{})}}:{}),
+    ...(result.state==='observed'&&result.drafting_correction_index?{drafting_correction_index:{...structuredClone(result.drafting_correction_index),
+      ...(result.drafting_correction_index.retrieval?{retrieval:{...structuredClone(result.drafting_correction_index.retrieval),evidence_id:evidenceId}}:{})}}:{}),
     ...(inspectionCloseout?{inspection_closeout:{state:inspectionCloseout.state,reason:inspectionCloseout.reason??null,
       item_id:inspectionCloseout.item_id??null,outcome:inspectionCloseout.outcome??null,native_postcondition_verified:false,whole_task_verified:false}}:{}),
     authority:'supporting_visual_assessment',native_postcondition_verified:false,whole_task_verified:false,
@@ -706,12 +706,19 @@ export function visualWorkReviewModelOutput(modelOutput,result,evidenceId,inspec
     effect_state:null,before_hash:null,after_hash:null,truncated:true,visual_work_review:feedback};
   for(const key of ['inline_payload','tool_documentation','connector_graph','helper_findings'])delete projection[key];
   const wire=()=>JSON.stringify({...envelope,evidence_projections:envelope.evidence_projections.map(p=>p===original?projection:p)});
-  // Ordinary review stays at its existing budget. A primary drafting observation
-  // may additionally carry one bounded native locator index (not raw histories,
-  // duplicated images or full program-state inventories).
+  // The actor's downstream evidence-item limit also applies to the locator
+  // index. Keep a whole-row prefix and the exact first omitted native row;
+  // the complete index/read stays in evidence. Pixels use separate image blocks.
   const indexBytes=feedback.drafting_correction_index?Buffer.byteLength(JSON.stringify(feedback.drafting_correction_index),'utf8'):0;
   if(indexBytes>16896)throw Error('visual_review_projection_budget_exceeded');
-  const outputBudget=8192+indexBytes;
+  const outputBudget=8192,index=feedback.drafting_correction_index;
+  if(index?.state==='available'){
+    while(Buffer.byteLength(wire(),'utf8')>outputBudget&&index.rows.length){
+      index.rows.pop();const next=index.retrieval.source_row_indices.pop();
+      index.coverage.returned_rows=index.rows.length;index.coverage.source_rows_exhausted=false;
+      index.retrieval.next_start=next;
+    }
+  }
   if(Buffer.byteLength(wire(),'utf8')>outputBudget)throw Error('visual_review_projection_budget_exceeded');
   for(const check of checks){
     feedback.checks.push(check);const count=feedback.checks.length;

@@ -63,8 +63,8 @@ test('production observation sends actual current image and native locators toge
  const envelope={output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{evidence_id:'ev1_review'}]})};
  const delivered=visualWorkReviewModelOutput(envelope,r,'ev1_review');assert.equal(delivered.output[1].image_url,'data:image/png;base64,'+f.bytes.toString('base64'));
  const feedback=JSON.parse(delivered.output[0].text).evidence_projections[0].visual_work_review;
- assert.equal(feedback.drafting_correction_index.rows[144][0],244);assert.equal(feedback.drafting_correction_index.retrieval.evidence_id,'ev1_review');
- assert.equal(feedback.native_postcondition_verified,false);assert(Buffer.byteLength(delivered.output[0].text)<25088);
+ assert.equal(feedback.drafting_correction_index.rows[0][0],100);assert.equal(feedback.drafting_correction_index.retrieval.evidence_id,'ev1_review');
+ assert.equal(feedback.native_postcondition_verified,false);assert(Buffer.byteLength(delivered.output[0].text)<=8192);
  assert.deepEqual(visualWorkReviewModelOutput(delivered,r,'ev1_review'),delivered,'second host presentation must not duplicate images or index');
 });
 test('document mutation during locator read prevents delivering a stale image/index pair',async()=>{
@@ -75,4 +75,21 @@ test('failed locator read is explicit while a valid image remains usable, and no
  const f=observationHost();f.host.readDraftingDetail=async()=>({error:'read failed'});
  const r=await reviewCurrentWork(request,f.host);assert.equal(r.state,'observed');assert.equal(r.drafting_correction_index.state,'unavailable');
  const g=observationHost();g.setType('FloorPlan');assert.equal((await reviewCurrentWork(request,g.host)).drafting_correction_index,undefined);assert(!g.calls.includes('index'));
+});
+
+test('drawing index respects the downstream evidence item cap and pages exact remaining source rows',async()=>{
+ const f=observationHost(),r=await reviewCurrentWork(request,f.host),before=JSON.stringify(r);
+ const envelope={output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',omitted:0,retrieval:'Retrieve exact rows by evidence ID.',
+  evidence_projections:[{schema:'revit-operator.evidence-projection.v1',evidence_id:'ev1_review'}]})};
+ const delivered=visualWorkReviewModelOutput(envelope,r,'ev1_review');
+ assert(Buffer.byteLength(delivered.output[0].text)<=8192,'actual Responses evidence item accepts at most 8192 bytes');
+ const index=JSON.parse(delivered.output[0].text).evidence_projections[0].visual_work_review.drafting_correction_index;
+ assert(index.rows.length>0&&index.rows.length<245);assert.equal(index.coverage.source_rows_exhausted,false);
+ assert.equal(index.coverage.returned_rows,index.rows.length);assert.equal(index.retrieval.next_start,index.rows.length);
+ assert.deepEqual(index.rows,r.drafting_correction_index.rows.slice(0,index.rows.length));
+ assert.deepEqual(index.retrieval.source_row_indices,Array.from({length:index.rows.length},(_,i)=>i));
+ assert.equal(index.source_sha256,r.drafting_correction_index.source_sha256);
+ assert.equal(JSON.stringify(r),before,'model projection must not trim retained native evidence');
+ assert.equal(delivered.output[1].image_url,'data:image/png;base64,'+f.bytes.toString('base64'));
+ assert.deepEqual(visualWorkReviewModelOutput(delivered,r,'ev1_review'),delivered);
 });
