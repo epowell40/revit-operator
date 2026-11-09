@@ -17,7 +17,7 @@ function nativeVersion(v:unknown,session:string){
 /** This is native observed-effect persistence, not a parser for arbitrary C#,
  * task/design correctness, visual review or saved persistence. All actual
  * changed identities must have a supported complete host-produced state. */
-function observation(v:unknown,fingerprint:string,session:string,targets:number[]){
+export function readNativeProgramEffectObservationV2(v:unknown,fingerprint:string,session:string,targets:number[]){
  const p=row(v);
  if(p.scope!=='native_drafting_effect_state_v1'||p.complete!==true||p.documentFingerprint!==fingerprint||p.documentSessionId!==session
   ||!ids(p.requestedElementIds)||!same(p.requestedElementIds,targets)||!Array.isArray(p.items)||p.items.length!==targets.length)return null;
@@ -77,7 +77,7 @@ export function nativeProgramEffectStateV2(snapshot:AssignmentSnapshotV2,subject
   const targets=sorted([...new Set<number>([...tx.added_element_ids,...tx.modified_element_ids,...tx.deleted_element_ids])]);
   if(!targets.length||targets.length>4096||!same(sorted(tx.affected_element_ids),targets)
    ||!same([...r.affected_target_identities??[]].sort(),targets.map(n=>'element_id:'+n).sort()))continue;
-  const observed=observation(receipt.effect_observation,fingerprint,doc.SessionId,targets);
+  const observed=readNativeProgramEffectObservationV2(receipt.effect_observation,fingerprint,doc.SessionId,targets);
   if(!observed||observed.items.some(i=>i.found===tx.deleted_element_ids.includes(i.elementId)))continue;
   if(observed.opaque&&(!Number.isSafeInteger(receipt.document_revision_before)||receipt.document_revision_before<0
    ||row(prepared.Scope).DocumentRevision!==receipt.document_revision_before||observed.version!.Sequence<=receipt.document_revision_before))continue;
@@ -112,7 +112,7 @@ export function nativeProgramEffectPostconditionSatisfiedV2(snapshot:AssignmentS
    &&(other.persistent_effect==='applied'||other.persistent_effect==='unknown'||snapshot.in_flight_operation_ids.includes(other.operation_id))
    &&sameAssignmentBindingV2(other.binding,subject.binding)&&Date.parse(other.opened_at)>=Date.parse(subject.result!.completed_at)))return false;
  const b=row(op.input.body);if(!same(Object.keys(b).sort(),['elementIds','includeNativeProgramEffectState'])||b.includeNativeProgramEffectState!==true||!same(b.elementIds,state.targets))return false;
- const fresh=observation(row(payload).nativeProgramEffectState,state.fingerprint,state.session,state.targets);
+ const fresh=readNativeProgramEffectObservationV2(row(payload).nativeProgramEffectState,state.fingerprint,state.session,state.targets);
  if(!fresh||fresh.opaque!==state.opaque||state.opaque&&!same(fresh.version,state.version))return false;
  return Boolean(state.items.every(expected=>{const actual=fresh.items.find(i=>i.elementId===expected.elementId);return actual&&actual.found===expected.found
   &&actual.stateHash===expected.stateHash&&actual.stateJson===expected.stateJson;}));

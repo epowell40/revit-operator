@@ -25,6 +25,7 @@ import {
 } from "./evidence_ref.js";
 import { extractDeterministicEvidenceFacts, projectEvidence } from "./evidence_projection.js";
 import { extractMcpStructuredPayload } from "./structured_payload.js";
+import { selectNativeExecutionAudit } from './native_execution_audit.js';
 
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,240}$/;
 const STRONG_SECRET_PATTERNS = [
@@ -515,7 +516,12 @@ export function retrieveEvidence(request: EvidenceRetrievalRequest): EvidenceRet
     complete = page.complete;
   } else if (selector.kind === "fields") {
     const derived = extractDeterministicEvidenceFacts(parsed);
-    const projection = { key_counts: derived.counts, key_facts: derived.facts };
+    const projection: Record<string, unknown> = { key_counts: derived.counts, key_facts: derived.facts };
+    if (selector.fields.some(field => field === 'projection.native_execution_audit' || field.startsWith('projection.native_execution_audit.'))) {
+      const semantic = selectable && typeof selectable === 'object' ? (selectable as Record<string, unknown>).payload : undefined;
+      const audit = selectNativeExecutionAudit(ref, semantic);
+      if (audit) projection.native_execution_audit = audit;
+    }
     missingFields = []; selectionOrigins = {};
     const missing = Symbol("missing evidence field");
     selection = Object.fromEntries(selector.fields.map(field => {

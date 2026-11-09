@@ -109,7 +109,7 @@ export async function buildNativeCodeReviewPacket(callIds,host){
     const {args,ref}=nativeProjection(matches[0],binding);
     if(ref.evidence_id!==evidenceId)fail('evidence_identity_mismatch');
     const fields=['payload.schema','payload.execution_lane','payload.requested_mode','payload.execution_status',
-      'payload.iteration.source_sha256','payload.evidence.nativeExecutionReceipt'];
+      'payload.iteration.source_sha256','projection.native_execution_audit'];
     const response=await host.request('/evidence/retrieve',{method:'POST',body:JSON.stringify({
       schema:'revit-operator.evidence-retrieval.v1',evidence_id:ref.evidence_id,
       scope:Object.fromEntries(scopeKeys.map(k=>[k,binding[k]])),purpose:'Review exact executed native code against requested work',
@@ -121,10 +121,11 @@ export async function buildNativeCodeReviewPacket(callIds,host){
       ||r?.evidence_id!==ref.evidence_id||r.content_hash!==ref.content_hash||r.source!==ref.source
       ||r.trust_level!=='authoritative_native'||r.secret_screening_status!=='passed'||!scopeKeys.every(k=>r[k]===binding[k])
       ||result.returned_bytes!==bytes(s)||result.returned_bytes>196608||result.missing_fields?.length
-      ||!fields.every(k=>Object.hasOwn(s,k)&&result.selection_origins?.[k]==='payload'))fail('evidence_invalid');
+      ||!fields.every(k=>Object.hasOwn(s,k)&&result.selection_origins?.[k]===(k==='projection.native_execution_audit'?'deterministic_projection':'payload')))fail('evidence_invalid');
     const source=args.source.replaceAll('\r\n','\n').replaceAll('\r','\n');
     const digest='sha256:'+createHash('sha256').update(source,'utf8').digest('hex');
-    let native;try{native=JSON.parse(s['payload.evidence.nativeExecutionReceipt']);}catch{fail('native_receipt_missing');}
+    const native=s['projection.native_execution_audit'];
+    if(!object(native))fail('native_receipt_missing');
     if(s['payload.schema']!=='revit-operator.dynamic-revit-program-run.v1'||s['payload.execution_lane']!=='native'
       ||s['payload.requested_mode']!==args.mode||s['payload.iteration.source_sha256']!==digest
       ||native?.schema!=='dynamic-revit-native-execution-receipt/v1'||native.source_hash!==digest

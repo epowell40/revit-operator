@@ -15,10 +15,10 @@ function fixture(){
   const row={call_id:'call_write',recorded_at:'2026-10-31T15:00:00Z',tool_name:'native__invoke',arguments:{tool:'operator_run_dynamic_revit_program',arguments:{source,mode:'apply',native_program:{effect_scope:'active_document'}}},
     result:{content:[{type:'inputText',text:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[ref]})}]}};
   const selection={'payload.schema':'revit-operator.dynamic-revit-program-run.v1','payload.execution_lane':'native','payload.requested_mode':'apply','payload.execution_status':'completed',
-    'payload.iteration.source_sha256':native.source_hash,'payload.evidence.nativeExecutionReceipt':JSON.stringify(native)};
-  const response=()=>({ok:true,result:{schema:'revit-operator.evidence-retrieval.v1',evidence_ref:ref,selection,complete:false,missing_fields:[],selection_origins:Object.fromEntries(Object.keys(selection).map(k=>[k,'payload'])),returned_bytes:Buffer.byteLength(JSON.stringify(selection))}});
+    'payload.iteration.source_sha256':native.source_hash,'projection.native_execution_audit':structuredClone(native)};
+  const response=()=>({ok:true,result:{schema:'revit-operator.evidence-retrieval.v1',evidence_ref:ref,selection,complete:false,missing_fields:[],selection_origins:Object.fromEntries(Object.keys(selection).map(k=>[k,k==='projection.native_execution_audit'?'deterministic_projection':'payload'])),returned_bytes:Buffer.byteLength(JSON.stringify(selection))}});
   const calls=[];const host={owner:()=>owner,assertControl:async()=>{},receipts:()=>[row],request:async(route,options)=>{calls.push({route,body:JSON.parse(options.body)});return response();}};
-  return {owner,source,ref,native,row,selection,response,host,calls,sync:()=>{selection['payload.evidence.nativeExecutionReceipt']=JSON.stringify(native);}};
+  return {owner,source,ref,native,row,selection,response,host,calls,sync:()=>{selection['projection.native_execution_audit']=structuredClone(native);}};
 }
 test('exact normalized source and native audit retained without predicting 120 dependents',async()=>{
   const f=fixture(),p=await buildNativeCodeReviewPacket(['ev1_'+'A'.repeat(32)],f.host);
@@ -78,6 +78,19 @@ test('source substitution, wrong document, untrusted/foreign ref and missing raw
 test('unknown effects and malformed committed audit cannot acquire a settled code-review packet',async()=>{
   for(const change of [n=>{n.transaction.status='unknown';n.transaction.committed=null;},n=>n.transaction.committed=false,n=>n.transaction.modified_element_ids=[0],n=>n.transaction.affected_element_ids=[1,1],n=>n.program_result={}]){
     const f=fixture();change(f.native);f.sync();await assert.rejects(buildNativeCodeReviewPacket(['ev1_'+'A'.repeat(32)],f.host));
+  }
+});
+
+test('bounded audit must retain its deterministic origin and every required native field',async()=>{
+  for(const fault of ['origin','missing','serialized','source','verified','session']){
+    const f=fixture(),original=f.response;
+    if(fault==='origin')f.host.request=async()=>{const r=original();r.result.selection_origins['projection.native_execution_audit']='payload';return r;};
+    if(fault==='missing')delete f.selection['projection.native_execution_audit'];
+    if(fault==='serialized')f.selection['projection.native_execution_audit']=JSON.stringify(f.native);
+    if(fault==='source'){f.native.source_hash=digest('wrong');f.sync();}
+    if(fault==='verified'){f.native.verified=true;f.sync();}
+    if(fault==='session'){delete f.native.document_session_id;f.sync();}
+    await assert.rejects(buildNativeCodeReviewPacket([f.ref.evidence_id],f.host),undefined,fault);
   }
 });
 test('rollback remains a failed attempt, read remains read-only observation',async()=>{

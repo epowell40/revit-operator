@@ -11,6 +11,9 @@ import {__closeForTests} from '../src/memory/sqlite_store.js';
 import {dynamicProgramParameterPostconditionSatisfiedV2 as match} from '../src/verification/native_program_parameter_postcondition_v2.js';
 import {committedNativeProgramEffectReadbackPlanV2 as plan} from '../src/verification/native_program_effect_postcondition_v2.js';
 import {verificationCapabilityGuidanceV2 as guidance} from '../src/verification/verification_capability_admission_v2.js';
+import {nativeDraftingInspectionTargetsV2} from '../src/assignments/native_drafting_inspection.js';
+import {retainWorkPlanInspectionV2} from '../src/assignments/work_plan_inspection.js';
+import {completeWorkPlanItemV2} from '../src/domain/assignment-kernel/work_plan.js';
 
 const sha=(s:string)=>createHash('sha256').update(s).digest('hex');
 function state(id:number,found=true){const json=JSON.stringify({elementId:id,found,identity:found?'native-'+id:null,geometry:found?{kind:'Line',start:[0,0,0],end:[1,0,0]}:null});
@@ -42,6 +45,61 @@ function fixture(mutate?:(p:any)=>void,trust:any='authoritative_native'){
 }
 function workspace(fn:()=>void){const old=process.env.OPERATOR_WORKSPACE_ROOT,p=fs.mkdtempSync(path.join(os.tmpdir(),'native-effect-state-'));process.env.OPERATOR_WORKSPACE_ROOT=p;
  try{fn();}finally{__closeForTests();if(old===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=old;fs.rmSync(p,{recursive:true,force:true});}}
+
+function inspectionFixture(){
+ const f=fixture();assert.equal(match(f.snapshot,f.subject,f.result,f.fresh),true);
+ f.subject.verification_operation_ids=['read'];f.op.settlement_state='settled';f.op.result=f.result;f.op.observation_ids=['verified'];
+ f.snapshot.observations.verified={operation_id:'read',binding:f.subject.binding,authority:'native-host',facts:[
+  {fact_id:'verification.postcondition_satisfied',fact_class:'verification',value:true},
+  {fact_id:'verification.deliverable_target_identities',fact_class:'verification',value:['element_id:41','element_id:42','element_id:43']} ]};
+ const data:any={result:[{id:41,found:true,uniqueId:'uid41',className:'DetailLine',typeId:10},{id:42,found:true,uniqueId:'uid42',className:'DetailLine',typeId:10},{id:43,found:false,error:'Element not found'}],nativeProgramEffectState:structuredClone(f.fresh.nativeProgramEffectState)};
+ data.nativeProgramEffectState.nativeVersion={ProcessId:1234,Epoch:'epoch',DocumentSessionId:'native-session',Sequence:1};
+ const op:any={...f.op,operation_id:'inspection',purpose:'discovery',opened_at:'2026-11-08T10:00:05Z',verification_of_operation_id:undefined,observation_ids:['inspection-observation']};
+ op.result={...f.result,operation_id:op.operation_id,result_schema_id:'operator-native/POST:/revit/get-element-summary/v2',raw_payload_hash:payloadDigestV2(data).digest,completed_at:'2026-11-08T10:00:06Z'};
+ const stored=storeEvidence({scope:{...f.subject.binding,attempt_id:op.operation_id},source:'assignment_kernel_v2:revit_call_tool',trust_level:'authoritative_native',raw:data}).ref;
+ f.snapshot.operations.inspection=op;f.snapshot.observations['inspection-observation']={operation_id:op.operation_id,binding:op.binding,authority:'native-host',raw_payload_hash:op.result.raw_payload_hash,raw_payload_ref:'evidence:'+stored.evidence_id};
+ f.snapshot.work_plan={schema:'revit-operator.assignment-work-plan/v2',assumptions:[],items:[
+  {item_id:'drawing',kind:'edit',declared_at:'2026-11-08T09:00:00Z',completed_at:'2026-11-08T10:00:04Z',operation_ids:['apply']},
+  {item_id:'inspection',kind:'inspection',depends_on:['drawing'],declared_at:'2026-11-08T09:00:00Z',operation_ids:[]} ]};
+ return {...f,data,inspection:op};
+}
+
+test('final native inspection covers corrected drawing including verified deletion without erasing expected targets',()=>workspace(()=>{
+ const f=inspectionFixture();assert.deepEqual(nativeDraftingInspectionTargetsV2(f.snapshot,f.inspection,f.data),[41,42,43]);
+ const proof=retainWorkPlanInspectionV2(f.snapshot,['inspection']);assert.deepEqual(proof.target_ids,['element_id:41','element_id:42','element_id:43']);
+ const completed=completeWorkPlanItemV2(f.snapshot,'inspection',['inspection'],'2026-11-08T10:00:07Z',proof);
+ assert.equal(completed.items[1]!.completed_at,'2026-11-08T10:00:07Z');assert.equal(f.snapshot.work_plan.items[1].completed_at,undefined,'pure replay does not mutate history');
+}));
+
+test('inspection absence requires actual verified deletion plus complete fresh bound native state',()=>workspace(()=>{
+ for(const mutate of [
+  (f:any)=>f.subject.verification_operation_ids=[],(f:any)=>f.subject.result.status='failed',
+  (f:any)=>f.subject.input.source+='foreign',(f:any)=>f.inspection.input={...f.inspection.input,body:{elementIds:[41,42,43]}},
+  (f:any)=>f.data.nativeProgramEffectState.complete=false,(f:any)=>f.data.nativeProgramEffectState.items[2].stateHash='wrong',
+  (f:any)=>f.data.nativeProgramEffectState.documentFingerprint='foreign',(f:any)=>delete f.data.nativeProgramEffectState.nativeVersion,
+  (f:any)=>f.data.result[2].found=true,(f:any)=>f.data.result[2].error='Read failed',
+  (f:any)=>f.data.result[0].uniqueId='',(f:any)=>f.data.result[0].className='IndependentTag',
+  (f:any)=>f.inspection.opened_at='2026-11-08T09:00:00Z',(f:any)=>f.snapshot.unresolved_unknown_operation_ids=['unknown'],
+  (f:any)=>f.inspection.result.request_identity={...f.inspection.request_identity,request_signature:'foreign'},
+  (f:any)=>f.snapshot.input_invalidated_operation_ids=['inspection'],
+  (f:any)=>f.snapshot.operations.later={...f.subject,operation_id:'later',result:{...f.subject.result,completed_at:'2026-11-08T10:00:08Z'}},
+ ]){const f=inspectionFixture();mutate(f);assert.equal(nativeDraftingInspectionTargetsV2(f.snapshot,f.inspection,f.data),null);}
+}));
+
+test('bounded large inspection preserves unique identity across chunks and rejects unsupported missing rows',()=>workspace(()=>{
+ const f=inspectionFixture(),extra=Array.from({length:550},(_,i)=>i+100);
+ f.inspection.input=structuredClone(f.inspection.input);
+ f.inspection.input.body.elementIds.push(...extra);
+ f.data.result.push(...extra.map(id=>({id,found:true,uniqueId:'uid'+id,className:'DetailLine',typeId:10})));
+ f.data.nativeProgramEffectState.requestedElementIds.push(...extra);
+ f.data.nativeProgramEffectState.items.push(...extra.map(id=>state(id)));
+ assert.equal(nativeDraftingInspectionTargetsV2(f.snapshot,f.inspection,f.data)?.length,553);
+ f.data.result.at(-1).uniqueId=f.data.result[0].uniqueId;
+ assert.equal(nativeDraftingInspectionTargetsV2(f.snapshot,f.inspection,f.data),null,'duplicate identity across chunks');
+ f.data.result.at(-1).uniqueId='uid649';f.data.result.at(-1).found=false;f.data.result.at(-1).error='Element not found';
+ f.data.nativeProgramEffectState.items[f.data.nativeProgramEffectState.items.length-1]=state(649,false);
+ assert.equal(nativeDraftingInspectionTargetsV2(f.snapshot,f.inspection,f.data),null,'absence without a verified deletion');
+}));
 
 function opaqueFixture(change?:(receipt:any)=>void){
  const f=fixture(p=>{const r=JSON.parse(p.evidence.nativeExecutionReceipt);
