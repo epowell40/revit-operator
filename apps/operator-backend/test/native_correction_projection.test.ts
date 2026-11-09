@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {storeEvidence} from '../src/evidence/evidence_store.js';
+import {storeEvidence,retrieveEvidence} from '../src/evidence/evidence_store.js';
 import {modelEvidenceEnvelope} from '../src/evidence/model_context_budget.js';
 import {adaptMcpToolCallResultToDynamicResponse} from '../src/brains/codex_dynamic_result_adapter.js';
 import {boundDesktopNativeOutput} from '../src/assignments/desktop_native_output.js';
@@ -24,12 +24,16 @@ test('native readback gives the owner usable identities and geometry with exact 
   const inline:any=saved.projection.inline_payload;
   assert.equal(inline?.scope,'requested_element_ids_only');assert(inline.rows.length>0&&inline.rows.length<80);
   assert.equal(inline.rows[0].values.uniqueId,payload.result[0]!.uniqueId);assert.deepEqual(inline.rows[0].values.location,payload.result[0]!.location);
-  assert.equal(inline.rows[0].row_index,0);assert.deepEqual(inline.retrieval.path,['result']);assert.equal(inline.coverage.source_rows,80);
+  assert.equal(inline.rows[0].row_index,0);assert.equal(inline.retrieval.path,'result');assert.equal(inline.coverage.source_rows,80);
   assert.equal(inline.coverage.complete,false);assert.equal(inline.task_verified,false);assert.equal(saved.projection.truncated,true);
   const response=adaptMcpToolCallResultToDynamicResponse({content:[{type:'text',text:'retained native result'}]},
    {tool:'revit_call_tool',arguments:{path:'/revit/get-element-summary'},projections:[saved.projection],omitted:0});
   const delivered=boundDesktopNativeOutput(response,scope,'current-read');
   const wire=JSON.stringify(delivered.contentItems);assert(wire.includes('native-uid-0'));assert(wire.includes('requested_element_ids_only'));
+  const next=retrieveEvidence({scope,evidence_id:saved.ref.evidence_id,purpose:'Inspect next correction targets',max_bytes:6000,
+   item_range:{path:inline.retrieval.path,start:inline.retrieval.next_start,count:2,fields:inline.retrieval.fields}});
+  assert.equal(next.complete,false);assert.equal(next.pagination?.returned_count,2);
+  assert.deepEqual((next.selection as any[])[0].values.location,payload.result[inline.retrieval.next_start]!.location);
   assert.equal(JSON.stringify(payload),before);assert.equal(saved.projection.content_hash,saved.ref.content_hash);
  }finally{if(old===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=old;fs.rmSync(root,{recursive:true,force:true});}
 });

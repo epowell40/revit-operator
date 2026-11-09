@@ -21,7 +21,7 @@ export function projectNativeCorrectionTargets(ref:EvidenceRefV1,payload:unknown
  const value=()=>({scope:'requested_element_ids_only',native_postcondition_verified:false,task_verified:false,
   rows,coverage:{source_rows:result.length,spatial_rows:eligible,returned_rows:rows.length,complete:false,
    source_rows_exhausted:next===result.length},
-  retrieval:{evidence_id:ref.evidence_id,path:['result'],fields,next_start:next===result.length?null:next},
+  retrieval:{evidence_id:ref.evidence_id,path:'result',fields,next_start:next===result.length?null:next},
   guidance:'Native identities, bounds and locations for correction only; omitted fields and all source rows remain in this same evidence. Use existing itemRange paging or typed scalar filters on the original result array. Coincident locations may have several valid identities: inspect all matches and use the intended observed UniqueId; do not assume one match or delete an arbitrary one. This table is not a whole-view census, complete curve-shape proof or execution authority.'});
  for(let i=0;i<result.length;i++){
   const row=result[i] as Row;next=i+1;if(!spatial(row))continue;
