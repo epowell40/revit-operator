@@ -57,6 +57,26 @@ namespace RevitBridge.Common
                 + string.Join(",", rounded.Select(v => Number(v * sign)));
         }
 
+        // Preserve the full parameterization. A partial ellipse cannot be
+        // certified by endpoints, a box, or a few tessellated samples.
+        public static string EllipseKey(double[] center, double radiusX, double radiusY,
+            double[] xDirection, double[] yDirection, double? startParameter, double? endParameter)
+        {
+            if (!Point(center) || !Point(xDirection) || !Point(yDirection)
+                || !Finite(radiusX) || !Finite(radiusY) || radiusX <= 0 || radiusY <= 0
+                || Math.Abs(xDirection.Sum(v => v*v)-1) > 1e-8
+                || Math.Abs(yDirection.Sum(v => v*v)-1) > 1e-8
+                || Math.Abs(xDirection.Zip(yDirection,(x,y)=>x*y).Sum()) > 1e-8
+                || startParameter.HasValue != endParameter.HasValue
+                || startParameter.HasValue && (!Finite(startParameter.Value) || !Finite(endParameter!.Value)
+                    || startParameter.Value >= endParameter.Value))
+                throw new ArgumentException("Complete finite ellipse center, positive radii, orthonormal axes and optional bounded domain required.");
+            string Vector(double[] v) => string.Join(",",v.Select(n=>Number(Math.Round(n,9))));
+            return "ellipse:v1:parameterized-rounded9:" + Vector(center) + ":" + Number(Math.Round(radiusX,9))
+                + ":" + Number(Math.Round(radiusY,9)) + ":" + Vector(xDirection) + ":" + Vector(yDirection)
+                + (startParameter.HasValue ? ":bounded:"+Number(startParameter.Value)+":"+Number(endParameter!.Value) : ":whole");
+        }
+
         private static bool Point(double[]? p) => p != null && p.Length == 3 && p.All(Finite);
         private static bool Finite(double n) => !double.IsNaN(n) && !double.IsInfinity(n);
         private static string Number(double n) => (n == 0 ? 0d : n).ToString("R", CultureInfo.InvariantCulture);

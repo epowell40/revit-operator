@@ -10,6 +10,21 @@ namespace RevitBridge.Logic
         public static object Read(Curve curve)
         {
             if (curve == null) throw new InvalidOperationException("Native curve geometry is required.");
+            if (curve is Ellipse ellipse)
+            {
+                // Whole ellipses have no endpoints. Never call bounded-only
+                // getters, invent endpoints, or substitute tessellation.
+                double? start = ellipse.IsBound ? ellipse.GetEndParameter(0) : (double?)null;
+                double? end = ellipse.IsBound ? ellipse.GetEndParameter(1) : (double?)null;
+                _ = DraftingCurveReadback.EllipseKey(Vector(ellipse.Center), ellipse.RadiusX, ellipse.RadiusY,
+                    Vector(ellipse.XDirection), Vector(ellipse.YDirection), start, end);
+                _ = Vector(ellipse.Normal);
+                return new { kind = curve.GetType().Name, isBound = ellipse.IsBound,
+                    center = Point(ellipse.Center), radiusX = ellipse.RadiusX, radiusY = ellipse.RadiusY,
+                    xDirection = Point(ellipse.XDirection), yDirection = Point(ellipse.YDirection), normal = Point(ellipse.Normal),
+                    startParameter = start, endParameter = end,
+                    geometryScope = "complete_native_ellipse_radii_frame_and_domain" };
+            }
             if (curve is Arc circle && !curve.IsBound)
             {
                 _ = DraftingCurveReadback.CircleKey(Vector(circle.Center), circle.Radius, Vector(circle.Normal));
@@ -75,6 +90,16 @@ namespace RevitBridge.Logic
             var right = view.RightDirection.Normalize(); var up = view.UpDirection.Normalize(); var depth = view.ViewDirection.Normalize();
             double[] Direction(XYZ v) => new[] { v.DotProduct(right), v.DotProduct(up), v.DotProduct(depth) };
             return DraftingCurveReadback.CircleKey(Direction(circle.Center - view.Origin), circle.Radius, Direction(circle.Normal));
+        }
+
+        public static string EllipseRelativeKey(Ellipse ellipse, View view)
+        {
+            var right = view.RightDirection.Normalize(); var up = view.UpDirection.Normalize(); var depth = view.ViewDirection.Normalize();
+            double[] Direction(XYZ v) => new[] { v.DotProduct(right), v.DotProduct(up), v.DotProduct(depth) };
+            return DraftingCurveReadback.EllipseKey(Direction(ellipse.Center-view.Origin), ellipse.RadiusX, ellipse.RadiusY,
+                Direction(ellipse.XDirection), Direction(ellipse.YDirection),
+                ellipse.IsBound ? ellipse.GetEndParameter(0) : (double?)null,
+                ellipse.IsBound ? ellipse.GetEndParameter(1) : (double?)null);
         }
 
         private static object Point(XYZ point) => new { x = point.X, y = point.Y, z = point.Z };
