@@ -14,6 +14,7 @@ import {verificationCapabilityGuidanceV2 as guidance} from '../src/verification/
 import {nativeDraftingInspectionTargetsV2} from '../src/assignments/native_drafting_inspection.js';
 import {retainWorkPlanInspectionV2} from '../src/assignments/work_plan_inspection.js';
 import {completeWorkPlanItemV2} from '../src/domain/assignment-kernel/work_plan.js';
+import {qualifiedLargeInspectionDiscoveryV2} from '../src/assignments/large_inspection_discovery.js';
 
 const sha=(s:string)=>createHash('sha256').update(s).digest('hex');
 function state(id:number,found=true){const json=JSON.stringify({elementId:id,found,identity:found?'native-'+id:null,geometry:found?{kind:'Line',start:[0,0,0],end:[1,0,0]}:null});
@@ -150,6 +151,51 @@ test('bounded large inspection preserves unique identity across chunks and rejec
  f.data.result.at(-1).uniqueId='uid649';f.data.result.at(-1).found=false;f.data.result.at(-1).error='Element not found';
  f.data.nativeProgramEffectState.items[f.data.nativeProgramEffectState.items.length-1]=state(649,false);
  assert.equal(nativeDraftingInspectionTargetsV2(f.snapshot,f.inspection,f.data),null,'absence without a verified deletion');
+}));
+
+function largeDiscoveryFixture(){
+ const f=inspectionFixture(),extra=Array.from({length:550},(_,i)=>i+100);
+ f.inspection.input=structuredClone(f.inspection.input);f.inspection.input.body.elementIds.push(...extra);
+ f.data.result.push(...extra.map(id=>({id,found:true,uniqueId:'uid'+id,className:'DetailLine',typeId:10})));
+ f.data.nativeProgramEffectState.requestedElementIds.push(...extra);
+ f.data.nativeProgramEffectState.items.push(...extra.map(id=>state(id)));
+ Object.assign(f.inspection,{admission_state:'admitted',dispatch_state:'dispatched',settlement_state:'settled'});
+ const stored=storeEvidence({scope:{...f.subject.binding,attempt_id:f.inspection.operation_id},source:'assignment_kernel_v2:revit_call_tool',trust_level:'authoritative_native',raw:f.data}).ref;
+ f.inspection.result.raw_payload_hash=payloadDigestV2(f.data).digest;
+ f.snapshot.observations['inspection-observation'].raw_payload_hash=f.inspection.result.raw_payload_hash;
+ f.snapshot.observations['inspection-observation'].raw_payload_ref='evidence:'+stored.evidence_id;
+ return f;
+}
+
+test('large fresh native inspection is discoverable without completing work or changing verification',()=>workspace(()=>{
+ const f=largeDiscoveryFixture(),before=JSON.stringify(f.snapshot);
+ assert.equal(qualifiedLargeInspectionDiscoveryV2(f.snapshot,f.inspection),true);
+ assert.equal(JSON.stringify(f.snapshot),before);
+}));
+
+test('large inspection discovery keeps native trust, freshness, Pause and unknown boundaries',()=>workspace(()=>{
+ const changes=[
+  (f:any)=>f.snapshot.terminal=true,
+  (f:any)=>f.snapshot.outcome='blocked',
+  (f:any)=>f.snapshot.execution_control={state:'paused'},
+  (f:any)=>f.snapshot.provider_usage_hold={reason:'pending'},
+  (f:any)=>f.snapshot.unresolved_unknown_operation_ids=['unknown'],
+  (f:any)=>f.snapshot.in_flight_operation_ids=['pending'],
+  (f:any)=>f.snapshot.input_invalidated_operation_ids=['inspection'],
+  (f:any)=>f.inspection.result.raw_payload_hash='foreign',
+  (f:any)=>f.inspection.result.binding={...f.inspection.binding,generation:2},
+  (f:any)=>f.inspection.result.status='failed_after_dispatch',
+  (f:any)=>delete f.inspection.result.receipt_id,
+  (f:any)=>f.inspection.opened_at='2026-11-08T09:00:00Z',
+  (f:any)=>f.inspection.input.body.elementIds.push(41),
+  (f:any)=>f.inspection.input.body.elementIds=Array.from({length:4097},(_,i)=>i+1),
+  (f:any)=>delete f.inspection.input.body.includeNativeProgramEffectState,
+  (f:any)=>f.snapshot.work_plan.items.find((i:any)=>i.kind==='inspection').completed_at='2026-11-08T10:00:04Z',
+  (f:any)=>f.snapshot.work_plan.items.find((i:any)=>i.kind==='inspection').deferrals=[{reason:'deferred'}],
+  (f:any)=>f.subject.persistent_effect='unknown',
+  (f:any)=>f.subject.result.completed_at='2026-11-08T10:00:07Z',
+ ];
+ for(const change of changes){const f=largeDiscoveryFixture();change(f);assert.equal(qualifiedLargeInspectionDiscoveryV2(f.snapshot,f.inspection),false,String(change));}
 }));
 
 function opaqueFixture(change?:(receipt:any)=>void){
