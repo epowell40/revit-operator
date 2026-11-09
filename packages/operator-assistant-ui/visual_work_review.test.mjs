@@ -42,6 +42,15 @@ function trackedAttachmentReadFixture(){
  content.splice(1,0,{type:'inputText',text:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{truncated:true}]})});
  return {f,tracking};
 }
+test('PNG crop receipt supplies exact source pixels and limited region to the working actor',async()=>{
+ const f=attachmentReadFixture(),bytes=Buffer.from(image,'base64');
+ f.summary.source='detail.png';f.summary.source_media_type='image/png';f.summary.sha256=createHash('sha256').update(bytes).digest('hex');
+ f.attachments=[{id:'source',filename:'detail.png',mime:'image/png',dataBase64:image}];f.receipts[0].result.content[0].text=JSON.stringify(f.summary);
+ const h=host();h.h.referenceAttachmentRead=async selected=>{const r=identityReview.resolveAttachmentReviewImage(selected,f);return {...r,evidence_ref:{evidence_id:'ev1_source',content_hash:'sha256:'+r.source_render.image_sha256}};};
+ const r=await reviewCurrentWork({...request,review_mode:'observe',reference_attachment_read:f.selection},h.h);
+ assert.equal(r.state,'observed');assert.equal(h.calls.providers.length,0);assert.equal(r.reference.source_render.source_media_type,'image/png');
+ const output=visualWorkReviewModelOutput({type:'function_call_output',call_id:'review',output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{evidence_id:'ev1_review'}]})},r,'ev1_review');assert.ok(Array.isArray(output.output));const pixels=output.output.filter(x=>x.type==='input_image');assert.equal(pixels.length,2);assert.equal(pixels[1].image_url,'data:image/png;base64,'+image);assert.equal(r.whole_task_verified,false);
+});
 test('highlighted reference retains clean source selection through projected metadata and recovery',()=>{
  const {f}=trackedAttachmentReadFixture();f.attachments=[];f.registeredAttachmentIds=['source'];
  const r=identityReview.resolveAttachmentReviewImage(f.selection,f);
