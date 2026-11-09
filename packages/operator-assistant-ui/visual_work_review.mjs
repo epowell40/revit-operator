@@ -713,10 +713,38 @@ export function visualWorkReviewModelOutput(modelOutput,result,evidenceId,inspec
   if(indexBytes>16896)throw Error('visual_review_projection_budget_exceeded');
   const outputBudget=8192,index=feedback.drafting_correction_index;
   if(index?.state==='available'){
+    // The typed feedback already carries the exact evidence ID, native row
+    // selector, fields and full-review selectors. Do not spend its repair budget
+    // repeating the generic selector catalogue and the longer stored guidance.
+    delete projection.retrieval;
+    index.guidance='Current native IDs; rounded line endpoints or bounds for other shapes. Retrieve exact rows for precision, curves and UniqueIds. Bounds are candidates, not pixel mapping, visual correctness or write permission.';
     while(Buffer.byteLength(wire(),'utf8')>outputBudget&&index.rows.length){
       index.rows.pop();const next=index.retrieval.source_row_indices.pop();
       index.coverage.returned_rows=index.rows.length;index.coverage.source_rows_exhausted=false;
       index.retrieval.next_start=next;
+    }
+    // The annotation lane and spatial directory share this SAME wire budget.
+    // Native counts, document identity and the image must never be mistaken for
+    // omitted locators. Keep whole annotation rows and explicit partial coverage;
+    // the unchanged retained index remains addressable by its evidence ID.
+    if(Buffer.byteLength(wire(),'utf8')>outputBudget){
+      index.presentation={complete:false,full_index_path:'drafting_correction_index'};
+      const notes=index.annotations;
+      while(Buffer.byteLength(wire(),'utf8')>outputBudget&&notes?.rows.length){
+        notes.rows.pop();notes.returned_text_notes=notes.rows.length;
+        notes.all_observed_notes_returned=false;
+      }
+    }
+    if(Buffer.byteLength(wire(),'utf8')>outputBudget){
+      // Optional discovery data must not abort valid image delivery. This is a
+      // reference to available evidence, not an unavailable read or zero items.
+      feedback.drafting_correction_index={schema:index.schema,state:'retained_only',
+        source_sha256:index.source_sha256,location:index.location,capture:index.capture,
+        coverage:{...index.coverage,returned_rows:0,source_rows_exhausted:false},
+        retrieval:{evidence_id:evidenceId,index_path:'drafting_correction_index',
+          path:index.retrieval.path,fields:index.retrieval.fields,next_start:0},
+        native_postcondition_verified:false,whole_task_verified:false,pixel_to_model_mapping:false,
+        guidance:'Native locators are retained, not absent. Retrieve the index or select exact raw rows by evidence ID. Inspect the delivered pixels; no correctness or completion is established.'};
     }
   }
   if(Buffer.byteLength(wire(),'utf8')>outputBudget)throw Error('visual_review_projection_budget_exceeded');
