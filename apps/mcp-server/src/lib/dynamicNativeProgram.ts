@@ -55,8 +55,13 @@ export function normalizeNativeProgram(value: NativeProgramInput, mode: string, 
     allowedExistingUniqueIds: ids as string[], allowCreate: create, maxAffectedElements: Number(maximum), deadlineMs: Number(deadline) } };
 }
 
+// The authenticated receipt and its authentication envelope are both inside
+// this existing transport budget. A smaller per-receipt cap could reject an
+// already committed native write whose complete evidence fits the transport.
+export const NATIVE_PROGRAM_EVIDENCE_MAX_BYTES = 8 * 1024 * 1024;
+
 function parseReceipt(value: unknown): RecordValue {
-  if (typeof value !== "string" || value.length === 0 || value.length > 2 * 1024 * 1024) throw new Error("Native C# receipt is missing or oversized.");
+  if (typeof value !== "string" || value.length === 0 || Buffer.byteLength(value, "utf8") > NATIVE_PROGRAM_EVIDENCE_MAX_BYTES) throw new Error("Native C# receipt is missing or oversized.");
   const parsed = object(JSON.parse(value));
   if (!Object.keys(parsed).length) throw new Error("Native C# receipt is not an object.");
   return parsed;
@@ -66,6 +71,8 @@ function parseReceipt(value: unknown): RecordValue {
  * launcher verifies the MAC with its ephemeral key; here we preserve the exact
  * authenticated body/source/document binding at the model-visible boundary. */
 export function readNativeProgramEvidence(evidence: RecordValue, sourceHash: string, mode: string, expectedDocument: string) {
+  if (Buffer.byteLength(JSON.stringify(evidence), "utf8") > NATIVE_PROGRAM_EVIDENCE_MAX_BYTES)
+    throw new Error("Native C# evidence exceeds its transport byte budget.");
   if (evidence.nativeExecutionReceipt == null || evidence.nativeExecutionReceipt === "") {
     if (evidence.ok === true) throw new Error("Native C# success has no native execution receipt.");
     return null; // Lost apply response remains unknown in the existing controller.

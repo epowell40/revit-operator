@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { normalizeNativeProgram, readNativeProgramEvidence } from "./dynamicNativeProgram.js";
+import { normalizeNativeProgram, readNativeProgramEvidence, NATIVE_PROGRAM_EVIDENCE_MAX_BYTES } from "./dynamicNativeProgram.js";
 import { runDynamicRevitProgram } from "./dynamicRevitProgramRunner.js";
 import { presentDynamicProgramResult } from "./dynamicProgramPresentation.js";
 import { DYNAMIC_REVIT_NATIVE_GUIDE } from "./dynamicRevitSdkGuide.js";
@@ -68,6 +68,72 @@ function authenticate(evidence: RecordValue) {
       JSON.stringify({ schema: "dynamic-revit-authenticated-receipt/v0", runtime_instance_id: "runtime", purpose, receipt_hash: hash(raw),
         host_receipt_mac: "hmac-sha256:" + "f".repeat(64), receipt: JSON.parse(raw) }))];
 }
+
+function largeAuthenticatedEvidence(state = "committed", success = true) {
+  const evidence = fixture("apply", state, success);
+  const receipt = JSON.parse(evidence.nativeExecutionReceipt);
+  // A native post-state inventory can exceed 2 MiB while the entire signed
+  // evidence (including its second authenticated copy) remains below 8 MiB.
+  receipt.effect_observation = { states: Array.from({ length: 900 }, (_, id) =>
+    ({ element_id: id + 1, retained_properties: "x".repeat(2400) })) };
+  evidence.nativeExecutionReceipt = JSON.stringify(receipt);
+  authenticate(evidence);
+  assert(Buffer.byteLength(evidence.nativeExecutionReceipt) > 2 * 1024 * 1024);
+  assert(Buffer.byteLength(JSON.stringify(evidence)) < NATIVE_PROGRAM_EVIDENCE_MAX_BYTES);
+  return evidence;
+}
+
+test("native receipts within the total transport budget preserve commit, rollback and unknown without granting verification", () => {
+  for (const [state, success, effect] of [["committed", true, "applied"], ["rolled_back", false, "none"], ["pending", false, "unknown"]] as const) {
+    const evidence = largeAuthenticatedEvidence(state, success);
+    const result = readNativeProgramEvidence(evidence, sourceHash, "apply", fingerprint)!;
+    assert.equal(result.effect, effect);
+    assert.equal(result.receipt.verified, false);
+    assert.equal(result.receipt.retry_permitted, false);
+  }
+});
+
+test("large native receipts still reject substituted bodies, foreign bindings, malformed JSON and aggregate byte overflow", () => {
+  const evidence = largeAuthenticatedEvidence();
+  assert.throws(() => readNativeProgramEvidence(evidence, hash("foreign-source"), "apply", fingerprint), /binding/);
+  assert.throws(() => readNativeProgramEvidence(evidence, sourceHash, "apply", hash("foreign-document")), /binding/);
+  const substituted = { ...evidence, nativeExecutionReceipt: evidence.nativeExecutionReceipt.replace('"document_revision_before":3', '"document_revision_before":4') };
+  assert.throws(() => readNativeProgramEvidence(substituted, sourceHash, "apply", fingerprint), /binding/);
+  const tampered = { ...evidence, nativeExecutionReceipt: evidence.nativeExecutionReceipt.replace('"element_id":1,', '"element_id":999,') };
+  assert.throws(() => readNativeProgramEvidence(tampered, sourceHash, "apply", fingerprint), /authenticated receipt/);
+  assert.throws(() => readNativeProgramEvidence({ ...evidence, nativeExecutionReceipt: "{" }, sourceHash, "apply", fingerprint), SyntaxError);
+  const oversized = { ...evidence, padding: "界".repeat(2 * 1024 * 1024) };
+  assert(JSON.stringify(oversized).length < NATIVE_PROGRAM_EVIDENCE_MAX_BYTES, "UTF-16 count alone would accept this fixture");
+  assert.throws(() => readNativeProgramEvidence(oversized, sourceHash, "apply", fingerprint), /transport byte budget/);
+});
+
+test("large authenticated native result crosses the runner and model-visible consumer without exposing its audit payload", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "native-receipt-budget-"));
+  try {
+    const supervisor = path.join(root, "supervisor.exe"), worker = path.join(root, "worker"), token = path.join(root, "token");
+    fs.writeFileSync(supervisor, "stub"); fs.mkdirSync(worker); fs.writeFileSync(token, "0123456789abcdef");
+    const runtime = { ...env, OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH: supervisor,
+      OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY: worker, OPERATOR_TOKEN_FILE: token };
+    const evidence = largeAuthenticatedEvidence();
+    await runWithAssignmentKernelV2(metadata("apply"), async () => {
+      const result = await runDynamicRevitProgram({ source, mode: "apply", native_program: { entry_type: "Query",
+        allowed_existing_unique_ids: ["uid"] } }, runtime, async (_exe, args) => {
+        fs.writeFileSync(JSON.parse(fs.readFileSync(args[1]!, "utf8")).evidencePath, JSON.stringify(evidence));
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      assert.equal(result.canonical_attempt_settlement?.effect_state, "applied");
+      const visible: any = presentDynamicProgramResult(result);
+      assert.equal(visible.native_outcome.task_verified, false);
+      assert.equal(visible.native_outcome.program_result, '{"matchingRooms":3}');
+      assert.equal(result.iteration.retryable, false);
+      assert.equal(visible.evidence, undefined);
+      assert(Buffer.byteLength(JSON.stringify(visible)) < 32768);
+      const decorated: any = decorateAssignmentKernelMcpResultV2({ content: [{ type: "text", text: JSON.stringify(visible) }] }, "operator_run_dynamic_revit_program");
+      assert.equal(decorated.structuredContent.operation_result_v2.persistent_effect, "applied");
+      assert.equal(decorated.structuredContent.operation_result_v2.native_transaction_state, "committed");
+    });
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
 
 test("source-step error context reaches the actor without altering native rollback, commit or unknown outcomes",async()=>{
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'native-source-step-'));

@@ -5,7 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { getWorkspaceRoot } from "./workspace.js";
 import { resolveDynamicRuntimeInstallation } from "./dynamicRuntimeInstallation.js";
 import { currentAssignmentKernelV2Context, beginAssignmentKernelDynamicDispatchV2, recordAssignmentKernelDynamicResultV2 } from "./assignmentKernelV2.js";
-import { normalizeNativeProgram, readNativeProgramEvidence, type NativeProgramInput } from "./dynamicNativeProgram.js";
+import { normalizeNativeProgram, readNativeProgramEvidence, NATIVE_PROGRAM_EVIDENCE_MAX_BYTES, type NativeProgramInput } from "./dynamicNativeProgram.js";
 import { runNativeProgramViaCourier } from "./dynamicNativeCourier.js";
 
 export const DYNAMIC_REVIT_PROGRAM_RUN_V1 = "revit-operator.dynamic-revit-program-run.v1" as const;
@@ -156,7 +156,7 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
       })()
     : await execute(supervisor, ["--execute-task", configFile], Math.max(config.workerDeadlineMs + 90_000, 120_000));
   if (!fs.existsSync(evidenceFile)) throw new Error(`Dynamic supervisor returned ${execution.exitCode} without bounded evidence: ${execution.stderr.slice(0, 2000)}`);
-  const evidenceBytes = readAnchoredRegularFile(evidenceFile, runRoot, 8 * 1024 * 1024);
+  const evidenceBytes = readAnchoredRegularFile(evidenceFile, runRoot, NATIVE_PROGRAM_EVIDENCE_MAX_BYTES);
   const evidenceSha256 = sha256(evidenceBytes);
   const evidence = JSON.parse(evidenceBytes.toString("utf8")) as Record<string, unknown>;
   const nativeEvidence = native ? readNativeProgramEvidence(evidence, sourceHash, input.mode, native.expectedDocumentFingerprint) : null;

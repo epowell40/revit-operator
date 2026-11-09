@@ -1,5 +1,6 @@
 import { callRevitViaCourier } from "./revitCourier.js";
 import { createCertifiedCourierAdmission } from "./toolExposurePolicy.js";
+import { NATIVE_PROGRAM_EVIDENCE_MAX_BYTES } from "./dynamicNativeProgram.js";
 
 export const nativeProgramCourierPath = (mode: "read" | "apply") =>
   `/revit/dynamic-runtime/run-native-${mode}-v1`;
@@ -25,7 +26,7 @@ export async function runNativeProgramViaCourier(
       || value.schema !== "operator.native-program-workstation-result.v1"
       || !Number.isSafeInteger(value.exitCode) || ![0, 1].includes(Number(value.exitCode))
       || !value.evidence || typeof value.evidence !== "object" || Array.isArray(value.evidence)
-      || Buffer.byteLength(JSON.stringify(value.evidence), "utf8") > 8 * 1024 * 1024)
+      || Buffer.byteLength(JSON.stringify(value.evidence), "utf8") > NATIVE_PROGRAM_EVIDENCE_MAX_BYTES)
     throw Error("Native C# workstation result is invalid; reconcile before retrying.");
   return { exitCode: Number(value.exitCode), evidence: value.evidence as Record<string, unknown> };
 }
