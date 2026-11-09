@@ -8,6 +8,15 @@ const scopeKeys=['assignment_id','session_id','run_id','generation'];
 const ownerKeys=[...scopeKeys,'principal_id','document_fingerprint'];
 const sameOwner=(a,b)=>ownerKeys.every(k=>(a?.[k]??null)===(b?.[k]??null));
 const fail=reason=>{throw Error('native_code_review_'+reason);};
+// Recovery is attached only after every selected receipt passes the existing
+// source, binding, digest and outcome checks. A matching error string or caller
+// property cannot manufacture these historical observations.
+const sessionDiagnostics=new WeakMap();
+export function nativeCodeReviewSessionDiagnostic(error){
+  const value=error&&typeof error==='object'?sessionDiagnostics.get(error):null;
+  return value?structuredClone(value):null;
+}
+export const NATIVE_CODE_SESSION_RECOVERY='The selected executions span different document sessions. Select one document-session group per code review; keep other groups for separate review when needed. A read after Save As is separate from earlier construction code. Current visual/native checks and saved-file proof remain separate requirements. Do not repeat writes, discard unreviewed work or infer completion from this grouping.';
 
 export function normalizeCodeEvidenceIds(ids){
   if(!Array.isArray(ids)||ids.length<1||ids.length>8||new Set(ids).size!==ids.length
@@ -152,7 +161,14 @@ export async function buildNativeCodeReviewPacket(callIds,host){
       return_value_authority:'program_return_not_independent_verification'});
     if(bytes(executions)>196608)fail('batch_too_large_select_fewer_calls');
   }
-  if(new Set(executions.map(e=>e.document_session_id)).size!==1)fail('document_session_changed');
+  if(new Set(executions.map(e=>e.document_session_id)).size!==1){
+    const error=Error('native_code_review_document_session_changed');
+    const groups=[...new Set(executions.map(e=>e.document_session_id))].map(session=>({document_session_id:session,
+      executions:executions.filter(e=>e.document_session_id===session).map(e=>({evidence_id:e.evidence_id,mode:e.mode,execution_success:e.execution_success,transaction_status:e.transaction.status}))}));
+    const diagnostic={scope:'selected_historical_execution_sessions',groups,native_postcondition_verified:false,whole_task_verified:false};
+    if(bytes(diagnostic)<=4096)sessionDiagnostics.set(error,diagnostic);
+    throw error;
+  }
   const journal=host.receipts(),available=journal.filter(r=>object(nativeProgramArguments(r)?.native_program));
   return {schema:'operator.native-code-review-packet/v1',owner:binding,executions,
     coverage:{selected_calls:ids.length,all_assignment_calls:false,complete_source_bytes:true,predicted_dependents_required:false,
@@ -266,8 +282,9 @@ export async function reviewExecutedCode(input,host){
       reviewed_calls:packet.executions.map(({call_id,evidence_id,content_hash,source_sha256})=>({call_id,evidence_id,content_hash,source_sha256})),
       coverage:packet.coverage,guidance:'Code alignment review only. Keep actual result readback and required persistence evidence; no automatic edit, retry, native verification or task settlement.',
       raw_review_evidence:{packet,reviewer_response:response,reviewer_instructions:NATIVE_CODE_REVIEW_INSTRUCTIONS}};
-  }catch(error){return {...base,ok:false,state:'unavailable',reason:error instanceof Error?error.message:String(error),
-    guidance:'Review unavailable; do not repeat model changes. Retain existing native outcomes and obtain only missing review evidence.',
+  }catch(error){const sessionDiagnostic=nativeCodeReviewSessionDiagnostic(error);return {...base,ok:false,state:'unavailable',reason:error instanceof Error?error.message:String(error),
+    ...(sessionDiagnostic?{code_session_diagnostic:sessionDiagnostic}:{}),
+    guidance:sessionDiagnostic?NATIVE_CODE_SESSION_RECOVERY:'Review unavailable; do not repeat model changes. Retain existing native outcomes and obtain only missing review evidence.',
     raw_review_evidence:{packet,reviewer_response:response}};}
 }
 
@@ -277,7 +294,7 @@ export function nativeCodeReviewModelOutput(output,result,evidenceId){
   if(envelope?.schema!=='revit-operator.model-evidence-envelope.v1'||!Array.isArray(envelope.evidence_projections))fail('projection_invalid');
   const original=envelope.evidence_projections.find(p=>p.evidence_id===evidenceId);
   if(!original)fail('projection_evidence_missing');
-  const feedback=Object.fromEntries(['schema','ok','state','authority','native_postcondition_verified','whole_task_verified','code_review','reviewed_calls','coverage','reason','guidance'].filter(k=>Object.hasOwn(result,k)).map(k=>[k,result[k]]));
+  const feedback=Object.fromEntries(['schema','ok','state','authority','native_postcondition_verified','whole_task_verified','code_review','reviewed_calls','coverage','reason','guidance','code_session_diagnostic'].filter(k=>Object.hasOwn(result,k)).map(k=>[k,result[k]]));
   const projection={...original,key_counts:{},key_facts:{},diagnostics:[],truncated:true,native_code_review:feedback};
   for(const key of ['inline_payload','tool_documentation','connector_graph','helper_findings'])delete projection[key];
   const wire=JSON.stringify({...envelope,evidence_projections:envelope.evidence_projections.map(p=>p===original?projection:p)});
