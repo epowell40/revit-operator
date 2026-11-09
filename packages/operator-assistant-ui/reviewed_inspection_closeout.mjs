@@ -60,7 +60,12 @@ export async function prepareFocusedInspection({binding,itemId,focusElementIds,r
    ||!Array.isArray(ids)||!ids.length||ids.length>4||ids.some(id=>!validId(id)||s.operations?.[id]?.requested_effect!=='read'))return no('native_inspection_candidate_unavailable');
   const targets=p.required_target_ids;
   const elementTargets=Array.isArray(targets)?targets.filter(t=>typeof t==='string'&&/^element_id:[1-9][0-9]*$/.test(t)):[];
-  if(!Array.isArray(targets)||targets.length>128||!elementTargets.length)return no('focus_excludes_inspection_targets');
+  // Match projectNextNativeInspectionV2's existing 500-target discovery bound.
+  // The visual focus remains <=200 and need only intersect the dependency
+  // scope. This prepares navigation; all targets still reach the unchanged
+  // native inspection consumer after review. A large drawing is not evidence
+  // that an otherwise relevant visual focus excludes the inspection targets.
+  if(!Array.isArray(targets)||targets.length>500||!elementTargets.length)return no('focus_excludes_inspection_targets');
   // Navigation frames this visual region, not every native dependency. A
   // multi-sheet inspection may also cover hidden parameters and other views.
   // Require a relevant target (neighbors may accompany it); the unchanged

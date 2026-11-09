@@ -116,6 +116,29 @@ test('multi-region visual focus retains all native dependency targets without de
  assert.equal(JSON.stringify(f),before);assert(calls.every(c=>c.action==='status'));
 });
 
+test('focused preparation accepts the existing producer 500-target bound with one relevant visual region',async()=>{
+ const {prepareFocusedInspection}=await load();
+ for(const count of [129,240,500]){
+  const f=fixture(),calls=[];
+  f.status.work_plan.next_native_inspection.required_target_ids=Array.from({length:count},(_,i)=>'element_id:'+(1000+i));
+  const before=JSON.stringify(f);
+  const r=await prepareFocusedInspection({binding,itemId:'inspect',focusElementIds:[1000+count-1],readSnapshot:async()=>f.snapshot,request:async(_p,o)=>{calls.push(JSON.parse(o.body));return f.status;}});
+  assert.equal(r.state,'prepared',String(count));assert.equal(r.native_postcondition_verified,false);assert.equal(r.whole_task_verified,false);
+  assert.deepEqual(calls,[{...binding,action:'status'}]);assert.equal(JSON.stringify(f),before);
+ }
+});
+
+test('large focused preparation refuses unrelated focus and remains bounded without inventing coverage',async()=>{
+ const {prepareFocusedInspection}=await load(),f=fixture();
+ f.status.work_plan.next_native_inspection.required_target_ids=Array.from({length:500},(_,i)=>'element_id:'+(1000+i));
+ const r=await prepareFocusedInspection({binding,itemId:'inspect',focusElementIds:[999],readSnapshot:async()=>f.snapshot,request:async()=>f.status});
+ assert.equal(r.reason,'focus_excludes_inspection_targets');assert.equal(r.required_focus_element_ids.length,500);
+ assert.equal(r.native_postcondition_verified,false);assert(Buffer.byteLength(JSON.stringify(r))<8192);
+ f.status.work_plan.next_native_inspection.required_target_ids.push('element_id:1500');
+ const over=await prepareFocusedInspection({binding,itemId:'inspect',focusElementIds:[1000],readSnapshot:async()=>f.snapshot,request:async()=>f.status});
+ assert.equal(over.state,'not_submitted');
+});
+
 test('alternative complete-scope reads do not contaminate a current inspection with an older rejected read',async()=>{
  const {closeReviewedInspection}=await load(),f=fixture(),calls=[];
  f.snapshot.operations.older={requested_effect:'read',persistent_effect:'none'};
