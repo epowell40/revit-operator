@@ -33,6 +33,10 @@ export function presentDynamicProgramResult(value: RecordValue): RecordValue {
     const correctionIdentityGuidance = rollbackGuidance
       ? " For a curve correction, endpoints alone are not unique: coincident curves may be intentional. Inspect matching identities, owner/style and geometry with a bounded read-only query, then use the intended observed UniqueId with doc.GetElement(uniqueId). Do not choose or delete an arbitrary match."
       : "";
+    const invalidObjectGuidance = rollbackGuidance && typeof outcome.error === "string"
+      && /referenced object is not valid/i.test(outcome.error)
+      ? " Before deleting or replacing elements, materialize their ElementId/UniqueId values and the intended survivor IDs. Revit may invalidate deleted elements and dependent objects immediately; do not access even Id on an invalid object. Reacquire survivors with doc.GetElement(savedId), then check null/IsValidObject before accessing properties. Reconcile after confirmed rollback; do not blindly replay the failed batch."
+      : "";
     return { schema: text(value.schema, 128), run_id: text(value.run_id, 128), requested_mode: text(value.requested_mode, 32),
       execution_lane: "native", execution_status: text(value.execution_status, 32), execution_ok: value.execution_ok === true,
       native_outcome: Object.keys(outcome).length ? { effect_scope: text(outcome.effect_scope, 32), persistent_effect: text(outcome.persistent_effect, 32),
@@ -41,7 +45,7 @@ export function presentDynamicProgramResult(value: RecordValue): RecordValue {
       diagnostics,
       affected_target_identities: record(value.canonical_attempt_settlement).affected_target_identities ?? [],
       retained_evidence: { evidence_sha256: text(verification.evidence_sha256, 128) },
-      guidance: "Native transaction outcome and generated return text are separate. Independently read back affected targets for writes; use an adequate visual review only for visual obligations. Generated counts do not automatically establish collection completeness. Do not retry unknown effects or treat compiler success as execution. Use native_outcome.program_result for concise result delivery; exact full receipts remain in canonical evidence." + sourceRepairGuidance + rollbackGuidance + correctionIdentityGuidance };
+      guidance: "Native transaction outcome and generated return text are separate. Independently read back affected targets for writes; use an adequate visual review only for visual obligations. Generated counts do not automatically establish collection completeness. Do not retry unknown effects or treat compiler success as execution. Use native_outcome.program_result for concise result delivery; exact full receipts remain in canonical evidence." + sourceRepairGuidance + rollbackGuidance + correctionIdentityGuidance + invalidObjectGuidance };
   }
   if (value.execution_status === "completed" && value.execution_ok === true && value.requested_mode === "read") {
     const entries = Object.entries(record(value.report));

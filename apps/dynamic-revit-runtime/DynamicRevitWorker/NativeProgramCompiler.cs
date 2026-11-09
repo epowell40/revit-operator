@@ -168,7 +168,7 @@ internal static class NativeProgramCompiler
         // otherwise unresolved name. Compiler-owned code is never user-edited.
         var sourceErrors = compilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).Take(32).ToArray();
         if (sourceErrors.Length > 0)
-            return new(null, sourceErrors.Select(d => Diagnostic(d.Id, d.GetMessage())).ToArray());
+            return new(null, sourceErrors.Select(d => CompilerDiagnostic(d, tree)).ToArray());
         var instrumented = (CSharpSyntaxNode)new NativeProgramInstrumentation(model).Visit(root)!;
         var rewrittenTree = CSharpSyntaxTree.Create(instrumented, (CSharpParseOptions)tree.Options, tree.FilePath, Encoding.UTF8);
         var bridgeTree = CSharpSyntaxTree.ParseText(NativeProgramInstrumentation.Bridge(entry!.ToDisplayString()),
@@ -178,7 +178,7 @@ internal static class NativeProgramCompiler
         using var stream = new MemoryStream();
         var emit = compilation.Emit(stream);
         if (!emit.Success) return new(null, emit.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).Take(32)
-            .Select(d => Diagnostic(d.Id, d.GetMessage())).ToArray());
+            .Select(d => CompilerDiagnostic(d, tree)).ToArray());
         var assembly = stream.ToArray();
         if (assembly.Length > 1024 * 1024) return Fail("NATIVE_ARTIFACT_SIZE", "Compiled native artifact exceeds one MiB.");
         using (var pe = new PEReader(new MemoryStream(assembly)))
@@ -201,6 +201,22 @@ internal static class NativeProgramCompiler
 
     private static WorkerDiagnostic Diagnostic(string code, string message) => new()
     { Code = code, Message = message, Phase = "native_compile", Severity = "error", RepairAction = "edit_source", Retryable = true };
+
+    private static WorkerDiagnostic CompilerDiagnostic(Microsoft.CodeAnalysis.Diagnostic error, SyntaxTree sourceTree)
+    {
+        var diagnostic = Diagnostic(error.Id, error.GetMessage());
+        // Only original actor-source coordinates are repair locations. Never
+        // expose user #line mappings, paths or compiler-injected bridge spans.
+        if (error.Location.IsInSource && error.Location.SourceTree == sourceTree)
+        {
+            var span = error.Location.GetLineSpan();
+            diagnostic.Line = span.StartLinePosition.Line + 1;
+            diagnostic.Column = span.StartLinePosition.Character + 1;
+            diagnostic.EndLine = span.EndLinePosition.Line + 1;
+            diagnostic.EndColumn = span.EndLinePosition.Character + 1;
+        }
+        return diagnostic;
+    }
 
     private static bool IsCollectorTypeLiteral(TypeOfExpressionSyntax node, SemanticModel model)
     {

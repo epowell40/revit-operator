@@ -16,6 +16,39 @@ public sealed class NativeCompileFactAttribute : FactAttribute
 public sealed class NativeProgramCompilerTests
 {
     [NativeCompileFact]
+    public void RepairSyntaxAndSemanticErrorsRetainPhysicalSourceRanges()
+    {
+        foreach (var newline in new[] { "\n", "\r\n" })
+        {
+            foreach (var body in new[] { "return \"repaired\");", "return missingValue;" })
+            {
+                var source = string.Join(newline, new[] { "using Autodesk.Revit.DB;", "public class NativeTask {",
+                    "public static string Execute(Document doc) {", body, "}}" });
+                var result = Compile(source);
+                Assert.Null(result.Artifact);
+                var errors = result.Diagnostics.Where(d => d.Code.StartsWith("CS")).ToArray();
+                Assert.NotEmpty(errors);
+                Assert.All(errors, d => { Assert.Equal(4, d.Line); Assert.True(d.Column > 0);
+                    Assert.Equal(4, d.EndLine); Assert.True(d.EndColumn >= d.Column); });
+            }
+        }
+    }
+
+    [NativeCompileFact]
+    public void DiagnosticLocationsIgnoreUserLineMappingAndDoNotLeakPaths()
+    {
+        var source = "using Autodesk.Revit.DB;\npublic class NativeTask {\npublic static string Execute(Document doc) {\n"
+            + "#line 900 \"private-path.cs\"\nreturn unknownValue;\n}}";
+        var result = Compile(source);
+        Assert.Null(result.Artifact);
+        var error = Assert.Single(result.Diagnostics.Where(d => d.Code == "CS0103"));
+        Assert.Equal(5, error.Line); Assert.Equal(8, error.Column);
+        Assert.DoesNotContain("private-path", error.Message);
+        Assert.DoesNotContain("900", error.Message);
+        Assert.Null(Compile(Read, references: Array.Empty<NativeCompilerReference>()).Diagnostics.Single().Line);
+    }
+
+    [NativeCompileFact]
     public void DocumentedPublicClassWithStaticEntryCompilesWithoutInstanceConstruction()
     {
         var result = Compile(Read.Replace("public static class NativeTask", "public class NativeTask"));

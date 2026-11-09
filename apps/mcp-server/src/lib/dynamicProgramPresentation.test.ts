@@ -2,6 +2,21 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { presentDynamicProgramResult } from "./dynamicProgramPresentation.js";
 
+test("confirmed invalid-object rollback explains stable IDs; unknown or successful outcomes gain no repair hint", () => {
+  const outcome = { persistent_effect: "none", native_transaction_state: "rolled_back",
+    error: "The referenced object is not valid, possibly because it has been deleted from the database." };
+  const value = { execution_lane: "native", requested_mode: "apply", execution_status: "failed", execution_ok: false,
+    native_outcome: outcome, diagnostics: [] };
+  const shown: any = presentDynamicProgramResult(value);
+  assert.match(shown.guidance, /materialize.*ElementId/i);
+  assert.match(shown.guidance, /IsValidObject/);
+  assert.equal(shown.native_outcome.task_verified, false);
+  for (const changed of [{ ...outcome, persistent_effect: "unknown" }, { ...outcome, native_transaction_state: "committed" },
+    { ...outcome, error: "Unrelated parameter failure" }]) {
+    assert.doesNotMatch(String(presentDynamicProgramResult({ ...value, native_outcome: changed }).guidance), /IsValidObject/);
+  }
+});
+
 test("native reflection admission failure gives type-safe correction guidance without changing diagnostics", () => {
   const diagnostics = [{code:"POLICY_SOURCE_FORBIDDEN",phase:"source_admission",severity:"error",message:"Generated code may not use GetType(.",repair_action:"remove_forbidden_api"},
     {code:"POLICY_SYMBOL_FORBIDDEN",phase:"source_admission",severity:"error",message:"Generated code may not bind to System.Reflection.MemberInfo."}];
