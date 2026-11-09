@@ -25,7 +25,11 @@ export function projectNextNativeInspectionV2(snapshot?: AssignmentSnapshotV2) {
   if (!item) return null;
   const edits = item.depends_on!.flatMap(id => plan.items.find(p => p.item_id === id)!.operation_ids);
   const targets = [...new Set(edits.flatMap(id => verifiedNativeWorkTargetIdentitiesV2(snapshot,id)))].sort();
-  if (!targets.length || targets.length > 128 || Buffer.byteLength(JSON.stringify(targets),'utf8') > 4000) return null;
+  // Match the already-supported bounded inspection query, rather than silently
+  // hiding existing read candidates for ordinary multi-element drawings. This
+  // is discovery metadata only; the inspection consumer still validates every
+  // original native receipt, target, version and required artifact.
+  if (!targets.length || targets.length > 500 || Buffer.byteLength(JSON.stringify(targets),'utf8') > 12000) return null;
   const ids = targets.filter(t => /^element_id:[1-9][0-9]*$/.test(t)).map(t => Number(t.slice(11)));
   if (ids.some(id => !Number.isSafeInteger(id) || id <= 0)
       || targets.some(t => !t.startsWith('artifact_path:') && !/^element_id:[1-9][0-9]*$/.test(t))) return null;

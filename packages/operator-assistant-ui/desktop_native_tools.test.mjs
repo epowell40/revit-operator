@@ -18,6 +18,37 @@ test('unified tools remove delegation and preserve UI/reviewer with exact native
  assert.deepEqual(result.map(t=>t.name),['review_current_work',undefined,'native__revit_ping']);assert.equal(result.at(-1).parameters,schema);
  assert.throws(()=>installDesktopNativeTools([],{schema:'operator.desktop-native-tools.v1',tools:[...tools,...tools],guidance:'direct'}));
 });
+
+test('successful attachment images carry a usable host call selector without changing source pixels or raw receipt',async()=>{
+ const raw={success:true,contentItems:[{type:'inputText',text:JSON.stringify({attachment_id:'attachment',sha256:'a'.repeat(64),pages_returned:[1],coverage:[{page:1,visual_scope:'full_page'}]})},
+  {type:'inputImage',imageUrl:'data:image/png;base64,AAAA'}]};
+ const output=await invokeDesktopNativeTool({assignment,messageId:'m',responseId:'r',context:{},
+  call:{name:'native__operator_read_attachment',call_id:'call_actual_read',arguments:JSON.stringify({attachment_id:'attachment',pages:[1]})},
+  request:async()=>({schema:'operator.desktop-native-result.v1',result:raw,stop_reason:null})});
+ const delivered=output.native_model_output.output;
+ const selector=delivered.filter(c=>c.type==='input_text').map(c=>JSON.parse(c.text)).find(c=>c.schema==='operator.attachment-review-selector.v1');
+ assert.deepEqual(selector?.reference_attachment_read_options,[{call_id:'call_actual_read',page:1}]);
+ assert.equal(selector.native_postcondition_verified,false);assert.equal(selector.whole_task_verified,false);
+ assert.equal(delivered.find(c=>c.type==='input_image').image_url,raw.contentItems[1].imageUrl);
+ assert.deepEqual(JSON.parse(output.output).content,raw.contentItems);
+});
+
+for(const variant of ['failed','stopped','wrong_tool','wrong_attachment','missing_page','duplicate_page','no_image','ambiguous_summary','malformed_arguments'])test('attachment selector is omitted for '+variant,async()=>{
+ const summary={attachment_id:'attachment',sha256:'a'.repeat(64),pages_returned:[1],coverage:[{page:1}]};
+ const raw={success:variant!=='failed',contentItems:[]};
+ if(variant==='wrong_attachment')summary.attachment_id='foreign';
+ if(variant==='missing_page')summary.pages_returned=[2];
+ if(variant==='duplicate_page')summary.pages_returned=[1,1];
+ raw.contentItems.push({type:'inputText',text:JSON.stringify(summary)});
+ if(variant==='ambiguous_summary')raw.contentItems.push({...raw.contentItems[0]});
+ if(variant!=='no_image')raw.contentItems.push({type:'inputImage',imageUrl:'data:image/png;base64,AAAA'});
+ const output=await invokeDesktopNativeTool({assignment,messageId:'m',responseId:'r',context:{},
+  call:{name:variant==='wrong_tool'?'native__revit_ping':'native__operator_read_attachment',call_id:'call_actual',
+    arguments:variant==='malformed_arguments'?'{':JSON.stringify({attachment_id:'attachment',pages:[1]})},
+  request:async()=>({schema:'operator.desktop-native-result.v1',result:raw,stop_reason:variant==='stopped'?'paused':null})});
+ assert.equal(output.native_model_output.output.some(c=>c.type==='input_text'&&c.text.includes('operator.attachment-review-selector.v1')),false);
+ assert.deepEqual(JSON.parse(output.output).content,raw.contentItems);
+});
 test('host sends only identity/context, preserves native image blocks and does not manufacture authority',async()=>{
  let calls=0;
  const output=await invokeDesktopNativeTool({assignment,messageId:'message',responseId:'response',

@@ -3,6 +3,7 @@ const modelText = output => Array.isArray(output) ? output.find(item => item.typ
 import {createHash} from 'node:crypto';
 import {VISUAL_WORK_REVIEW_TOOL,reviewCurrentWork,normalizeVisualReviewRequest,parseVisualWorkReview,visualWorkReviewModelOutput} from './visual_work_review.mjs';
 import * as identityReview from './visual_work_review.mjs';
+import {invokeDesktopNativeTool} from './desktop_native_tools.mjs';
 const image='iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAYAAACM/rhtAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAcSURBVFhH7cEBAQAAAIIg/69uSEABAAAAAAB8GhkoAAFF1RG0AAAAAElFTkSuQmCC';
 const binding={assignment_id:'assignment',session_id:'session',run_id:'run',generation:1,principal_id:'principal',document_fingerprint:'project'};
 const request={view_id:41,checks:[{id:'gap',expected:'No extra blank row below the headings.'},{id:'border',expected:'Medium grid lines are selected.'}]};
@@ -31,6 +32,19 @@ function attachmentReadFixture(){
  const summary={source:'record.pdf',attachment_id:'source',sha256:sha,page_count:2,pages_returned:[2],mode:'detail',coverage:[{page:2,visual_scope:'region',image_bytes:Buffer.from(image,'base64').length}]};
  return {selection:{call_id:'call_source',page:2},summary,attachments:[{id:'source',filename:'record.pdf',mime:'application/pdf',dataBase64:pdf.toString('base64')}],receipts:[{call_id:'call_source',tool_name:'native__operator_read_attachment',status:'success',arguments:{attachment_id:'source',pages:[2],mode:'detail',region},result:{ok:true,native_stop_reason:null,content:[{type:'inputText',text:JSON.stringify(summary)},{type:'inputImage',imageUrl:'data:image/png;base64,'+image}]}}]};
 }
+test('model-visible host source selector resolves the same owned pixels and still rejects foreign or changed evidence',async()=>{
+ const f=attachmentReadFixture(),r=f.receipts[0];
+ const output=await invokeDesktopNativeTool({assignment:{kernel_version:2,session_id:'session',goal_id:'assignment',run_id:'run',generation:1},
+  messageId:'m',responseId:'r',call:{name:r.tool_name,call_id:r.call_id,arguments:JSON.stringify(r.arguments)},context:{},
+  request:async()=>({schema:'operator.desktop-native-result.v1',result:{success:true,contentItems:r.result.content},stop_reason:null})});
+ const metadata=output.native_model_output.output.filter(c=>c.type==='input_text').map(c=>JSON.parse(c.text)).find(c=>c.schema==='operator.attachment-review-selector.v1');
+ const selector=metadata.reference_attachment_read_options[0];assert.deepEqual(selector,f.selection);
+ const resolved=identityReview.resolveAttachmentReviewImage(selector,f);
+ assert.equal(resolved.image_url,r.result.content[1].imageUrl);
+ assert.throws(()=>identityReview.resolveAttachmentReviewImage(selector,{...f,receipts:[]}),/not_owned/);
+ const changed=structuredClone(f);changed.attachments[0].dataBase64=Buffer.from('different source').toString('base64');
+ assert.throws(()=>identityReview.resolveAttachmentReviewImage(selector,changed),/source_not_current/);
+});
 function trackedAttachmentReadFixture(){
  const f=attachmentReadFixture(),content=f.receipts[0].result.content;
  const overlay=Buffer.from(image,'base64');overlay[overlay.length-1]^=1;

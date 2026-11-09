@@ -6,6 +6,40 @@ const here=path.dirname(fileURLToPath(import.meta.url));
 const fixtureFile=[path.join(here,'fixtures/postsave-note-inspection-516.json'),path.join(here,'../../test/fixtures/postsave-note-inspection-516.json')].find(fs.existsSync)!;
 const fixture=()=>JSON.parse(fs.readFileSync(fixtureFile,'utf8')).snapshot;
 const project=(s:any)=>(projectWorkPlan(s.work_plan,undefined,0,s) as any)?.next_native_inspection;
+function largerVerifiedScope(count=200) {
+ const f=JSON.parse(fs.readFileSync(fixtureFile,'utf8')),s=f.snapshot;
+ const item=s.work_plan.items.find((i:any)=>i.item_id==='m000-note');
+ const ids=Array.from({length:count},(_,i)=>1545903+i);
+ for(const observation of Object.values(s.observations) as any[]) {
+  const read=s.operations[observation.operation_id];
+  if(read?.verification_of_operation_id!==item.operation_ids[0])continue;
+  const fact=observation.facts.find((x:any)=>x.fact_id==='verification.deliverable_target_identities');
+  if(fact)fact.value=ids.map(id=>'element_id:'+id);
+ }
+ s.operations[f.read_id].input.body.elementIds=ids;
+ return {s,ids,readId:f.read_id};
+}
+test('bounded multi-element drafting inspection exposes existing read candidates above 128 targets',()=>{
+ const {s,ids,readId}=largerVerifiedScope(),before=JSON.stringify(s),p=project(s);
+ assert.equal(p?.validation_required,true);assert.equal(p.coverage_only,true);
+ assert.deepEqual(p.element_summary_read.body.elementIds,ids);
+ assert.deepEqual(p.existing_element_read_candidates,[readId]);
+ assert.equal(JSON.stringify(s),before);
+ assert.match(JSON.stringify(desktopAssignmentFeedbackInputV2([],s)),new RegExp(readId));
+});
+for(const [count,accepted] of [[499,true],[501,false]] as const)test('inspection discovery remains bounded at '+count+' targets',()=>{
+ const {s}=largerVerifiedScope(count),p=project(s);
+ if(accepted)assert.equal(p?.element_summary_read.body.elementIds.length,count);else assert.equal(p,null);
+});
+for(const variant of ['paused','unknown','foreign_read','stale_read'])test('larger inspection retains '+variant+' guard',()=>{
+ const {s,readId}=largerVerifiedScope();
+ if(variant==='paused')s.execution_control={state:'paused'};
+ if(variant==='unknown')s.unresolved_unknown_operation_ids=['unknown'];
+ if(variant==='foreign_read')s.operations[readId].binding={...s.operations[readId].binding,generation:99};
+ if(variant==='stale_read')s.operations[readId].opened_at='2020-01-01T00:00:00Z';
+ const p=project(s);
+ if(variant==='paused'||variant==='unknown')assert.equal(p,null);else assert(!p.existing_element_read_candidates.includes(readId));
+});
 test('pending post-save inspection names exact verified model target and supported summary read without certifying content',()=>{
  const s=fixture(),before=JSON.stringify(s),p=project(s);
  assert.equal(p?.item_id,'m000-native-check');

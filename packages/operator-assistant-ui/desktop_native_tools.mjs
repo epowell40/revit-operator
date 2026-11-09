@@ -59,6 +59,30 @@ export function singleExecutionInstructions(instructions,guidance) {
     +'\nFor reconstruction from drawings, including 2D details and diagrams, keep a compact component-to-element map in the existing working context: visible components, linework and text, or plan devices, branches and connections. When writing C#, return actual IDs/UniqueIds grouped by component and your construction coordinate frame, with only the bounds/endpoints needed for repair. This program return is a lookup aid, not an independent readback or permission to modify those elements. Revalidate actual identity, owner and relevant geometry before correction. Reuse the map and retained source instead of rediscovering the whole drawing. Do not infer pixel-to-model mapping from export zoom metadata. Include remaining endpoints, source ambiguities and stated assumptions; no exhaustive line inventory, separate planning artifact or preview. Complete one connected system in useful bounded stages before starting another when practical, rather than leaving every system at its main-run stage. Reuse retrieved tool schemas and native type/level/connector facts while they remain applicable. Use supported batches or requested custom code for known related work; inspect real results before dependent stages. Unfinished work alone is not a blocking decision: continue clear independent work and identify the actual source ambiguity, technical limit, user stop or budget boundary when returning a partial. Do not invent missing design values, repeat uncertain writes, or treat this strategy as verification or authority.'
     +'\nCheck off useful batches by source page, area and system using existing work-plan source_basis/location and edit/inspection items. Distinguish drafted (actual work exists) from backchecked (the named scope was compared against its source and applicable native/visual evidence); advisory claims remain unverified by the host. Keep an unfinished parent and its missing branches, devices, tags or notes open when a smaller batch passes. Record evidence and omissions at useful batch boundaries, not a bookkeeping call per element. On continuation, resume the saved model and retained punch list; inspect changed or uncertain scope before dependent work instead of rebuilding or rediscovering completed areas. For detail work, use native__operator_manage_work_plan action:locate at useful region/component-group boundaries to retain source location, drafted versus checked work, linked native elements and remaining discrepancies; no exhaustive line inventory is required before drafting. Preserve known source gaps rather than closing every endpoint. After a useful batch, compare readable source and current model pixels, collect the concrete visible discrepancies together, and correct related geometry/annotation issues in bounded calls. Recheck affected components and neighbors, then perform one whole-detail omission sweep before handoff. Do not repeat a full independent review between every small correction. Counts help find omissions, not prove source coverage. A benchmark percentage is not a stopping rule for an unfinished user assignment; continue correcting visible discrepancies within the authorized budget, or retain the exact blocker and unchecked scope. A later relevant change needs an affected-scope backcheck; existing evidence currentness rules still govern reuse. At a genuine handoff, retain source-addressed completed work, unchecked work and omissions through the existing report/followups; a partial report is not a whole-task pass. Do not erase prior failed checks, manufacture completion claims or repeat edits to obtain checklist credit.';
 }
+// Provider call IDs are transport metadata, not reliably visible prose. Return
+// the exact host selector beside delivered source images so the actor need not
+// guess an opaque ID or read the attachment again. This is only a lookup hint;
+// the existing review resolver still validates ownership, source and pixels.
+function attachmentReviewSelector(call,result) {
+  if(call.name!=='native__operator_read_attachment'||result.result.success!==true||result.stop_reason
+    ||typeof call.call_id!=='string'||!/^call_[A-Za-z0-9_-]{1,230}$/.test(call.call_id))return null;
+  let args;try{args=typeof call.arguments==='string'?JSON.parse(call.arguments):call.arguments;}catch{return null;}
+  if(!args||typeof args.attachment_id!=='string'||!Array.isArray(args.pages)||!args.pages.length)return null;
+  const summaries=result.result.contentItems.filter(i=>i.type==='inputText'&&typeof i.text==='string'&&i.text.length<=32768)
+    .map(i=>{try{return JSON.parse(i.text);}catch{return null;}})
+    .filter(s=>s&&Array.isArray(s.pages_returned)&&Array.isArray(s.coverage));
+  if(summaries.length!==1)return null;
+  const s=summaries[0],pages=s.pages_returned;
+  if(s.attachment_id!==args.attachment_id||!/^([a-f0-9]{64})$/.test(s.sha256??'')||!pages.length||pages.length>8
+    ||new Set(pages).size!==pages.length||pages.some(p=>!Number.isSafeInteger(p)||p<1||!args.pages.includes(p)
+      ||s.coverage.filter(c=>c?.page===p).length!==1)
+    ||result.result.contentItems.filter(i=>i.type==='inputImage'&&typeof i.imageUrl==='string'&&i.imageUrl.startsWith('data:image/png;base64,')).length<pages.length)return null;
+  return {schema:'operator.attachment-review-selector.v1',
+    reference_attachment_read_options:pages.map(page=>({call_id:call.call_id,page})),
+    native_postcondition_verified:false,whole_task_verified:false,
+    usage:'For review_current_work, copy the matching page selector into reference_attachment_read. Reuse these delivered source pixels; read again only for a different page or crop. The host still checks source ownership and scope.'};
+}
+
 export async function invokeDesktopNativeTool({assignment,messageId,responseId,call,context,request}) {
   if(!call?.name?.startsWith('native__')||!messageId||!responseId||!call.call_id)
     throw Error('desktop_native_provider_identity_required');
@@ -80,6 +104,8 @@ export async function invokeDesktopNativeTool({assignment,messageId,responseId,c
     if(item?.type==='inputImage'&&typeof item.imageUrl==='string')return {type:'input_image',image_url:item.imageUrl,detail:'original'};
     throw Error('desktop_native_content_invalid');
   });
+  const selector=attachmentReviewSelector(call,result);
+  if(selector)content.push({type:'input_text',text:JSON.stringify(selector)});
   // Images stay images. A transport/parser failure must not trigger redispatch.
   const output={type:'function_call_output',call_id:call.call_id,output:JSON.stringify({ok:result.result.success,
     native_stop_reason:result.stop_reason??null,content:result.result.contentItems})};
