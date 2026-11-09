@@ -71,6 +71,57 @@ test('final native inspection covers corrected drawing including verified deleti
  assert.equal(completed.items[1]!.completed_at,'2026-11-08T10:00:07Z');assert.equal(f.snapshot.work_plan.items[1].completed_at,undefined,'pure replay does not mutate history');
 }));
 
+function mixedInspectionFixture(){
+ const f=inspectionFixture();
+ // PNG14: an unchanged WorkPlaneGrid has ordinary identity coverage but no
+ // native program state. Two verified deletions in the same read remain exact.
+ f.data.result[1].className='Element';
+ f.data.nativeProgramEffectState.complete=false;
+ f.data.nativeProgramEffectState.items[1]={elementId:42,complete:false,found:null,stateJson:null,stateHash:null,reason:'unsupported_native_effect_class:Element'};
+ const stored=storeEvidence({scope:{...f.inspection.binding,attempt_id:f.inspection.operation_id},source:'assignment_kernel_v2:revit_call_tool',trust_level:'authoritative_native',raw:f.data}).ref;
+ f.inspection.result.raw_payload_hash=payloadDigestV2(f.data).digest;
+ f.snapshot.observations['inspection-observation'].raw_payload_hash=f.inspection.result.raw_payload_hash;
+ f.snapshot.observations['inspection-observation'].raw_payload_ref='evidence:'+stored.evidence_id;
+ return f;
+}
+
+test('mixed final inspection composes surviving identity coverage and verified deletion coverage from one read',()=>workspace(()=>{
+ const f=mixedInspectionFixture(),before=JSON.stringify(f.data);
+ assert.deepEqual(nativeDraftingInspectionTargetsV2(f.snapshot,f.inspection,f.data),[41,42,43]);
+ const proof=retainWorkPlanInspectionV2(f.snapshot,['inspection']);
+ assert.deepEqual(proof.target_ids,['element_id:41','element_id:42','element_id:43']);
+ const completed=completeWorkPlanItemV2(f.snapshot,'inspection',['inspection'],'2026-11-08T10:00:07Z',proof);
+ assert.ok(completed.items[1]!.completed_at);
+ assert.equal(JSON.stringify(f.data),before,'raw partial observation is never promoted to complete');
+ assert.equal(f.snapshot.work_plan.items[1].completed_at,undefined,'history remains unchanged');
+ assert.equal(match(f.snapshot,f.subject,{...f.result,raw_payload_hash:payloadDigestV2(f.data).digest},f.data),false,'inspection coverage is not verification of an edit');
+}));
+
+test('mixed inspection rejects unavailable deletion, read failures, malformed coverage, and unverified absence',()=>workspace(()=>{
+ for(const mutate of [
+  (f:any)=>f.data.nativeProgramEffectState.items[1].reason='native_state_read_failed:failed',
+  (f:any)=>f.data.nativeProgramEffectState.items[1].reason='native_state_item_oversize',
+  (f:any)=>f.data.nativeProgramEffectState.items[1].found=false,
+  (f:any)=>f.data.nativeProgramEffectState.items[1].stateJson='{}',
+  (f:any)=>f.data.nativeProgramEffectState.items[1].stateHash='sha256:bad',
+  (f:any)=>f.data.nativeProgramEffectState.items[1].reason='unsupported_native_effect_class:Foreign',
+  (f:any)=>f.data.nativeProgramEffectState.items[1].elementId=43,
+  (f:any)=>f.data.nativeProgramEffectState.requestedElementIds=[41,43,42],
+  (f:any)=>f.data.nativeProgramEffectState.items.pop(),
+  (f:any)=>f.data.nativeProgramEffectState.complete=true,
+  (f:any)=>f.data.nativeProgramEffectState.items[2]={...f.data.nativeProgramEffectState.items[1],elementId:43},
+  (f:any)=>f.data.nativeProgramEffectState.items[0].stateHash='wrong',
+  (f:any)=>f.data.result[1].uniqueId='',
+  (f:any)=>f.subject.verification_operation_ids=[],
+  (f:any)=>f.snapshot.unresolved_unknown_operation_ids=['unknown'],
+  (f:any)=>f.inspection.opened_at='2026-11-08T09:00:00Z',
+  (f:any)=>f.data.nativeProgramEffectState.documentFingerprint='foreign',
+  (f:any)=>delete f.data.nativeProgramEffectState.nativeVersion,
+ ]){const f=mixedInspectionFixture();mutate(f);assert.equal(nativeDraftingInspectionTargetsV2(f.snapshot,f.inspection,f.data),null);}
+ const f=mixedInspectionFixture();f.inspection.result.raw_payload_hash='foreign';
+ assert.throws(()=>retainWorkPlanInspectionV2(f.snapshot,['inspection']));
+}));
+
 test('inspection absence requires actual verified deletion plus complete fresh bound native state',()=>workspace(()=>{
  for(const mutate of [
   (f:any)=>f.subject.verification_operation_ids=[],(f:any)=>f.subject.result.status='failed',

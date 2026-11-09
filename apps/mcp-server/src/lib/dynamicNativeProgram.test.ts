@@ -22,6 +22,11 @@ test("native source guide explains static fields without initializers and conser
   assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/last executed source step/i);
   assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/not.*exact failing/i);
 });
+test('native drafting guide avoids unsupported DetailCurve class filters and cross-kind replacement',()=>{
+  assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/OfClass\(typeof\(CurveElement\)\).*OfType<DetailCurve>/);
+  assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/SetGeometryCurve.*same curve kind/);
+  assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/different curve kind.*replace only the confirmed element/);
+});
 const env = { REVIT_OPERATOR_MODE: "development", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" };
 type RecordValue = Record<string, any>;
 
