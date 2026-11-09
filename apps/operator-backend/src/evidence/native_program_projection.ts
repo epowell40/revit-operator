@@ -17,10 +17,12 @@ function affectedTargetLookup(ref: EvidenceRefV1, payload: unknown) {
   const union=new Set([...tx.added_element_ids,...tx.modified_element_ids,...tx.deleted_element_ids]);
   if(union.size!==tx.affected_element_ids.length||tx.affected_element_ids.some(id=>!union.has(id)))return null;
   const field='projection.native_execution_audit.transaction.affected_element_ids';
-  return {evidence_id:ref.evidence_id,fields:[field],
-    max_bytes:Math.max(1024,Buffer.byteLength(JSON.stringify({[field]:tx.affected_element_ids}),'utf8')+128),
+  const selector=Buffer.byteLength(JSON.stringify({[field]:tx.affected_element_ids}),'utf8')<=4096
+    ?{fields:[field]}:{itemRange:{path:field,start:0,count:256}};
+  return {tool:'operator_retrieve_evidence',arguments:{evidenceId:ref.evidence_id,
+    purpose:'Read retained historical changed element IDs',...selector,maxBytes:4096},
     observed_count:tx.affected_element_ids.length,
-    usage:'Use operator_retrieve_evidence with this evidence_id, fields and max_bytes when the full changed-ID list is needed. Historical native footprint includes deleted and collateral elements; it is not current existence, preservation or task verification. Revalidate relevant identities before correction. Do not repeat the edit or scan receipt text to recover these IDs.'};
+    usage:'Call the named tool with arguments when the changed-ID list is needed. For pages continue itemRange.start at pagination.next_start until has_more is false. Historical native footprint includes deleted and collateral elements; it is not current existence, preservation or task verification. Revalidate relevant identities before correction. Do not repeat the edit or scan receipt text to recover these IDs.'};
 }
 
 /** Selected-field presentation of already retained native execution evidence.
