@@ -93,3 +93,46 @@ test('drawing index respects the downstream evidence item cap and pages exact re
  assert.equal(delivered.output[1].image_url,'data:image/png;base64,'+f.bytes.toString('base64'));
  assert.deepEqual(visualWorkReviewModelOutput(delivered,r,'ev1_review'),delivered);
 });
+
+function annotationTail(){
+ const raw=fixture(340);
+ for(let i=328;i<340;i++)Object.assign(raw.views[0].items[i],{className:'TextNote',curve:null,visibleText:'Equipment '+i});
+ return raw;
+}
+test('annotation locators survive a dense curve page without increasing the index budget',async()=>{
+ const raw=annotationTail(),before=JSON.stringify(raw),r=await build(raw,scene,capture),a=r.annotations;
+ assert.equal(a.observed_text_notes,12);assert.equal(a.returned_text_notes,12);assert.equal(a.all_observed_notes_returned,true);
+ assert.deepEqual(a.rows.map(r=>r.slice(0,2)),Array.from({length:12},(_,i)=>[328+i,428+i]));
+ assert.equal(a.rows[0][2],'Equipment 328');assert.equal(a.rows[0][3],true);
+ assert(Buffer.byteLength(JSON.stringify(a))<=2048);assert(Buffer.byteLength(JSON.stringify(r))<=16384);
+ assert.equal(JSON.stringify(raw),before);assert.equal(r.native_postcondition_verified,false);
+});
+test('annotation excerpt, missing bounds, unreadable text and partial inventory remain explicit',async()=>{
+ const raw=fixture(3),items=raw.views[0].items;
+ items.forEach(r=>{r.className='TextNote';r.curve=null;r.boundingBox=null;});
+ items[0].visibleText='A'.repeat(300);items[1].visibleText='Valve';
+ raw.views[0].truncated=true;raw.views[0].totalOwnedCount=40;
+ const r=await build(raw,scene,capture),a=r.annotations;
+ assert.equal(a.rows[0][2].length,240);assert.equal(a.rows[0][3],false);assert.equal(a.rows[0][4],null);
+ assert.equal(a.observed_text_notes,3);assert.equal(a.returned_text_notes,2);assert.equal(a.unreadable_text_notes,1);
+ assert.equal(a.all_observed_notes_returned,false);assert.equal(r.coverage.source_inventory_complete,false);
+});
+test('many long annotations remain bounded and retain exact raw-source row pointers',async()=>{
+ const raw=fixture(200);raw.views[0].items.forEach(r=>{r.className='TextNote';r.curve=null;r.visibleText='Long text '.repeat(40);});
+ const r=await build(raw,scene,capture),a=r.annotations;
+ assert(a.rows.length>0&&a.rows.length<200);assert.equal(a.all_observed_notes_returned,false);
+ assert.equal(a.observed_text_notes,200);assert(Buffer.byteLength(JSON.stringify(a))<=2048);
+ for(const row of a.rows)assert.equal(raw.views[0].items[row[0]].elementId,row[1]);
+ assert(Buffer.byteLength(JSON.stringify(r))<=16384);
+});
+test('actual model-visible observation preserves annotation locators and fresh pixels within the existing envelope',async()=>{
+ const f=observationHost();f.host.readDraftingDetail=async()=>annotationTail();
+ const r=await reviewCurrentWork(request,f.host);
+ const envelope={output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',omitted:0,retrieval:'Retrieve exact rows.',evidence_projections:[{schema:'revit-operator.evidence-projection.v1',evidence_id:'ev1_review'}]})};
+ const delivered=visualWorkReviewModelOutput(envelope,r,'ev1_review');
+ assert(Buffer.byteLength(delivered.output[0].text)<=8192);
+ const index=JSON.parse(delivered.output[0].text).evidence_projections[0].visual_work_review.drafting_correction_index;
+ assert.equal(index.annotations.returned_text_notes,12);assert.equal(index.annotations.rows[0][1],428);
+ assert.equal(index.retrieval.evidence_id,'ev1_review');assert.equal(index.coverage.source_rows_exhausted,false);
+ assert.equal(delivered.output[1].image_url,'data:image/png;base64,'+f.bytes.toString('base64'));
+});

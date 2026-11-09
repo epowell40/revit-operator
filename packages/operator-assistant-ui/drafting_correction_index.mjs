@@ -44,6 +44,24 @@ export function buildDraftingCorrectionIndex(raw,scene,capture){
    fields:['elementId','uniqueId','ownerViewId','className','curve','boundingBox','visibleText']},
   native_postcondition_verified:false,whole_task_verified:false,
   guidance:'Locate correction targets using these current native IDs and coordinates with the delivered drawing image. Line locators are endpoints; other locators are native bounding boxes, not full curve shapes. Coordinates are rounded for locating only; retrieve exact original rows for precision, UniqueIds, curves or full text. IDs belong only to this document session and observed revision. Several curves may share an endpoint or bounds: inspect the intended shape, never delete an arbitrary match. No pixel-to-model transform, visual correctness, hidden-content absence or permission to write is established.'};
+ // A dense curve page must not hide every annotation at the tail of the same
+ // native inventory. Reserve a small lane within the existing total budget.
+ // These are locators, not text fidelity or rendered-legibility judgments.
+ const notes=items.map((r,i)=>({r,i})).filter(({r})=>r.className==='TextNote');
+ const annotationRows=[];
+ result.annotations={columns:['source_row_index','element_id','text_excerpt','full_text_included','native_bounds'],
+  rows:annotationRows,observed_text_notes:notes.length,returned_text_notes:0,all_observed_notes_returned:false,
+  unreadable_text_notes:notes.filter(({r})=>typeof r.visibleText!=='string').length,whole_drawing_verified:false};
+ for(const {r,i} of notes){
+  if(typeof r.visibleText!=='string')continue;
+  const a=point(r.boundingBox?.min),b=point(r.boundingBox?.max);
+  annotationRows.push([i,r.elementId,r.visibleText.slice(0,240),r.visibleText.length<=240,a&&b?[a,b]:null]);
+  result.annotations.returned_text_notes=annotationRows.length;
+  result.annotations.all_observed_notes_returned=annotationRows.length===notes.length;
+  if(annotationRows.length>64||Buffer.byteLength(JSON.stringify(result.annotations),'utf8')>2048){annotationRows.pop();break;}
+ }
+ result.annotations.returned_text_notes=annotationRows.length;
+ result.annotations.all_observed_notes_returned=annotationRows.length===notes.length;
  const update=()=>{Object.assign(result.coverage,{returned_rows:rows.length,unlocated_rows:unlocated,source_rows_exhausted:next===items.length});result.retrieval.next_start=next===items.length?null:next;};
  for(let i=0;i<items.length;i++){
   const r=items[i],curve=r.curve;let a=null,b=null,kind='bounds';
