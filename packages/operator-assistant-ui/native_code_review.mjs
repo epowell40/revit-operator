@@ -1,6 +1,7 @@
 import {createHash} from 'node:crypto';
 import {nativeChangeObservationFromContext} from './native_change_observations.mjs';
 import {executionOrientation} from './execution_orientation.mjs';
+import {reviewResponseEvidence} from './review_response_evidence.mjs';
 
 const object=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 const hash=v=>typeof v==='string'&&/^sha256:[a-f0-9]{64}$/.test(v);
@@ -401,11 +402,11 @@ export async function reviewExecutedCode(input,host){
     return {...base,ok:true,state:review.status,code_review:review,reviewer_response_id:response.id,
       reviewed_calls:packet.executions.map(({call_id,evidence_id,content_hash,source_sha256})=>({call_id,evidence_id,content_hash,source_sha256})),
       coverage:packet.coverage,guidance:'Code alignment review only. Keep actual result readback and required persistence evidence; no automatic edit, retry, native verification or task settlement.',
-      raw_review_evidence:{packet,current_context:currentContext,reviewer_response:response,reviewer_instructions:NATIVE_CODE_REVIEW_INSTRUCTIONS}};
+      raw_review_evidence:{packet,current_context:currentContext,reviewer_response:reviewResponseEvidence(response),reviewer_instructions:NATIVE_CODE_REVIEW_INSTRUCTIONS}};
   }catch(error){const sessionDiagnostic=nativeCodeReviewSessionDiagnostic(error);return {...base,ok:false,state:'unavailable',reason:error instanceof Error?error.message:String(error),
     ...(sessionDiagnostic?{code_session_diagnostic:sessionDiagnostic}:{}),
     guidance:sessionDiagnostic?NATIVE_CODE_SESSION_RECOVERY:'Review unavailable; do not repeat model changes. Retain existing native outcomes and obtain only missing review evidence.',
-    raw_review_evidence:{packet,current_context:currentContext,reviewer_response:response}};}
+    raw_review_evidence:{packet,current_context:currentContext,reviewer_response:reviewResponseEvidence(response)}};}
 }
 
 export function nativeCodeReviewModelOutput(output,result,evidenceId){

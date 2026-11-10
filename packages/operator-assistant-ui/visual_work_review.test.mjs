@@ -465,3 +465,19 @@ test('observation cannot close inspection or request code approval, and stale or
  if(fault==='foreign-owner')f.h.capture=async()=>{f.setOwner({...binding,run_id:'foreign'});return {image_base64:image,frame:snapshot().frame};};
  const r=await reviewCurrentWork({...request,review_mode:'observe'},f.h);assert.equal(r.state,'unavailable');assert.equal(f.calls.providers.length,0);}
 });
+
+test('opaque review response is referenced without changing actual provider continuation or visual verdict',async()=>{
+ const f=host(),r=response(),opaque='gAAAA'+ 'a'.repeat(80)+'-sk-'+ 'b'.repeat(32)+'_tail';
+ r.output=[{type:'reasoning',id:'rs_visual',summary:[{type:'summary_text',text:'Compare the actual reference.'}],encrypted_content:opaque}];
+ const original=JSON.stringify(r);f.h.requestResponse=async()=>r;
+ const result=await reviewCurrentWork(request,f.h);
+ assert.equal(result.ok,true);assert.equal(result.state,'matched');
+ assert.equal(JSON.stringify(r),original);
+ assert.equal(JSON.stringify(result.raw_review_evidence).includes(opaque),false);
+ const ref=result.raw_review_evidence.reviewer_response.output[0].encrypted_content_ref;
+ assert.equal(ref.response_id,r.id);assert.equal(ref.utf8_bytes,Buffer.byteLength(opaque));
+ assert.equal(ref.sha256,'sha256:'+createHash('sha256').update(opaque).digest('hex'));
+ assert.equal(ref.json_pointer,'/output/0/encrypted_content');
+ assert.deepEqual(result.raw_review_evidence.reviewer_response.output[0].summary,r.output[0].summary);
+ assert.equal(result.whole_task_verified,false);assert.equal(result.native_postcondition_verified,false);
+});

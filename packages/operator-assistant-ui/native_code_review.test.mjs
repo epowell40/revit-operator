@@ -185,3 +185,16 @@ test('Pause or ownership change during optional identity read prevents reviewer 
     assert.equal(r.state,'unavailable');assert.equal(calls,0,kind);
   }
 });
+
+test('opaque review response is referenced for both accepted and unavailable code review without context mutation',async()=>{
+ for(const malformed of [false,true]){
+  const f=fixture(),opaque='gAAAA'+ 'a'.repeat(80)+'-sk-'+ 'b'.repeat(32)+'_tail';
+  const r={id:'resp_code',status:'completed',output:[{type:'reasoning',id:'rs_code',summary:[],encrypted_content:opaque}],output_text:malformed?'invalid json':JSON.stringify({code_review:{status:'uncertain',observed:'Code returns done but creates nothing.',correction:'Inspect requested duct creation.'}})};
+  const original=JSON.stringify(r),h={...f.host,codeReviewPacket:ids=>buildNativeCodeReviewPacket(ids,f.host),userRequest:()=> 'Draft the requested ducts.',settings:()=>({model:'approved-model',reasoning_effort:'medium'}),requestResponse:async()=>r};
+  const result=await reviewExecutedCode({review_mode:'code_execution',code_evidence_ids:[f.ref.evidence_id]},h);
+  assert.equal(result.state,malformed?'unavailable':'uncertain');assert.equal(JSON.stringify(r),original);
+  assert.equal(JSON.stringify(result.raw_review_evidence).includes(opaque),false);
+  assert.equal(result.raw_review_evidence.reviewer_response.output[0].encrypted_content_ref.response_id,r.id);
+  assert.equal(result.whole_task_verified,false);assert.equal(result.native_postcondition_verified,false);
+ }
+});
