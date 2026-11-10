@@ -12,7 +12,7 @@ const ui=[path.resolve('../packages/operator-assistant-ui'),path.resolve('../../
 const {reviewResponseEvidence}=await import(pathToFileURL(path.join(ui,'review_response_evidence.mjs')).href);
 const opaque='gAAAA'+ 'a'.repeat(80)+'-sk-'+ 'b'.repeat(32)+'_tail';
 const response=():any=>({id:'resp_review',status:'completed',output:[{type:'reasoning',id:'rs_test',summary:[],encrypted_content:opaque},{type:'message',role:'assistant',content:[{type:'output_text',text:'The connection is visible.'}]}],output_text:'The connection is visible.'});
-const screen=(raw:unknown)=>assertEvidenceStoreInputSafe({scope:{session_id:'test'},source:'review_test',media_type:'application/json',raw});
+const screen=(raw:unknown)=>assertEvidenceStoreInputSafe({scope:{session_id:'test'},source:'review_test',trust_level:'untrusted_caller',media_type:'application/json',raw});
 test('review producer references opaque transport fields through strict evidence consumer without mutating provider continuation',()=>{
  const r=response(),before=JSON.stringify(r);assert.throws(()=>screen(r),/secret screening/);
  const projected=reviewResponseEvidence(r);assert.doesNotThrow(()=>screen(projected));assert.equal(JSON.stringify(r),before);
