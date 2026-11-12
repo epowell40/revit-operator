@@ -35,6 +35,33 @@ function calls(s:any,n=14){for(let i=0;i<n;i++){
 }}
 function record(s:any){return JSON.parse((desktopAssignmentFeedbackInputV2([],s).at(-1) as any).content[0].text.split('\n').at(-1));}
 
+test('strict source-linked drafting receives the same advisory frontier in live feedback and recovery',()=>{
+ const s=fixture();s.spec.execution_policy=null;row(s,'west');calls(s);
+ s.work_plan.items.push({item_id:'east',description:'Draft the east branches',source_basis:'Reference page 1 east region',
+  kind:'edit',declared_at:at(2),operation_ids:[]});
+ const before=JSON.stringify(s),p=projectDraftingFrontier(s)!;
+ assert(p,'Strict drafting must not lose the coverage projection behind an advisory-profile gate');
+ assert.equal(p.state,'coverage_sweep_due');assert.equal(p.complete,false);
+ assert.equal(p.declared_items_without_region_count,1);
+ assert.equal(p.declared_items_without_region[0]?.item_id,'east');
+ assert.equal(p.declared_items_without_region[0]?.tracking_state,'unlocated');
+ assert.match(p.notice,/not proof of missing model work/);
+ assert.deepEqual(record(s).drafting_frontier,p);
+ assert.match(desktopNativeInitialContext(s),/east/);
+ assert.match(JSON.stringify(desktopAssignmentFeedbackInputV2([],s)),/physical routes/);
+ assert.equal(JSON.stringify(s),before,'Pacing must not change policy, budget, native checks or completion');
+});
+
+test('strict feedback holds on Pause or unknown and does not infer drafting from a parameter-only plan',()=>{
+ const s=fixture();s.spec.execution_policy=null;row(s,'west');calls(s);
+ s.execution_control.state='paused';assert.equal(projectDraftingFrontier(s)?.hold_reason,'paused');
+ assert.doesNotMatch(JSON.stringify(desktopAssignmentFeedbackInputV2([],s)),/Physical coverage pass/);
+ s.execution_control.state='running';s.unresolved_unknown_operation_ids=['unknown'];
+ assert.equal(projectDraftingFrontier(s)?.state,'hold');
+ s.unresolved_unknown_operation_ids=[];delete s.work_plan.items[0].location_history;
+ s.work_plan.items[0].description='Update a type parameter';assert.equal(projectDraftingFrontier(s),null);
+});
+
 test('ongoing local edits cannot suppress whole-scope pacing or older source regions',()=>{
  const s=fixture();row(s,'older-area',1);row(s,'recent-area',2);row(s,'current-area',3);calls(s);
  // Even many successful native commits are not claimed as new checked coverage.
@@ -63,9 +90,11 @@ test('actual model-visible feedback and recovery carry the same bounded frontier
  assert.match(desktopNativeInitialContext(s),/other_recorded_regions/);assert.match(desktopNativeInitialContext(s),/older/);
  assert.doesNotMatch(DRAFTING_COVERAGE_SWEEP_ADVICE,/M10[0-9]|elementId|75%|complete by/);
 });
+for(const strict of [false,true])
 for(const state of ['paused','unknown','native_inflight','provider_inflight','usage_hold','input','review','proposal','terminal','failed','budget','progress_blocker'] as const)
-test('coverage advice cannot override '+state,()=>{
+test('coverage advice cannot override '+state+' strict='+strict,()=>{
  const s=fixture();row(s,'area');calls(s);
+ if(strict)s.spec.execution_policy=null;
  if(state==='paused')s.execution_control.state='paused';if(state==='unknown')s.unresolved_unknown_operation_ids=['unknown'];
  if(state==='native_inflight')s.in_flight_operation_ids=['inflight'];if(state==='provider_inflight')s.in_flight_provider_call_ids=['provider'];
  if(state==='usage_hold')s.provider_usage_hold={hold_id:'hold'};if(state==='input')s.pending_input_variable_ids=['input'];
@@ -74,9 +103,11 @@ test('coverage advice cannot override '+state,()=>{
  if(state==='budget')s.provider_budget_exhausted=true;if(state==='progress_blocker')s.progress_blocker={code:'existing_blocker'};
  assert.equal(projectDraftingFrontier(s)!.state,'hold');
 });
+for(const strict of [false,true])
 for(const change of ['foreign_binding','foreign_document','bad_region','missing_source','missing_drafting_ids'] as const)
-test('unusable records do not gain a frontier '+change,()=>{
+test('unusable records do not gain a frontier '+change+' strict='+strict,()=>{
  const s=fixture(),r=row(s,'area');calls(s);
+ if(strict)s.spec.execution_policy=null;
  if(change==='foreign_binding')r.binding.generation++;if(change==='foreign_document')r.native.document_fingerprint='foreign';
  if(change==='bad_region')r.source.region.max_u=NaN;if(change==='missing_source')delete r.source;
  if(change==='missing_drafting_ids')delete r.drafting.element_ids;
@@ -92,6 +123,21 @@ test('large region histories remain a bounded partial index with truthful omissi
  calls(s);const r=projectDraftingFrontier(s)!;
  assert.equal(r.recorded_region_count,80);assert(r.omitted_region_count>=77);assert.equal(r.complete,false);
  assert(Buffer.byteLength(JSON.stringify(r))<=3072);assert.match(r.notice,/Unmarked source remains undiscovered/);
+});
+
+test('sparse declarations stay bounded and never resurrect completed or deferred work',()=>{
+ const s=fixture();s.spec.execution_policy=null;row(s,'tracked');calls(s);
+ for(let n=0;n<100;n++)s.work_plan.items.push({item_id:'unlocated_'+n,kind:'edit',declared_at:at(1),
+  description:'東'.repeat(200),source_basis:'Reference '.repeat(70),operation_ids:[]});
+ s.work_plan.items.push({item_id:'completed',description:'Completed work',source_basis:'Reference',completed_at:at(2)});
+ s.work_plan.items.push({item_id:'deferred',description:'Blocked choice',source_basis:'Reference',deferrals:[{reason:'Missing decision',deferred_at:at(2)}]});
+ const p=projectDraftingFrontier(s)!;
+ assert.equal(p.declared_items_without_region_count,100);
+ assert(p.declared_items_without_region.length<=3);
+ assert.equal(p.omitted_declared_items_without_region_count,100-p.declared_items_without_region.length);
+ assert(p.declared_items_without_region.every(x=>x.text_truncated&&x.tracking_state==='unlocated'));
+ assert(Buffer.byteLength(JSON.stringify(p))<=3072);assert.equal(p.complete,false);
+ assert.doesNotMatch(JSON.stringify(p.declared_items_without_region),/completed|deferred/);
 });
 test('foreign later history never replaces current pass metadata; Unicode prose stays bounded',()=>{
  const s=fixture(),r=row(s,'current',1,'drafted');r.drafting.remaining='漢'.repeat(130);r.drafting.next_action='漢'.repeat(80);
