@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { storeEvidence } from "../src/evidence/evidence_store.js";
+import { storeEvidence, retrieveEvidence, readAuthoritativeEvidence } from "../src/evidence/evidence_store.js";
 import { assembleBoundedEvidenceContext, modelEvidenceEnvelope, assertBoundedModelEvidencePayload } from "../src/evidence/model_context_budget.js";
+import { projectNativeProgram } from "../src/evidence/native_program_projection.js";
 
 const scope = { session_id: "native-projection", assignment_id: "assignment", run_id: "run", attempt_id: "attempt", generation: 1 };
 const source = "assignment_kernel_v2:operator_run_dynamic_revit_program";
@@ -89,11 +90,53 @@ test("document-scope label is retained without turning program output into verif
   raw.native_outcome.effect_scope = "unrecognized";
   assert.equal(save(raw).projection.inline_payload, undefined);
 }));
-test("large native return is not sliced into an apparently complete value", () => isolated(() => {
-  const raw = payload(); raw.native_outcome.program_result = "\u6f22".repeat(8000);
-  const saved = save(raw);
-  assert.equal(saved.projection.inline_payload, undefined);
-  assert.equal(saved.projection.truncated, true);
-  assert(saved.projection.projected_bytes <= 8192);
-  assert.equal(saved.projection.artifact_ref, saved.ref.evidence_id);
+test("large native returns deliver an explicit UTF8 first page and resume exact retained text", () => isolated(() => {
+  for (const value of ["x".repeat(6658), "\u6f22\ud83d\ude80\"\\\n".repeat(1600)]) {
+    const raw = payload(); raw.native_outcome.program_result = value;
+    const saved = save(raw), inline: any = saved.projection.inline_payload;
+    assert(inline?.program_result_page, "Useful first page must replace generic facts");
+    assert.equal(Object.hasOwn(inline.native_outcome, "program_result"), false);
+    assert.equal(inline.coverage.program_result_complete, false);
+    assert.equal(inline.native_outcome.task_verified, false);
+    assert.equal(inline.retry_authorized, false);
+    const page = inline.program_result_page;
+    assert.equal(page.complete, false);
+    assert.equal(page.text_pagination.field_complete, false);
+    assert.equal(page.text_pagination.has_more, true);
+    assert.equal(page.text_pagination.start, 0);
+    assert.equal(Buffer.byteLength(page.selection), page.text_pagination.next_start);
+    const rest = retrieveEvidence({ scope, evidence_id: saved.ref.evidence_id,
+      purpose: "Read remaining native return", text_range: { path: "native_outcome.program_result",
+        start: page.text_pagination.next_start, length: 32768 }, max_bytes: 65536 });
+    assert.equal(page.selection + rest.selection, value);
+    assert.equal(rest.complete, false);
+    assert.throws(() => retrieveEvidence({ scope: { ...scope, assignment_id: "foreign" },
+      evidence_id: saved.ref.evidence_id, purpose: "Read remaining text", text_range: {
+        path: "native_outcome.program_result", start: page.text_pagination.next_start, length: 100 } }), /scope|assignment/i);
+    assert.deepEqual(JSON.parse(readAuthoritativeEvidence(saved.ref, scope).toString()), raw);
+    assert.equal(saved.projection.truncated, true);
+    assert(saved.projection.projected_bytes <= 8192);
+    const context = assembleBoundedEvidenceContext({ projections: [saved.projection], ...scope });
+    const envelope = modelEvidenceEnvelope(context.projections, context.omitted);
+    assert.equal((envelope.evidence_projections[0]!.inline_payload as any).program_result_page.selection, page.selection);
+    assertBoundedModelEvidencePayload([{ type: "function_call_output", output: JSON.stringify(envelope) }]);
+  }
+}));
+
+test("paging preserves unknown and failed effects, and never clips an error to fit", () => isolated(() => {
+  const raw = payload("apply", "unknown", "unknown", false);
+  raw.native_outcome.program_result = "partial execution notes\n".repeat(1000);
+  const saved = save(raw), inline: any = saved.projection.inline_payload;
+  assert(inline.program_result_page);
+  assert.equal(inline.execution_ok, false);
+  assert.equal(inline.native_outcome.persistent_effect, "unknown");
+  assert.equal(inline.native_outcome.error, raw.native_outcome.error);
+  assert.deepEqual(inline.diagnostics, raw.diagnostics);
+  assert.equal(inline.retry_authorized, false);
+  assert.equal(projectNativeProgram(saved.ref, raw, 128), null);
+  raw.native_outcome.error = "Error detail ".repeat(2000);
+  assert.equal(projectNativeProgram(saved.ref, raw, 8192), null);
+  raw.native_outcome.error = null;
+  raw.native_outcome.program_result = "\ud800".repeat(8000);
+  assert.equal(projectNativeProgram(saved.ref, raw, 8192), null);
 }));

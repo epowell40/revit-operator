@@ -1,4 +1,5 @@
 import type { EvidenceRefV1 } from "./evidence_ref.js";
+import { selectFieldTextRange } from "./field_text_range.js";
 
 type Row = Record<string, unknown>;
 const record = (value: unknown): Row | null => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Row : null;
@@ -25,8 +26,9 @@ export function projectNativeProgram(ref: EvidenceRefV1, payload: unknown, maxBy
       || !(outcome.program_result === null || typeof outcome.program_result === "string")
       || !(outcome.error === null || typeof outcome.error === "string")
       || !Array.isArray(row.diagnostics)) return null;
-  // Never slice a program return or error into an apparently complete value.
-  // Large values retain the ordinary exact-field retrieval path.
+  // Keep a whole return when it fits. Otherwise expose a separately labelled
+  // text page, using the same UTF8 offsets as ordinary retained retrieval.
+  // Never truncate errors or put a partial value in native_outcome.program_result.
   const projected: Row = {
     schema: "revit-operator.native-program-presentation/v1",
     run_id: row.run_id, requested_mode: row.requested_mode,
@@ -43,5 +45,26 @@ export function projectNativeProgram(ref: EvidenceRefV1, payload: unknown, maxBy
     retry_authorized: false,
     guidance: "Program return text is not task verification or collection-completeness proof. Native outcome is separate. Use these exact returned values without rereading solely to recover omitted compiler metadata. Full evidence remains retrievable. For confirmed rollback, inspect and justify any corrected scope before a fresh admitted request; reported IDs are not automatic permission. Unknown effects require reconciliation."
   };
-  return Buffer.byteLength(JSON.stringify(projected), "utf8") <= maxBytes ? projected : null;
+  const size = (value: unknown) => Buffer.byteLength(JSON.stringify(value), "utf8");
+  if (size(projected) <= maxBytes) return projected;
+  if (typeof outcome.program_result !== "string" || !outcome.program_result) return null;
+  const partialOutcome = { ...(projected.native_outcome as Row) };
+  delete partialOutcome.program_result;
+  const partial: Row = { ...projected, native_outcome: partialOutcome,
+    coverage: { ...(projected.coverage as Row), program_result_complete: false },
+    guidance: "program_result_page is an incomplete prefix of retained output, not a complete record or verification. Retrieve remaining needed text with operator_retrieve_evidence using this evidence_id and textRange.path/native_outcome.program_result, start=text_pagination.next_start. Do not rerun code just to recover text. Execution, effects and verification remain separate; unknown effects require reconciliation; no retry is authorized." };
+  // Reserve the bounded page metadata as well as JSON escaping. The shared
+  // selector finds a UTF8 boundary; the final serialized cap remains decisive.
+  const pageBudget = maxBytes - size(partial) - 512;
+  if (pageBudget < 64) return null;
+  try {
+    const page = selectFieldTextRange(outcome.program_result,
+      { path: "native_outcome.program_result", start: 0, length: Buffer.byteLength(outcome.program_result, "utf8") }, pageBudget);
+    partial.program_result_page = { ...page, complete: false };
+    return size(partial) <= maxBytes ? partial : null;
+  } catch {
+    // An invalid Unicode scalar or insufficient page budget keeps the existing
+    // generic presentation and exact retained evidence; never repair raw bytes.
+    return null;
+  }
 }
