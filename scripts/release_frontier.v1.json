@@ -606,6 +606,13 @@
   ],
   "failure_families": [
     {
+      "id": "lookup_failure_lost_in_canonical_presentation_20261113",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/target_resolution_failure.test.mjs",
+        "javascript:package/operator-assistant-ui/computer_completion_presentation.test.mjs"
+      ]
+    },
+    {
       "id": "saved_followup_direction_retention_20261113",
       "coverage": [
         "javascript:package/operator-assistant-ui/provider_continuation.test.mjs",
@@ -5479,6 +5486,7 @@
     "NativeCompileTransportTests"
   ],
   "javascript_tests": [
+    "package/operator-assistant-ui/target_resolution_failure.test.mjs",
     "package/operator-assistant-ui/provider_continuation.test.mjs",
     "package/operator-assistant-ui/verification_closeout_guidance.test.mjs",
     "package/operator-assistant-ui/stopped_work_return.test.mjs",
