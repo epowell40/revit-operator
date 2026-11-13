@@ -1,3 +1,25 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+
+let cachedTopologyParser: ((text: string) => string | null) | undefined;
+function topologyRequestParser(): (text: string) => string | null {
+  if (cachedTopologyParser) return cachedTopologyParser;
+  let directory = path.dirname(fileURLToPath(import.meta.url));
+  for (;;) {
+    const candidate = path.join(directory, "packages/operator-assistant-ui/named_object_topology.mjs");
+    if (fs.existsSync(candidate)) {
+      cachedTopologyParser = createRequire(import.meta.url)(candidate).namedObjectTopologyIdentity;
+      if (typeof cachedTopologyParser !== "function") throw new Error("Shared topology routing parser is invalid.");
+      return cachedTopologyParser;
+    }
+    const parent = path.dirname(directory);
+    if (parent === directory) throw new Error("Shared topology routing parser is unavailable.");
+    directory = parent;
+  }
+}
+
 import type { ChatRequest } from "./contracts.js";
 import { createOpenAiClient, resolveOpenAiApiKey } from "./openai_client.js";
 import { appendEvent, getRecentMessages } from "./memory/sqlite_store.js";
@@ -129,29 +151,8 @@ export function deterministicNamedObjectTopologyTask(userText: string): AecSeman
   const text = userText.trim();
   if (!text || text.length > AEC_SEMANTIC_TASK_MAX_TEXT_CHARS) return null;
 
-  // Negative write constraints are common in read-only requests and must not be
-  // mistaken for requested mutations. Any remaining write verb fails closed.
-  const mutationCheck = text.replace(
-    /\b(?:do\s+not|don't|dont|without)\s+(?:change|modify|edit|update|delete|remove|create|add|move|write)(?:\s+(?:anything|the\s+model|the\s+revit\s+model))?/gi,
-    ""
-  );
-  if (/\b(?:please\s+)?(?:change|modify|edit|update|delete|remove|create|add|move|replace|resize|reroute|write)\b/i.test(mutationCheck)) return null;
-  if (/^\s*(?:please\s+)?(?:connect|disconnect)\b/i.test(mutationCheck) || /\b(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:connect|disconnect)\b/i.test(mutationCheck)) return null;
-
-  const patterns = [
-    /\bwhat\s+(?:is|are)\s+(?:the\s+)?(.{2,128}?)\s+connected\s+to\b/i,
-    /\bwhat\s+(?:does|do)\s+(?:the\s+)?(.{2,128}?)\s+connect\s+to\b/i,
-    /\b(?:which|what)\s+(?:pipe\s+|duct\s+|mep\s+|electrical\s+|mechanical\s+)?systems?\s+(?:is|are)\s+(?:the\s+)?(.{2,128}?)\s+connected\s+to\b/i,
-    /\b(?:show|summarize|inspect|trace)\s+(?:the\s+)?(.{2,128}?)\s+(?:connectors?|connections?|topology)\b/i,
-    /\b(?:are|is)\s+(?:any\s+)?(?:the\s+)?(.{2,128}?)\s+(?:unconnected|disconnected)\b/i
-  ];
-  const match = patterns.map(pattern => pattern.exec(text)).find((candidate): candidate is RegExpExecArray => candidate !== null);
-  if (!match) return null;
-  const identity = (match[1] ?? "")
-    .replace(/^\s*(?:all|each|every|any)\s+/i, "")
-    .replace(/[\s,;:.!?]+$/g, "")
-    .trim();
-  if (identity.length < 2 || identity.length > 128 || /^(?:it|they|them|these|those|this|that|anything|everything|something)$/i.test(identity)) return null;
+  const identity = topologyRequestParser()(text);
+  if (!identity) return null;
 
   return {
     schema: AEC_SEMANTIC_TASK_V1_SCHEMA,

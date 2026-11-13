@@ -373,7 +373,9 @@
     "conversation_intake_timing.test.ts",
     "courier_saved_document_target.test.ts",
     "evidence_field_text_range.test.ts",
-    "focused_desktop_evidence.test.ts"
+    "focused_desktop_evidence.test.ts",
+    "topology_routing_scope.test.ts",
+    "aec_task_intent.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -5480,6 +5482,13 @@
         "dotnet:NativeProgramViewRefreshTests",
         "javascript:app/revit-bridge-addin/RevitBridge.Common.Tests/native-program-view-refresh.test.mjs"
       ]
+    },
+    {
+      "id": "embedded_topology_clause_captures_drafting_assignment_20261113",
+      "coverage": [
+        "backend:topology_routing_scope.test.ts",
+        "backend:aec_task_intent.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
@@ -5536,6 +5545,7 @@
     "package/operator-assistant-ui/task_workspace.test.mjs",
     "package/operator-assistant-ui/task_activity.test.mjs",
     "package/operator-assistant-ui/computer_completion_presentation.test.mjs",
-    "app/revit-bridge-addin/RevitBridge.Common.Tests/native-program-view-refresh.test.mjs"
+    "app/revit-bridge-addin/RevitBridge.Common.Tests/native-program-view-refresh.test.mjs",
+    "package/operator-assistant-ui/immutable_evidence_retry.test.mjs"
   ]
 }
