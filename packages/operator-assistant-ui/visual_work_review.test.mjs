@@ -7,6 +7,22 @@ const image='iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAYAAACM/rhtAAAAAXNSR0IArs4c6QAAAAR
 const binding={assignment_id:'assignment',session_id:'session',run_id:'run',generation:1,principal_id:'principal',document_fingerprint:'project'};
 const request={view_id:41,checks:[{id:'gap',expected:'No extra blank row below the headings.'},{id:'border',expected:'Medium grid lines are selected.'}]};
 const now=Date.parse('2026-10-17T12:00:00Z');
+
+test('matched review feedback reaches the actor with bounded reuse guidance and no native completion claim',async()=>{
+ for(const state of ['matched','mismatch','uncertain']) {
+  const f=host(state),r=await reviewCurrentWork(request,f.h);
+  const envelope={output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{evidence_id:'ev1_review'}]})};
+  const output=visualWorkReviewModelOutput(envelope,r,'ev1_review');
+  const feedback=JSON.parse(modelText(output.output)).evidence_projections[0].visual_work_review;
+  assert.equal(feedback.state,state);assert.equal(feedback.native_postcondition_verified,false);assert.equal(feedback.whole_task_verified,false);
+  assert.equal(f.calls.providers.length,1);assert.equal(feedback.coverage.complete,true);
+  if(state==='matched') {
+   assert.match(feedback.guidance,/Reuse this review for these unchanged checks/);
+   assert.match(feedback.guidance,/stale evidence or an uncovered UI requirement/);
+   assert.match(feedback.guidance,/required code\/save\/file checks/);
+  } else assert.doesNotMatch(feedback.guidance,/proceed to the existing final report/);
+ }
+});
 test('PDF source review reuses a selected delivered attachment image instead of requiring a new PNG attachment',async()=>{
  const selected={call_id:'call_source',page:1};
  const f=host();

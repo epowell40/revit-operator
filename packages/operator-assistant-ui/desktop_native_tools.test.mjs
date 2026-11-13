@@ -54,3 +54,18 @@ test('unified actor instructions require actual model pixels, not camera navigat
  const text=singleExecutionInstructions('base','native');assert.match(text,/review_mode:observe/);assert.match(text,/activate_revit_view alone only navigates/);assert.match(text,/without another model call/);assert.match(text,/not a preview or verification/);
 });
 
+test('active unified edit instructions prefer one scoped inspection strategy and one applicable review while preserving evidence obligations',()=>{
+ const text=singleExecutionInstructions('base','current catalog');
+ assert.match(text,/choose one scoped inspection strategy/);
+ assert.match(text,/Reuse the chosen inspection for independent post-edit readback/);
+ assert.match(text,/Explicit preservation requirements still need relevant before\/after evidence/);
+ assert.match(text,/scoped C# read when the typed contract lacks those fields/);
+ assert.match(text,/null-safe category\/location access, not GetType\/reflection/);
+ assert.match(text,/TextElement.BaseDirection and UpDirection, not a Rotation property/);
+ assert.match(text,/Check Curve.IsBound before GetEndPoint or normalized Evaluate/);
+ assert.match(text,/do not silently skip unsupported preservation fields/);
+ assert.match(text,/one final review_current_work call/);
+ assert.match(text,/recheck after relevant edits, uncertain results, or an uncovered UI requirement/);
+ assert.match(text,/one concise report_work_for_review/);
+});
+
