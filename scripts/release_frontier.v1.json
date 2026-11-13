@@ -602,7 +602,8 @@
     "FamilyInspectionSourceTests",
     "OperatorNativeProgramExecutionTests",
     "OperatorNativeProgramCourierRequestTests",
-    "OperatorCourierRuntimeProfileTests"
+    "OperatorCourierRuntimeProfileTests",
+    "NativeProgramViewRefreshTests"
   ],
   "failure_families": [
     {
@@ -5472,6 +5473,13 @@
         "javascript:package/operator-assistant-ui/task_activity.test.mjs",
         "javascript:package/operator-assistant-ui/computer_completion_presentation.test.mjs"
       ]
+    },
+    {
+      "id": "committed_native_program_stale_screen_20261113",
+      "coverage": [
+        "dotnet:NativeProgramViewRefreshTests",
+        "javascript:app/revit-bridge-addin/RevitBridge.Common.Tests/native-program-view-refresh.test.mjs"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
@@ -5527,6 +5535,7 @@
     "package/operator-assistant-ui/visual_review_image_provenance.test.mjs",
     "package/operator-assistant-ui/task_workspace.test.mjs",
     "package/operator-assistant-ui/task_activity.test.mjs",
-    "package/operator-assistant-ui/computer_completion_presentation.test.mjs"
+    "package/operator-assistant-ui/computer_completion_presentation.test.mjs",
+    "app/revit-bridge-addin/RevitBridge.Common.Tests/native-program-view-refresh.test.mjs"
   ]
 }

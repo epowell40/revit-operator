@@ -137,6 +137,13 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                     observing=false;app.Application.DocumentChanged-=changed;
                     try{transaction.Dispose();}finally{group.Dispose();}
                 });
+            OperatorNativeProgramExecution.RefreshCommittedView(result,()=>
+            {
+                var ui=app.ActiveUIDocument;
+                if(ui==null || DynamicRuntimeSnapshotHandler.Fingerprint(ui.Document)!=fingerprint || DynamicRuntimeSnapshotHandler.Session(ui.Document)!=session)
+                    throw new InvalidOperationException("Active document changed before view refresh.");
+                ui.RefreshActiveView();
+            });
             result["native_failures"]=failures;return result;
         }
 

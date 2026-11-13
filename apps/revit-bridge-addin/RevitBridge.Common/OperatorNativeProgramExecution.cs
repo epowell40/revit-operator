@@ -68,5 +68,19 @@ namespace RevitBridge.Common
             if (result == null || result.Length > 32768) throw new InvalidOperationException("Native program result is null or exceeds32768characters.");
             return result;
         }
+
+        // Called only after transaction/group disposal. Paint is presentation,
+        // not a condition for retaining a committed edit or proof of its result.
+        public static void RefreshCommittedView(Dictionary<string,object?> result, Action refresh)
+        {
+            if(!result.TryGetValue("success",out var success) || !(success is bool ok) || !ok
+                || !result.TryGetValue("transaction",out var value)
+                || !(value is OperatorNativeTransactionReceipt receipt)
+                || receipt.Status!="committed" || receipt.CommittedValue!=true) return;
+            var feedback=new Dictionary<string,object?>{{"state","requested"},{"pixels_verified",false}};
+            try { refresh(); }
+            catch(Exception error) { feedback["state"]="unavailable";feedback["error_type"]=error.GetType().Name; }
+            result["view_refresh"]=feedback;
+        }
     }
 }
