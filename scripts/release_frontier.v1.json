@@ -606,6 +606,28 @@
   ],
   "failure_families": [
     {
+      "id": "saved_followup_direction_retention_20261113",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/provider_continuation.test.mjs",
+        "javascript:package/operator-assistant-ui/checkpoint_followup.test.mjs"
+      ]
+    },
+    {
+      "id": "unified_closeout_tool_exposure_20261113",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/verification_closeout_guidance.test.mjs",
+        "javascript:package/operator-assistant-ui/work_report.test.mjs"
+      ]
+    },
+    {
+      "id": "specific_missing_verification_facts_20261113",
+      "coverage": [
+        "backend:conversation_evidence_contract.test.ts",
+        "backend:desktop_execution_guidance.test.ts",
+        "backend:assignment_status_projection.test.ts"
+      ]
+    },
+    {
       "id": "host_response_storage_preserves_bound_owner_continuity456",
       "coverage": [
         "backend:openai_data_policy.test.ts",
@@ -5457,6 +5479,8 @@
     "NativeCompileTransportTests"
   ],
   "javascript_tests": [
+    "package/operator-assistant-ui/provider_continuation.test.mjs",
+    "package/operator-assistant-ui/verification_closeout_guidance.test.mjs",
     "package/operator-assistant-ui/stopped_work_return.test.mjs",
     "package/operator-assistant-ui/task_navigation_review.test.mjs",
     "package/operator-assistant-ui/saved_computer_assignment.test.mjs",
