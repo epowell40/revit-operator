@@ -127,15 +127,8 @@ function Invoke-Composition([string]$Root, [string]$Label) {
     }
   }
 
-  Invoke-External "$Label backend frontier" {
-    Push-Location $backendRoot
-    try {
-      & npm run build
-      if ($LASTEXITCODE -ne 0) { return }
-      & node scripts/run-tests.mjs --jobs=4 "--frontier-manifest=$manifestPath"
-    } finally { Pop-Location }
-  }
-
+  # Backend integration tests launch/import the sibling built MCP server.
+  # Build and check that dependency first, including on a clean checkout.
   Invoke-External "$Label MCP frontier" {
     Push-Location $mcpRoot
     try {
@@ -143,6 +136,15 @@ function Invoke-Composition([string]$Root, [string]$Label) {
       if ($LASTEXITCODE -ne 0) { return }
       $compiled = @($manifest.mcp_tests | ForEach-Object { Join-Path "dist" ([string]$_).Replace(".ts", ".js") })
       & node --test @compiled
+    } finally { Pop-Location }
+  }
+
+  Invoke-External "$Label backend frontier" {
+    Push-Location $backendRoot
+    try {
+      & npm run build
+      if ($LASTEXITCODE -ne 0) { return }
+      & node scripts/run-tests.mjs --jobs=4 "--frontier-manifest=$manifestPath"
     } finally { Pop-Location }
   }
 
