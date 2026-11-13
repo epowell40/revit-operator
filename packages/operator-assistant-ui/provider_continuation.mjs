@@ -10,7 +10,13 @@ export function providerContinuationInput(saved,binding,initialInput,profile){
    return {input:initialInput}; // A deliberate profile change starts fresh reasoning, never changes the requested profile.
  const latestUser=initialInput.findLast(i=>i?.role==='user');
  if(!latestUser)throw Error('Provider continuation requires the current user direction.');
- return {previous_response_id:saved.previous_response_id,input:[...saved.input,latestUser]};
+ // The provider checkpoint predates saved-task steering. The final user
+ // message can be the composer's generic Resume instruction, not the new
+ // direction. Keep the already-bounded restored conversation and current
+ // task state: dropping all but the last message silently loses that edit.
+ // This is the existing input window, not full tool history or a new budget.
+ // Pending tool outputs still settle exactly once before current context.
+ return {previous_response_id:saved.previous_response_id,input:[...saved.input,...initialInput]};
 }
 
 export function providerCompletedToolOutputs(outputs){
