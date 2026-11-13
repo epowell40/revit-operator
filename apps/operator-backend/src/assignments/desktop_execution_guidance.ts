@@ -9,7 +9,12 @@ import {projectDraftingFrontier} from './drafting_frontier.js';
  * replacement for current dispatch admission. No model target IDs are added. */
 export function desktopNativeInitialContext(snapshot:AssignmentSnapshotV2):string {
  const frontier=projectDraftingFrontier(snapshot);
+ const criteria=snapshot.spec.criteria??[];
+ const requirements=criteria.slice(0,8).map(c=>({criterion_id:c.criterion_id,
+  required:c.required,required_fact_ids:c.semantic_fact_requirements.slice(0,16),
+  facts_complete:c.semantic_fact_requirements.length<=16}));
  const context={assignment_version:snapshot.assignment_version,requested_effect:snapshot.spec.requested_effect,
+  completion_requirements:{total_count:criteria.length,complete:criteria.length<=8&&requirements.every(c=>c.facts_complete),items:requirements},
   verification_policy:advisoryVerificationV2(snapshot)?'agent_report_pending_independent_review':'strict_native',
   execution_policy:snapshot.spec.execution_policy?.mode??null,
   work_plan_required:!advisoryVerificationV2(snapshot)&&snapshot.spec.work_plan_required===true,work_plan_declared:Boolean(snapshot.work_plan),
@@ -22,6 +27,7 @@ export function desktopNativeInitialContext(snapshot:AssignmentSnapshotV2):strin
    ?'Declare the compact requested scope once alongside needed independent reads; no separate status request is needed just to discover that no plan exists. '
    :context.work_plan_declared?'Use the existing plan; request its current details only if needed. ':'')
   +'Later tool/control results supersede this snapshot. It is not native model data or write authority. '
+  +'Use the declared required_fact_ids to choose scoped reads and the evaluator reason to address only missing evidence. Metadata does not establish model content; neither certifies engineering compliance. These requirements are not observed facts or a completion claim. '
   +(advisoryVerificationV2(snapshot)?'Continue useful authorized work within the frozen host budget. Keep lightweight progress and source/model checks; finish with report_work_for_review, retaining completed, remaining and uncertain work. A checklist claim or successful program is not completion; the report requests independent review. ':'')
   +'On recovery reopen the saved reference crop and corresponding model region; reconcile linked elements and interrupted work before editing. Never replay construction merely because provider context was compacted or unavailable.';
 }

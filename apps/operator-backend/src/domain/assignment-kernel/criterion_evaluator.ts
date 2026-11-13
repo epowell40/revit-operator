@@ -51,7 +51,8 @@ export function evaluateCriterionV2(input: Readonly<{
     byIdentity.set(identity, value);
   }
 
-  const requiredFactsPresent = criterion.semantic_fact_requirements.every((required) => facts.some(({ fact }) => fact.fact_id === required));
+  const missingRequiredFacts = criterion.semantic_fact_requirements.filter((required) => !facts.some(({ fact }) => fact.fact_id === required));
+  const requiredFactsPresent = missingRequiredFacts.length === 0;
   let desiredStateMatches = true;
   if (basis === "desired_state_equivalence") {
     const comparisons = criterion.desired_state_comparisons ?? [];
@@ -81,7 +82,7 @@ export function evaluateCriterionV2(input: Readonly<{
       : observations.length === 0
         ? "No Observation satisfies the criterion's typed evidence-admissibility policy."
         : !requiredFactsPresent
-          ? "One or more required semantic facts are absent."
+          ? `Missing required semantic facts: ${missingRequiredFacts.slice(0, 8).join(", ")}${missingRequiredFacts.length > 8 ? ` (+${missingRequiredFacts.length - 8} more)` : ""}. Only admitted observations count; this is not proof that the requested model content is absent.`
           : !desiredStateMatches
             ? "Observed state does not establish the authenticated desired state."
             : partial ? "The completed subset has native verification, current inspection and a verified saved artifact. Explicitly deferred scope remains unfinished; this is partial delivery, not completion of that scope."
