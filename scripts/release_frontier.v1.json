@@ -605,13 +605,6 @@
     "OperatorCourierRuntimeProfileTests"
   ],
   "failure_families": [
-{
-  "id": "stale_screen_pixels_after_native_edit_20261113",
-  "coverage": [
-    "javascript:package/operator-assistant-ui/visible_capture_refresh.test.mjs",
-    "javascript:package/operator-assistant-ui/visual_work_review.test.mjs"
-  ]
-},
     {
       "id": "lookup_failure_lost_in_canonical_presentation_20261113",
       "coverage": [
@@ -5493,7 +5486,6 @@
     "NativeCompileTransportTests"
   ],
   "javascript_tests": [
-    "package/operator-assistant-ui/visible_capture_refresh.test.mjs",
     "package/operator-assistant-ui/target_resolution_failure.test.mjs",
     "package/operator-assistant-ui/provider_continuation.test.mjs",
     "package/operator-assistant-ui/verification_closeout_guidance.test.mjs",
