@@ -13,6 +13,26 @@ const isNativeReviewMode=mode=>['target_view','native_visible_region'].includes(
 // Do not serialize images into evidence summaries or accept caller-provided ones.
 const primaryObservationImages=new WeakMap();
 
+// A recent native identity does not prove that Windows has repainted Revit's
+// drawing canvas. Reuse the existing native refresh before screen pixels; never
+// pan/zoom, rerun a write, or treat refresh success as visual verification.
+export async function captureRefreshedVisibleWork(location,{readNative,capture}){
+  let state='requested';
+  try{
+    const result=await readNative('/revit/regenerate',{refreshActiveView:true},location);
+    if(result?.ok!==true||result.outcome_unknown===true||result.canonical_attempt_settlement?.outcome_unknown===true)
+      throw Error('visual_review_view_refresh_unconfirmed');
+  }catch(error){
+    // Only the host-owned pre-dispatch modal admission may skip native work.
+    // Transport, identity, Pause and unknown outcomes cannot take this branch.
+    if(typeof error?.stderr!=='string'||!error.stderr.split(/\r?\n/).some(line=>line.trim()==='visual_review_native_read_blocked_by_modal'))throw error;
+    state='skipped_owned_modal';
+  }
+  const result=await capture(location);
+  if(state==='skipped_owned_modal'&&result?.frame?.kind!=='revit_dialog')throw Error('visual_review_modal_changed_before_capture');
+  return {...result,view_refresh:{state,pixel_freshness_verified:false}};
+}
+
 export function normalizeAttachmentReviewRead(value){
   if(!object(value)||Object.keys(value).some(k=>!['call_id','page'].includes(k))||!safeId(value.call_id)||!positive(value.page))throw Error('visual_review_attachment_read_invalid');
   return {call_id:value.call_id,page:value.page};
@@ -472,6 +492,7 @@ export async function reviewCurrentWork(input,host){
       // call. The ordinary post-review scene and pixel comparison still apply.
       value=await host.capture(fresh);
     }
+    if(value.view_refresh){raw.visible_view_refreshes??=[];raw.visible_view_refreshes.push(value.view_refresh);}
     return {...validateVisualReviewCapture(value,location,(host.now||Date.now)()),mime:'image/png'};
   };
   const retained=result=>{Object.defineProperty(result,'raw_review_evidence',{value:raw,enumerable:false});return result;};
