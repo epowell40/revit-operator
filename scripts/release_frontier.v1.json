@@ -600,14 +600,17 @@
     "TagFamilyDiscoveryContractTests",
     "FamilyLabelInspectionPolicyTests",
     "ExportedImageMetadataTests",
-    "ExportedImagePathResolverTests",
     "OperatorFamilyCreationReceiptTests",
     "InstalledFamilyTemplateTests",
     "FamilyInspectionSourceTests",
     "OperatorNativeProgramExecutionTests",
     "OperatorNativeProgramCourierRequestTests",
     "OperatorCourierRuntimeProfileTests",
-    "NativeProgramViewRefreshTests"
+    "NativeProgramViewRefreshTests",
+    "OperatorNativeProgramCourierFilesTests",
+    "OperatorNativeProgramCourierOutputTests",
+    "OperatorNativeProgramCourierConsumerTests",
+    "NativeCapturedFailureObservationTests"
   ],
   "failure_families": [
     {
@@ -5504,6 +5507,21 @@
       "coverage": [
         "javascript:package/operator-assistant-ui/retained_reference_image.test.mjs",
         "javascript:package/operator-assistant-ui/visual_work_review.test.mjs"
+      ]
+    },
+    {
+      "id": "native_courier_completion_evidence_lifecycle461",
+      "coverage": [
+        "dotnet:OperatorNativeProgramCourierFilesTests",
+        "dotnet:OperatorNativeProgramCourierOutputTests",
+        "dotnet:OperatorNativeProgramCourierConsumerTests"
+      ]
+    },
+    {
+      "id": "native_failure_locations_reach_actor_without_edit_authority461",
+      "coverage": [
+        "dotnet:NativeCapturedFailureObservationTests",
+        "mcp:lib/dynamicNativeProgram.test.ts"
       ]
     }
   ],

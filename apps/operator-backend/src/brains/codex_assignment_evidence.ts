@@ -14,6 +14,7 @@ import {projectNextNativeInspectionV2} from '../assignments/work_plan_projection
 import {regularSchedulePresentationCheckedScopeV2} from '../verification/regular_schedule_presentation_v2.js';
 import {parameterScheduleReadScopeV2} from '../verification/parameter_schedule_preservation_v2.js';
 import {nativeCommitProgressIdentityV2,observedNativeWorkTargetIdentitiesV1} from '../domain/assignment-kernel/progress/native_work_progress.js';
+import {qualifiedLargeInspectionDiscoveryV2} from '../assignments/large_inspection_discovery.js';
 
 /** A discoverable existing read contract, not an executed check or fuel grant.
  * Candidate identities come from native receipts, not program-return claims.
@@ -116,7 +117,7 @@ function inspectionReadCandidates(snapshot:AssignmentSnapshotV2){
    &&o.raw_payload_hash===op.result!.raw_payload_hash&&sameAssignmentBindingV2(o.binding,snapshot.current_binding);})
   &&WORK_PLAN_INSPECTION_PATHS.includes(op.request_identity?.path as any)&&Date.parse(op.opened_at)>lastEdit
   &&(()=>{const body=op.input.body as Record<string,unknown>|undefined,ids=body?.elementIds??body?.ids;
-   return Array.isArray(ids)&&ids.length>0&&ids.length<=500&&new Set(ids).size===ids.length&&ids.every(id=>Number.isSafeInteger(id)&&Number(id)>0);})())
+   return Array.isArray(ids)&&ids.length>0&&(ids.length<=500||qualifiedLargeInspectionDiscoveryV2(snapshot,op))&&new Set(ids).size===ids.length&&ids.every(id=>Number.isSafeInteger(id)&&Number(id)>0);})())
  .sort((a,b)=>Date.parse(b.opened_at)-Date.parse(a.opened_at)).slice(0,4).map(op=>{
   const body=op.input.body as Record<string,unknown>|undefined,ids=body?.elementIds??body?.ids;
   const targets=Array.isArray(ids)?ids.map(id=>'element_id:'+id):[];

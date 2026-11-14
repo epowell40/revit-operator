@@ -54,6 +54,12 @@ namespace RevitBridge.Services
                 var doc = uidoc?.Document;
                 var view = doc?.ActiveView;
                 var sessionId = doc == null ? null : OperatorNativeDocumentSessionAuthority.GetSessionId(doc);
+                // Match ContextHandler's stable identity on this UI callback.
+                // Ping's background reader still sees serialized values only.
+                string? projectUniqueId = null;
+                try { projectUniqueId = doc?.ProjectInformation?.UniqueId; } catch { }
+                var projectFingerprint = doc == null ? null
+                    : OperatorRevitBatchBinding.ComputeProjectFingerprint(doc.Title, doc.PathName, projectUniqueId);
                 var value = new
                 {
                     version = application.Application.VersionName,
@@ -64,6 +70,15 @@ namespace RevitBridge.Services
                     {
                         title = doc.Title,
                         sessionId,
+                        projectIdentity = new
+                        {
+                            fingerprint = projectFingerprint,
+                            scheme = "revit-operator.project.v1",
+                            anchorKind = string.IsNullOrWhiteSpace(projectUniqueId)
+                                ? (string.IsNullOrWhiteSpace(doc.PathName) ? "document_title" : "document_path")
+                                : "project_information_unique_id",
+                            stableAcrossPathChanges = !string.IsNullOrWhiteSpace(projectUniqueId)
+                        },
                         activeView = view == null ? null : new
                         {
                             id = ElementIdCompat.GetValue(view.Id),

@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
@@ -68,8 +69,12 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
     {
         private readonly Func<string,OperatorDocumentChangeVersion> _version;
         private readonly bool _readOnly;
+        private readonly Action<UIApplication,Dictionary<string,object?>>? _observeCommitted;
         public DynamicNativeProgramExecutionHandler(Func<string,OperatorDocumentChangeVersion> version,bool readOnly)
-        {_version=version??throw new ArgumentNullException(nameof(version));_readOnly=readOnly;}
+            :this(version,readOnly,null){}
+        public DynamicNativeProgramExecutionHandler(Func<string,OperatorDocumentChangeVersion> version,bool readOnly,
+            Action<UIApplication,Dictionary<string,object?>>? observeCommitted)
+        {_version=version??throw new ArgumentNullException(nameof(version));_readOnly=readOnly;_observeCommitted=observeCommitted;}
         private sealed class Request
         {
             public string runtimeInstanceId{get;set;}="";public string correlationId{get;set;}="";
@@ -102,6 +107,9 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             }
             var result=DynamicNativeProgramRevitHost.Execute(app,request.artifact,prepared.Scope,request.admission,
                 prepared.Version.Sequence,prepared.Scope.NativeScopeHash,RequireCurrentExecution);
+            if (!_readOnly && _observeCommitted!=null)
+                try {_observeCommitted(app,result);}
+                catch {result["effect_observation"]=new {scope=OperatorNativeEffectState.Scope,complete=false,reason="native_observer_failed_after_settlement"};}
             result["schema"]="dynamic-revit-native-execution-receipt/v1";
             result["preparation_id"]=request.preparationId;
             return Task.FromResult(DynamicRuntimeBootstrapRegistry.AuthenticateReceipt(request.runtimeInstanceId,"native-program-execute-receipt",result));

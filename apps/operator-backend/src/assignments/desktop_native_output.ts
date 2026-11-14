@@ -1,7 +1,7 @@
 import type {EvidenceScope} from '../evidence/evidence_ref.js';
 import {createHash} from 'node:crypto';
 import {storeEvidence} from '../evidence/evidence_store.js';
-import {assertBoundedModelEvidencePayload,getEvidenceContextBudget,modelEvidenceEnvelope} from '../evidence/model_context_budget.js';
+import {assertBoundedModelEvidencePayload,getEvidenceContextBudget,modelEvidenceEnvelope,prepareBoundedModelEvidenceInput} from '../evidence/model_context_budget.js';
 
 type NativeOutput = {success:boolean;contentItems:Array<
   {type:'inputText';text:string}|{type:'inputImage';imageUrl:string}>};
@@ -54,9 +54,15 @@ export function boundDesktopNativeOutput(result:NativeOutput,scope:EvidenceScope
   }).filter(Boolean);
   if(deliveredImages.length)contentItems.push({type:'inputText',text:JSON.stringify({visual_inputs:deliveredImages,
     notice:'These pixels accompany this result as image inputs. Hashes identify delivered images, not their interpretation, model freshness or verified completion. Keep reference and model roles distinct.'})});
-  // Keep the actual downstream guard and aggregate limits. Images remain
-  // images, and raw context is never truncated or silently discarded.
-  assertBoundedModelEvidencePayload({type:'function_call_output',output:contentItems.map(item=>
-    item.type==='inputText'?{type:'input_text',text:item.text}:{type:'input_image',image_url:item.imageUrl})},budget);
-  return {...result,contentItems};
+  // Apply the same existing aggregate packer used by the downstream consumer.
+  // A committed edit may append several independently bounded readbacks and
+  // control snapshots. Do not fail delivery before that packer can preserve
+  // their evidence refs while compacting optional supporting summaries.
+  const wire=[{type:'function_call_output',call_id:callId,output:contentItems.map(item=>
+    item.type==='inputText'?{type:'input_text',text:item.text}:{type:'input_image',image_url:item.imageUrl})}];
+  const packed=prepareBoundedModelEvidenceInput(wire,budget) as typeof wire;
+  assertBoundedModelEvidencePayload(packed,budget);
+  if(packed===wire)return {...result,contentItems};
+  return {...result,contentItems:packed[0]!.output.map(item=>item.type==='input_text'
+    ?{type:'inputText' as const,text:item.text!}:{type:'inputImage' as const,imageUrl:item.image_url!})};
 }

@@ -4,6 +4,7 @@ import type { AssignmentSnapshotV2 } from "../domain/assignment-kernel/snapshot.
 import {sameAssignmentBindingV2} from '../domain/assignment-kernel/identity.js';
 import { buildProgressEpochV2 } from "../domain/assignment-kernel/progress/controller.js";
 import {nativeCommitProgressIdentityV2} from '../domain/assignment-kernel/progress/native_work_progress.js';
+import {qualifiedLargeInspectionDiscoveryV2} from './large_inspection_discovery.js';
 
 /** A pending declared inspection may need the same baseline selectors again
  * after its prerequisite edit. This is discovery progress, not inspection
@@ -51,10 +52,14 @@ function discoveryIdentity(operation: OperationV2, snapshot:AssignmentSnapshotV2
     "typeId", "typeIds", "typeNameContains", "familyNameContains", "semanticGroups", "parameterNames", "includeTemplates", "offset",
     ...(vectorRead?["manifestElementId","partIndex","cadElementId","cadGeometryOffset"]:[])];
   const selectors: Record<string, unknown> = {};
+  // The native drafting inspection already supports up to 4096 exact rows,
+  // including verified deletions. Do not discard that useful read at the
+  // older generic discovery selector cap. All other selectors keep their cap.
+  const largeInspection=qualifiedLargeInspectionDiscoveryV2(snapshot,operation);
   for (const key of selectorKeys) {
     const value = fields[key] ?? url.searchParams.get(key);
     if (value === null || value === undefined) continue;
-    if (Array.isArray(value) && value.length <= 256 && value.every(item => ["string", "number", "boolean"].includes(typeof item) && String(item).length <= 1000)) {
+    if (Array.isArray(value) && value.length <= (largeInspection&&key==='elementIds'?4096:256) && value.every(item => ["string", "number", "boolean"].includes(typeof item) && String(item).length <= 1000)) {
       selectors[key] = [...new Set(value.map(String))].sort();
     } else if (["string", "number", "boolean"].includes(typeof value) && String(value).length <= 1000) selectors[key] = String(value);
     else return null;

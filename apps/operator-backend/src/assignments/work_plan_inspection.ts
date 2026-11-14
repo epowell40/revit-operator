@@ -13,6 +13,7 @@ import {parameterScheduleReadScopeV2} from '../verification/parameter_schedule_p
 import {inlineAccessoryPostconditionSatisfiedV2} from '../verification/inline_accessory_evidence_v2.js';
 import {nativeAccessoryPostconditionSatisfiedV2} from '../verification/native_accessory_evidence_v2.js';
 import {teeTakeoffPostconditionSatisfiedV2} from '../verification/tee_takeoff_evidence_v2.js';
+import {nativeDraftingInspectionTargetsV2} from './native_drafting_inspection.js';
 
 /** Locate a rejected citation without echoing arbitrary caller text or changing
  * admission. Other citations have not thereby been certified or auto-selected. */
@@ -112,7 +113,7 @@ export function retainWorkPlanInspectionV2(snapshot: AssignmentSnapshotV2, opera
       if (["/revit/get-element-summary", "/revit/find-text-notes", "/revit/inspect-family-content"].includes(op.request_identity?.path ?? "")) {
         if (result.result_schema_id !== `operator-native/POST:${op.request_identity!.path}/v2`
             || op.input?.method !== "POST" || op.input.path !== op.request_identity!.path) continue;
-        const ids = nativeInspectionTargetIdsV2(op.input, data);
+        const ids = nativeInspectionTargetIdsV2(op.input, data) ?? nativeDraftingInspectionTargetsV2(snapshot,op,data);
         if (!ids) {
           // Only explain request scope after the existing authority, binding,
           // retained-byte digest and route/schema checks. This is not a verdict
@@ -122,6 +123,9 @@ export function retainWorkPlanInspectionV2(snapshot: AssignmentSnapshotV2, opera
           if (op.input.path === '/revit/find-text-notes' && body && typeof body === 'object' && !Array.isArray(body)
               && !Array.isArray(body.elementIds))
             rejectionReason = 'The retained find-text-notes request lacks an exact elementIds array. A broad inventory or single elementId selector cannot supply this inspection coverage. Use an existing fresh exact-target read if it covers the required targets; otherwise obtain the supported scoped read.';
+          if (op.input.path === '/revit/get-element-summary' && Array.isArray(data?.result)
+              && data.result.some((row: any) => row?.found === false))
+            rejectionReason = 'This read contains missing elements. Corrective deletions are covered only by fresh get-element-summary with exact elementIds and includeNativeProgramEffectState:true, matched to already verified committed deletions. Use an existing qualifying read after the last edit and SaveAs; do not recreate deleted lines or discard their required identities. A plain missing-element row or failed read does not prove a deletion. Cite saved-file verification separately when the inspection also depends on a saved artifact.';
           continue;
         }
         ids.forEach(id => targets.add(`element_id:${id}`)); observations.push(oid); accepted = true; break;

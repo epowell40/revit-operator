@@ -132,6 +132,50 @@ public sealed class NativeProgramControlFlowTests
     }
 
     [NativeCompileFact]
+    public void RuntimeFailureRetainsLastSourceStepWithoutChangingExceptionOrLaterSuccess()
+    {
+        const string source="using Autodesk.Revit.DB;\npublic class NativeTask {\n public static string Execute(Document doc) {\n  if(doc==null) {\n   object missing=null;\n   return missing.ToString();\n  }\n  return \"ok\";\n }\n}";
+        WithProgram(source,assembly=>{
+            var error=Assert.Throws<NullReferenceException>(()=>Invoke(assembly,()=>{}));
+            var boundary=assembly.GetType("RevitOperator.Generated.NativeExecutionBoundaryV1")!;
+            Assert.Equal(6,error.Data["revit_operator.native_source_line.v1"]);
+            Assert.Equal(4,error.Data["revit_operator.native_source_column.v1"]);
+            var run=boundary.GetMethod("Run")!;
+            var document=Activator.CreateInstance(run.GetParameters()[0].ParameterType);
+            Assert.Equal("ok",run.Invoke(null,new object?[]{document,(Action)(()=>{})}));
+            Assert.Equal(6,error.Data["revit_operator.native_source_line.v1"]);
+            return "checked";
+        });
+    }
+
+    [NativeCompileFact]
+    public void SourceStepUsesPhysicalSourceCoordinatesAndCanDescribeFinallyRatherThanTheFault()
+    {
+        foreach(var source in new[]{
+            "#line 999 \"C:/caller-supplied-path.cs\"\n"+Source("object missing=null;return missing.ToString();"),
+            Source("try{object missing=null;return missing.ToString();}finally{var cleanup=1;}")})
+        {
+            WithProgram(source,assembly=>{
+                var error=Assert.Throws<NullReferenceException>(()=>Invoke(assembly,()=>{}));
+                var marker=error.Data["revit_operator.native_source_line.v1"]+":"+error.Data["revit_operator.native_source_column.v1"];
+                var index=source.IndexOf(source.StartsWith("#line")?"return missing":"var cleanup",StringComparison.Ordinal);
+                var prefix=source.Substring(0,index);var line=prefix.Count(c=>c=='\n')+1;var column=index-prefix.LastIndexOf('\n');
+                Assert.Equal(line+":"+column,marker);Assert.DoesNotContain("caller-supplied",marker);
+                return "checked";
+            });
+        }
+    }
+
+    [NativeCompileFact]
+    public void NullAndOversizedProgramReturnsKeepTheirBoundsButGiveDistinctRepairFeedback()
+    {
+        Assert.Contains("returned null",Assert.Throws<InvalidOperationException>(()=>Run(Source("return null;"),()=>{})).Message);
+        var error=Assert.Throws<InvalidOperationException>(()=>Run(Source("return new string('x',32769);"),()=>{}));
+        Assert.Contains("32769 characters",error.Message);Assert.Contains("maximum32768",error.Message);
+        Assert.Equal(32768,Run(Source("return new string('x',32768);"),()=>{}).Length);
+    }
+
+    [NativeCompileFact]
     public void InfiniteManagedLoopStopsAtHostCheckpoint()
     {
         var ticks = 0;

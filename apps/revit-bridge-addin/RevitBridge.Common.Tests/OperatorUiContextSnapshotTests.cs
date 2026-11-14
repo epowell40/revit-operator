@@ -73,6 +73,13 @@ namespace RevitBridge.Common.Tests
             // plus observed change sequence. It never runs native element reads
             // or grants postcondition authority from a cached screen identity.
             Assert.Contains("OperatorNativeDocumentSessionAuthority.GetSessionId(doc)", snapshot);
+            // The standalone code-review consumer requires the same project
+            // fingerprint as ContextHandler, in addition to the live session.
+            // A fabricated JS fixture used to hide its absence in this producer.
+            Assert.Contains("OperatorRevitBatchBinding.ComputeProjectFingerprint(doc.Title, doc.PathName, projectUniqueId)", snapshot);
+            Assert.Contains("projectIdentity = new", snapshot);
+            Assert.Contains("fingerprint = projectFingerprint", snapshot);
+            Assert.DoesNotContain("ComputeProjectFingerprint", read);
             Assert.Contains("RevitDocumentChangeObservations.Read(sessionId)", snapshot);
             Assert.Contains("id = ElementIdCompat.GetValue(view.Id)", snapshot);
             Assert.DoesNotContain("RevitDocumentChangeObservations", read);

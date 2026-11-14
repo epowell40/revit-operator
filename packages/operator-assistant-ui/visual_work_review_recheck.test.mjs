@@ -62,3 +62,28 @@ test('a plain recheck inherits prior native-target capture mode and effective re
 });
 
 function readDeliveredReview(wire){assert(Array.isArray(wire.output));assert.equal(wire.output[0].type,"input_text");assert(wire.output.some(b=>b.type==="input_image"&&b.image_url==="data:image/png;base64,"+image));return JSON.parse(wire.output[0].text);}
+
+test('correction recheck combines a newly validated code packet with original checks and fresh pixels in one reviewer call',async()=>{
+ const f=setup(),ids=['ev1_'+'A'.repeat(32)],packet={executions:[{evidence_id:ids[0],source:'actual correction source',transaction:{status:'committed'}}],coverage:{all_assignment_calls:false}};
+ let resolutions=0;f.h.codeReviewPacket=async selected=>{resolutions++;assert.deepEqual(selected,ids);return packet;};
+ f.baseline.review.code_review={status:'matched',observed:'OLD VERDICT MUST NOT BE REUSED'};
+ f.h.requestResponse=async body=>{f.calls.push(body);return{id:'new_review',status:'completed',output:[],output_text:JSON.stringify({checks:checks.map(c=>({id:c.id,status:'matched',observed:'Current pixels match.',correction:''})),code_review:{status:'mismatch',observed:'Current code changes an unrelated object.',correction:'Reconcile the unintended change.'}})};};
+ const r=await reviewCurrentWork({...request,code_evidence_ids:ids},f.h);
+ assert.equal(r.state,'mismatch');assert.equal(resolutions,1);assert.equal(f.calls.length,1);assert(r.checks.every(c=>c.status==='matched'));
+ const content=f.calls[0].input[0].content,data=JSON.parse(content[0].text);
+ assert.deepEqual(data.executed_code,packet);assert.deepEqual(data.checks,checks);assert.equal(content.filter(c=>c.type==='input_image').length,2);assert(!content[0].text.includes('OLD VERDICT'));
+ assert.equal(r.native_postcondition_verified,false);assert.equal(r.whole_task_verified,false);
+ const feedback=readDeliveredReview(visualWorkReviewModelOutput({output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{evidence_id:'ev1_new'}]})},r,'ev1_new')).evidence_projections[0].visual_work_review;
+ assert.deepEqual(feedback.code_review_evidence_ids,ids);assert.equal(feedback.code_review.status,'mismatch');assert.equal(feedback.baseline.evidence_id,request.recheck_evidence_id);
+});
+
+for(const bad of ['invalid_code','foreign_baseline','changed_scene','missing_code_assessment','pause'])test('combined recheck retains '+bad+' refusal',async()=>{
+ const f=setup(),ids=['ev1_'+'A'.repeat(32)];let captures=0;const capture=f.h.capture;f.h.capture=async()=>{captures++;return capture();};
+ f.h.codeReviewPacket=async()=>{if(bad==='invalid_code')throw Error('native_code_review_canonical_execution_invalid');return{executions:[],coverage:{all_assignment_calls:false}};};
+ if(bad==='foreign_baseline')f.baseline.review.owner={...owner,run_id:'foreign'};
+ if(bad==='pause')f.h.assertControl=async()=>{throw Error('Paused');};
+ const provider=f.h.requestResponse;f.h.requestResponse=async body=>{const response=await provider(body);if(bad!=='missing_code_assessment'){const p=JSON.parse(response.output_text);p.code_review={status:'matched',observed:'Current code is in scope.',correction:''};response.output_text=JSON.stringify(p);}if(bad==='changed_scene'){const read=f.h.readContext;f.h.readContext=async()=>{const v=await read();v.context.nativeChangeObservations.throughSequence=2;return v;};}return response;};
+ const r=await reviewCurrentWork({...request,code_evidence_ids:ids},f.h);assert.equal(r.state,'unavailable');assert.equal(r.whole_task_verified,false);
+ assert.equal(f.calls.length,['changed_scene','missing_code_assessment'].includes(bad)?1:0);
+ if(bad==='invalid_code'||bad==='pause')assert.equal(captures,0);
+});

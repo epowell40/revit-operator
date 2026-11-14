@@ -3,6 +3,7 @@ import {payloadDigestV2} from '@revitoperator/payload-digest-v2';
 import {normalizeNativeParameterChecks} from '@revitoperator/assignment-kernel-v2-contracts';
 import {readAuthoritativeEvidence,readEvidenceRef} from '../evidence/evidence_store.js';
 import {generatedParameterPostconditionSatisfiedV2} from './generated_parameter_postcondition_v2.js';
+import {nativeProgramEffectPostconditionSatisfiedV2} from './native_program_effect_postcondition_v2.js';
 import {canonicalJsonV2,sameAssignmentBindingV2,type AssignmentSnapshotV2,type OperationV2,type OperationResultV2} from '../domain/assignment-kernel/index.js';
 
 const row=(v:unknown):Record<string,unknown>=>v!==null&&typeof v==='object'&&!Array.isArray(v)?v as Record<string,unknown>:{};
@@ -11,7 +12,8 @@ const sorted=(v:readonly string[])=>[...v].sort();
 
 export function dynamicProgramParameterPostconditionSatisfiedV2(snapshot:AssignmentSnapshotV2,subject:OperationV2,result:OperationResultV2,payload:unknown):boolean{
  return nativeProgramParameterPostconditionSatisfiedV2(snapshot,subject,result,payload)
-  ||generatedParameterPostconditionSatisfiedV2(snapshot,subject,result,payload);
+  ||generatedParameterPostconditionSatisfiedV2(snapshot,subject,result,payload)
+  ||nativeProgramEffectPostconditionSatisfiedV2(snapshot,subject,result,payload);
 }
 
 /** Explicit desired text fields from the immutable request, backed by the

@@ -147,7 +147,8 @@ namespace RevitOperator.Generated {
     Checkpoint();
     var result = global::" + entryType + @".Execute(document);
     Checkpoint();
-    if(result == null || result.Length > 32768) throw new System.InvalidOperationException(""Native program result exceeds the bounded text contract."");
+    if(result == null) throw new System.InvalidOperationException(""Native program returned null; return bounded text."");
+    if(result.Length > 32768) throw new System.InvalidOperationException(""Native program returned ""+result.Length+"" characters; maximum32768. Return a bounded projection."");
     return result;
    } catch(System.Exception error) {
     // Diagnostic only. Rethrow the SAME exception; cancellation/settlement

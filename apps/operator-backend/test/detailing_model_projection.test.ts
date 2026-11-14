@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { projectEvidence } from "../src/evidence/evidence_projection.js";
 import { adaptMcpToolCallResultToDynamicResponse } from "../src/brains/codex_dynamic_result_adapter.js";
 import { viewOwnedDetailingSummaryV2 } from "../src/verification/view_owned_detailing_v2.js";
@@ -49,4 +50,28 @@ test("comparison preserves multiplicity and stable same-view inventory identity"
   assert.equal(before.views[0].ownedInventorySha256,reordered.views[0].ownedInventorySha256);
   raw.views[1].items[0].semanticSignature="sha256:"+"a".repeat(64);
   assert.equal((viewOwnedDetailingSummaryV2(raw) as any).comparisons[0].semanticSignaturesEqual,false);
+});
+test("large native spline and whole-circle observations remain bounded referenced observations", () => {
+  const raw=payload();
+  for(const view of raw.views){
+    view.items[0].curve={kind:"HermiteSpline",periodic:false,cyclic:false,
+      controlPoints:Array.from({length:4096},(_,i)=>({x:i,y:i%3,z:0})),
+      tangents:Array.from({length:4096},()=>({x:1,y:0,z:0})),parameters:Array.from({length:4096},(_,i)=>i),
+      startParameter:0,endParameter:4095,geometryScope:"complete_native_hermite_controls_tangents_parameters_and_bounded_domain"};
+    view.items[1].curve={kind:"Arc",isBound:false,center:{x:2,y:3,z:0},radius:2,
+      normal:{x:0,y:0,z:1},xDirection:{x:1,y:0,z:0},yDirection:{x:0,y:1,z:0},
+      geometryScope:"complete_native_circle_center_radius_and_frame"};
+  }
+  const encoded=JSON.stringify(raw),original=structuredClone(raw);
+  const projection=projectEvidence({...ref,byte_count:Buffer.byteLength(encoded),
+    content_hash:"sha256:"+createHash("sha256").update(encoded).digest("hex")},raw);
+  const delivered:any=projection.inline_payload;
+  assert.equal(delivered.comparisons[0].semanticSignaturesEqual,true);
+  assert.ok(projection.projected_bytes<=8192);
+  assert.equal(projection.artifact_ref,ref.evidence_id);
+  assert.doesNotMatch(JSON.stringify(projection),/complete_native_hermite|controlPoints/);
+  assert.match(delivered.interpretation,/does not certify/);
+  assert.deepEqual(raw,original,"Projection must not change raw geometry or its retained scope");
+  raw.views[0].itemsComplete=false;raw.views[0].incompleteSignatureCount=1;
+  assert.equal(viewOwnedDetailingSummaryV2(raw),null,"A partial spline observation cannot become a complete comparison");
 });

@@ -3,6 +3,7 @@ const modelText = output => Array.isArray(output) ? output.find(item => item.typ
 import {createHash} from 'node:crypto';
 import {VISUAL_WORK_REVIEW_TOOL,reviewCurrentWork,normalizeVisualReviewRequest,parseVisualWorkReview,visualWorkReviewModelOutput} from './visual_work_review.mjs';
 import * as identityReview from './visual_work_review.mjs';
+import {invokeDesktopNativeTool} from './desktop_native_tools.mjs';
 const image='iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAYAAACM/rhtAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAcSURBVFhH7cEBAQAAAIIg/69uSEABAAAAAAB8GhkoAAFF1RG0AAAAAElFTkSuQmCC';
 const binding={assignment_id:'assignment',session_id:'session',run_id:'run',generation:1,principal_id:'principal',document_fingerprint:'project'};
 const request={view_id:41,checks:[{id:'gap',expected:'No extra blank row below the headings.'},{id:'border',expected:'Medium grid lines are selected.'}]};
@@ -64,6 +65,20 @@ test('registered raster read supports warm and recovered reference review withou
   assert.throws(()=>identityReview.resolveAttachmentReviewImage(f.selection,f),/source_invalid/);
  }
 });
+
+test('model-visible host source selector resolves the same owned pixels and still rejects foreign or changed evidence',async()=>{
+ const f=attachmentReadFixture(),r=f.receipts[0];
+ const output=await invokeDesktopNativeTool({assignment:{kernel_version:2,session_id:'session',goal_id:'assignment',run_id:'run',generation:1},
+  messageId:'m',responseId:'r',call:{name:r.tool_name,call_id:r.call_id,arguments:JSON.stringify(r.arguments)},context:{},
+  request:async()=>({schema:'operator.desktop-native-result.v1',result:{success:true,contentItems:r.result.content},stop_reason:null})});
+ const metadata=output.native_model_output.output.filter(c=>c.type==='input_text').map(c=>JSON.parse(c.text)).find(c=>c.schema==='operator.attachment-review-selector.v1');
+ const selector=metadata.reference_attachment_read_options[0];assert.deepEqual(selector,f.selection);
+ const resolved=identityReview.resolveAttachmentReviewImage(selector,f);
+ assert.equal(resolved.image_url,r.result.content[1].imageUrl);
+ assert.throws(()=>identityReview.resolveAttachmentReviewImage(selector,{...f,receipts:[]}),/not_owned/);
+ const changed=structuredClone(f);changed.attachments[0].dataBase64=Buffer.from('different source').toString('base64');
+ assert.throws(()=>identityReview.resolveAttachmentReviewImage(selector,changed),/source_not_current/);
+});
 function trackedAttachmentReadFixture(){
  const f=attachmentReadFixture(),content=f.receipts[0].result.content;
  const overlay=Buffer.from(image,'base64');overlay[overlay.length-1]^=1;
@@ -75,6 +90,15 @@ function trackedAttachmentReadFixture(){
  content.splice(1,0,{type:'inputText',text:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{truncated:true}]})});
  return {f,tracking};
 }
+test('PNG crop receipt supplies exact source pixels and limited region to the working actor',async()=>{
+ const f=attachmentReadFixture(),bytes=Buffer.from(image,'base64');
+ f.summary.source='detail.png';f.summary.source_media_type='image/png';f.summary.sha256=createHash('sha256').update(bytes).digest('hex');
+ f.attachments=[{id:'source',filename:'detail.png',mime:'image/png',dataBase64:image}];f.receipts[0].result.content[0].text=JSON.stringify(f.summary);
+ const h=host();h.h.referenceAttachmentRead=async selected=>{const r=identityReview.resolveAttachmentReviewImage(selected,f);return {...r,evidence_ref:{evidence_id:'ev1_source',content_hash:'sha256:'+r.source_render.image_sha256}};};
+ const r=await reviewCurrentWork({...request,review_mode:'observe',reference_attachment_read:f.selection},h.h);
+ assert.equal(r.state,'observed');assert.equal(h.calls.providers.length,0);assert.equal(r.reference.source_render.source_media_type,'image/png');
+ const output=visualWorkReviewModelOutput({type:'function_call_output',call_id:'review',output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{evidence_id:'ev1_review'}]})},r,'ev1_review');assert.ok(Array.isArray(output.output));const pixels=output.output.filter(x=>x.type==='input_image');assert.equal(pixels.length,2);assert.equal(pixels[1].image_url,'data:image/png;base64,'+image);assert.equal(r.whole_task_verified,false);
+});
 test('highlighted reference retains clean source selection through projected metadata and recovery',()=>{
  const {f}=trackedAttachmentReadFixture();f.attachments=[];f.registeredAttachmentIds=['source'];
  const r=identityReview.resolveAttachmentReviewImage(f.selection,f);
@@ -378,6 +402,8 @@ test('combined review uses one provider request for visual checks and exact exec
  const r=await reviewCurrentWork({...request,code_evidence_ids:['ev1_'+'A'.repeat(32)]},f.h);
  assert.equal(f.calls.providers.length,1);assert.equal(r.state,'mismatch');assert.equal(r.code_review.status,'mismatch');assert(r.checks.every(c=>c.status==='matched'));
  const input=JSON.parse(f.calls.providers[0].input[0].content[0].text);assert.deepEqual(input.executed_code,packet);assert.deepEqual(f.calls.providers[0].tools,[]);
+ assert.equal(input.code_review_scope.kind,'selected_executed_code');assert.equal(input.code_review_scope.whole_task_completion,false);
+ assert(input.code_review_scope.separate_checks.includes('visual_fidelity'));assert.equal(input.checks.length,request.checks.length);
  assert.equal(r.whole_task_verified,false);assert.equal(r.native_postcondition_verified,false);
 });
 test('combined review cannot accept omitted code assessment as a visual pass',async()=>{
@@ -432,9 +458,60 @@ test('a completed independent review also returns its actual work pixels for pri
  const feedback=JSON.parse(output.output[0].text).evidence_projections[0].visual_work_review;
  assert.equal(feedback.native_postcondition_verified,false);assert.equal(feedback.whole_task_verified,false);
 });
+
+test('post-review inspection feedback preserves already-delivered pixels and a mismatch for correction',async()=>{
+ const f=host('mismatch'),result=await reviewCurrentWork(request,f.h);
+ const original={type:'function_call_output',call_id:'review',output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{evidence_id:'ev1_review'}]})};
+ const first=visualWorkReviewModelOutput(original,result,'ev1_review');assert(Array.isArray(first.output));
+ const closeout={state:'not_submitted',reason:'visual_review_not_matched',item_id:'final_inspection'};
+ const final=visualWorkReviewModelOutput(first,result,'ev1_review',closeout);
+ assert.deepEqual(final.output.slice(1),first.output.slice(1),'No lost, duplicated, resized or replaced model images');
+ assert.equal(final.call_id,first.call_id);
+ const feedback=JSON.parse(modelText(final.output)).evidence_projections[0].visual_work_review;
+ assert.equal(feedback.state,'mismatch');assert.equal(feedback.inspection_closeout.state,'not_submitted');
+ assert.equal(feedback.native_postcondition_verified,false);assert.equal(feedback.whole_task_verified,false);
+ assert.equal(feedback.inspection_closeout.whole_task_verified,false);
+ assert.equal(f.calls.providers.length,1,'Presentation cannot issue an extra review or model call');
+ for(const change of [
+  o=>o.output.push({type:'input_text',text:'foreign extra envelope'}),
+  o=>o.output[1]={type:'input_image',image_url:'data:image/png;base64,foreign'},
+  o=>o.output[0]={type:'input_image',image_url:'data:image/png;base64,foreign'},
+ ]){const forged=structuredClone(first);change(forged);assert.throws(()=>visualWorkReviewModelOutput(forged,result,'ev1_review',closeout));}
+ assert.throws(()=>visualWorkReviewModelOutput(first,result,'ev1_foreign',closeout));
+ assert.throws(()=>visualWorkReviewModelOutput(first,structuredClone(result),'ev1_review',closeout),'Array pixels require the original host-owned observation');
+});
+
+test('accepted inspection closeout updates text once while retaining exact current observation images',async()=>{
+ const f=host(),result=await reviewCurrentWork(request,f.h),original={type:'function_call_output',call_id:'review',output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{evidence_id:'ev1_review'}]})};
+ const first=visualWorkReviewModelOutput(original,result,'ev1_review');
+ const final=visualWorkReviewModelOutput(first,result,'ev1_review',{state:'submitted',outcome:'complete',item_id:'inspect'});
+ assert.deepEqual(final.output.slice(1),first.output.slice(1));
+ const feedback=JSON.parse(modelText(final.output)).evidence_projections[0].visual_work_review;
+ assert.equal(feedback.inspection_closeout.outcome,'complete');
+ assert.equal(feedback.inspection_closeout.whole_task_verified,false);
+ assert.equal(feedback.native_postcondition_verified,false);assert.equal(feedback.whole_task_verified,false);
+ assert.equal(final.output.filter(b=>b.type==='input_text').length,1);
+ assert(Buffer.byteLength(final.output[0].text)<=8192);
+});
 test('observation cannot close inspection or request code approval, and stale or foreign captures remain unavailable',async()=>{
  for(const extra of [{complete_inspection_item_id:'inspect'},{code_evidence_ids:['ev1_code']},{recheck_evidence_id:'ev1_old'}])assert.throws(()=>normalizeVisualReviewRequest({...request,review_mode:'observe',...extra}));
  for(const fault of ['native-change','foreign-owner']){const f=host();let n=0;f.h.readContext=async()=>{const s=snapshot();if(n++&&fault==='native-change')s.context.nativeChangeObservations.throughSequence=1;return s;};
  if(fault==='foreign-owner')f.h.capture=async()=>{f.setOwner({...binding,run_id:'foreign'});return {image_base64:image,frame:snapshot().frame};};
  const r=await reviewCurrentWork({...request,review_mode:'observe'},f.h);assert.equal(r.state,'unavailable');assert.equal(f.calls.providers.length,0);}
+});
+
+test('opaque review response is referenced without changing actual provider continuation or visual verdict',async()=>{
+ const f=host(),r=response(),opaque='gAAAA'+ 'a'.repeat(80)+'-sk-'+ 'b'.repeat(32)+'_tail';
+ r.output=[{type:'reasoning',id:'rs_visual',summary:[{type:'summary_text',text:'Compare the actual reference.'}],encrypted_content:opaque}];
+ const original=JSON.stringify(r);f.h.requestResponse=async()=>r;
+ const result=await reviewCurrentWork(request,f.h);
+ assert.equal(result.ok,true);assert.equal(result.state,'matched');
+ assert.equal(JSON.stringify(r),original);
+ assert.equal(JSON.stringify(result.raw_review_evidence).includes(opaque),false);
+ const ref=result.raw_review_evidence.reviewer_response.output[0].encrypted_content_ref;
+ assert.equal(ref.response_id,r.id);assert.equal(ref.utf8_bytes,Buffer.byteLength(opaque));
+ assert.equal(ref.sha256,'sha256:'+createHash('sha256').update(opaque).digest('hex'));
+ assert.equal(ref.json_pointer,'/output/0/encrypted_content');
+ assert.deepEqual(result.raw_review_evidence.reviewer_response.output[0].summary,r.output[0].summary);
+ assert.equal(result.whole_task_verified,false);assert.equal(result.native_postcondition_verified,false);
 });

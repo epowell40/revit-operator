@@ -7,6 +7,8 @@ import { canonicalJsonV2, type AssignmentSnapshotV2 } from "./domain/assignment-
 import type { AssignmentKernelBindingInputV2 } from "./assignments/assignment_kernel_v2_lifecycle.js";
 import {getAssignmentKernelSnapshotV2} from './assignments/assignment_kernel_v2_store.js';
 import {resolveOpenAiDataPolicy} from './openai_data_policy.js';
+import {packHistoricalObservationFields} from './desktop_observation_replay.js';
+import {desktopToolHistoryCacheSupported} from './desktop_prompt_cache.js';
 
 function writeDurable(file: string, value: unknown): void {
   const fd = fs.openSync(file, "wx");
@@ -468,11 +470,12 @@ export function desktopModelInputPackage(body: any) {
     host_feedback_count:feedbackCount,host_feedback_utf8_bytes:feedbackBytes,
     instructions_utf8_bytes:Buffer.byteLength(instructions),instructions_sha256:createHash('sha256').update(instructions).digest('hex'),
     tools_count:Array.isArray(body.tools)?body.tools.length:0,tools_utf8_bytes:Buffer.byteLength(JSON.stringify(body.tools??[])),
+    tools_sha256:createHash('sha256').update(JSON.stringify(body.tools??[])).digest('hex'),
     limits:'Encoded transport bytes and item counts only; no provider token attribution, billing, evidence authority or task completion.'};
 }
 
 export function prepareDesktopProviderInput(binding: Binding, messageId: unknown, body: any,
-  internal: { hostFeedback?: unknown } = {}): any {
+  internal: { hostFeedback?: unknown; cacheStableHistory?: boolean } = {}): any {
   if (!desktopResponseOwnsContext(body)) return body;
   const current = loadContext(binding);
   if (!current || current.message_id !== messageId) return body; // legacy/direct relay
@@ -480,6 +483,7 @@ export function prepareDesktopProviderInput(binding: Binding, messageId: unknown
   // prefix/schema in caller input is never sufficient to mark or delete it.
   const latestFeedback = hostFeedback(binding, body.input, internal.hostFeedback);
   let markers: FeedbackMarker[] = [], omittedFeedback = 0, omittedImages = 0, omittedStartupImages = 0, omittedVisuals = 0;
+  let omittedObservationFields = 0, observationBytesSaved = 0;
   let prepared = body;
   if (current.predecessor) {
     const prior = current.predecessor;
@@ -500,7 +504,18 @@ export function prepareDesktopProviderInput(binding: Binding, messageId: unknown
     omittedFeedback = superseded.size;
     const visuals = boundedHistoricalVisuals(retained, body.input, Boolean(body.tools?.some((tool: any) => tool?.type === 'computer')));
     omittedVisuals = visuals.omitted;
-    const pixels = uniqueHistoricalPixels(visuals.input, body.input);
+    // Deduplicating small repeated fields rewrites earlier tool outputs and
+    // invalidates the larger cached prefix. Preserve those already-delivered
+    // bytes for the bound cache-enabled owner. Fresh host feedback, image
+    // retirement, window limits and genuine compaction remain independent.
+    // Legacy forward references remain valid because their literal anchors
+    // are retained; no new reference chains or verification claims are made.
+    const observations = internal.cacheStableHistory && desktopToolHistoryCacheSupported(body.model)
+      ? {input:visuals.input,omittedFields:0,bytesSaved:0}
+      : packHistoricalObservationFields(visuals.input, body.input);
+    omittedObservationFields = observations.omittedFields;
+    observationBytesSaved = observations.bytesSaved;
+    const pixels = uniqueHistoricalPixels(observations.input, body.input);
     omittedImages = pixels.omitted;
     if (!latestFeedback) markers = known;
     const input = [...pixels.input, ...body.input];
@@ -520,6 +535,8 @@ export function prepareDesktopProviderInput(binding: Binding, messageId: unknown
     provider_input: providerInput, continuation_transport: providerInput ? 'durable_input_array' : 'previous_response_id',
     feedback_markers: markers, host_feedback_item: latestFeedback,
     context_packing: { superseded_host_snapshots: omittedFeedback, duplicate_historical_images: omittedImages,
+      ...(omittedObservationFields ? { duplicate_observation_fields: omittedObservationFields,
+        observation_utf8_bytes_saved: observationBytesSaved } : {}),
       ...(omittedVisuals ? { superseded_historical_visuals: omittedVisuals } : {}),
       ...(omittedStartupImages ? { superseded_startup_images: omittedStartupImages } : {}) } });
   return prepared;

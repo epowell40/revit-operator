@@ -9,7 +9,43 @@ namespace RevitBridge.Logic
     {
         public static object Read(Curve curve)
         {
-            if (curve == null || !curve.IsBound) throw new InvalidOperationException("Bounded native curve geometry is required.");
+            if (curve == null) throw new InvalidOperationException("Native curve geometry is required.");
+            if (curve is Ellipse ellipse)
+            {
+                // Whole ellipses have no endpoints. Never call bounded-only
+                // getters, invent endpoints, or substitute tessellation.
+                double? start = ellipse.IsBound ? ellipse.GetEndParameter(0) : (double?)null;
+                double? end = ellipse.IsBound ? ellipse.GetEndParameter(1) : (double?)null;
+                _ = DraftingCurveReadback.EllipseKey(Vector(ellipse.Center), ellipse.RadiusX, ellipse.RadiusY,
+                    Vector(ellipse.XDirection), Vector(ellipse.YDirection), start, end);
+                _ = Vector(ellipse.Normal);
+                return new { kind = curve.GetType().Name, isBound = ellipse.IsBound,
+                    center = Point(ellipse.Center), radiusX = ellipse.RadiusX, radiusY = ellipse.RadiusY,
+                    xDirection = Point(ellipse.XDirection), yDirection = Point(ellipse.YDirection), normal = Point(ellipse.Normal),
+                    startParameter = start, endParameter = end,
+                    geometryScope = "complete_native_ellipse_radii_frame_and_domain" };
+            }
+            if (curve is Arc circle && !curve.IsBound)
+            {
+                _ = DraftingCurveReadback.CircleKey(Vector(circle.Center), circle.Radius, Vector(circle.Normal));
+                _ = Vector(circle.XDirection); _ = Vector(circle.YDirection);
+                return new { kind = curve.GetType().Name, isBound = false, center = Point(circle.Center), radius = circle.Radius,
+                    normal = Point(circle.Normal), xDirection = Point(circle.XDirection), yDirection = Point(circle.YDirection),
+                    geometryScope = "complete_native_circle_center_radius_and_frame" };
+            }
+            if (!curve.IsBound) throw new InvalidOperationException("Bounded native curve geometry is required for this curve kind.");
+            if (curve is HermiteSpline hermite)
+            {
+                var controls = hermite.ControlPoints.Take(DraftingCurveReadback.MaximumHermiteControls + 1).ToArray();
+                var tangents = hermite.Tangents.Take(DraftingCurveReadback.MaximumHermiteControls + 1).ToArray();
+                var parameters = hermite.Parameters.Cast<double>().Take(DraftingCurveReadback.MaximumHermiteControls + 1).ToArray();
+                _ = DraftingCurveReadback.HermiteKey(hermite.IsPeriodic, hermite.IsCyclic,
+                    controls.Select(Vector), tangents.Select(Vector), parameters, hermite.GetEndParameter(0), hermite.GetEndParameter(1));
+                return new { kind = curve.GetType().Name, start = Point(curve.GetEndPoint(0)), end = Point(curve.GetEndPoint(1)),
+                    periodic = hermite.IsPeriodic, cyclic = hermite.IsCyclic, controlPoints = controls.Select(Point).ToArray(),
+                    tangents = tangents.Select(Point).ToArray(), parameters, startParameter = hermite.GetEndParameter(0),
+                    endParameter = hermite.GetEndParameter(1), geometryScope = "complete_native_hermite_controls_tangents_parameters_and_bounded_domain" };
+            }
             if (curve is NurbSpline spline)
                 return new { kind = curve.GetType().Name, start = Point(curve.GetEndPoint(0)), end = Point(curve.GetEndPoint(1)),
                     degree = spline.Degree, rational = spline.isRational, cyclic = spline.IsCyclic,
@@ -37,6 +73,42 @@ namespace RevitBridge.Logic
                 controls, spline.Knots.Cast<double>(), spline.Weights.Cast<double>(), spline.GetEndParameter(0), spline.GetEndParameter(1));
         }
 
+        public static string HermiteRelativeKey(HermiteSpline spline, View view)
+        {
+            if (!spline.IsBound) throw new InvalidOperationException("Unbounded native Hermite spline requires a separate comparison contract.");
+            var origin = view.Origin; var right = view.RightDirection.Normalize();
+            var up = view.UpDirection.Normalize(); var depth = view.ViewDirection.Normalize();
+            double[] Direction(XYZ v) => new[] { v.DotProduct(right), v.DotProduct(up), v.DotProduct(depth) };
+            return DraftingCurveReadback.HermiteKey(spline.IsPeriodic, spline.IsCyclic,
+                spline.ControlPoints.Select(p => Direction(p - origin)), spline.Tangents.Select(Direction), spline.Parameters.Cast<double>(),
+                spline.GetEndParameter(0), spline.GetEndParameter(1));
+        }
+
+        public static string CircleRelativeKey(Arc circle, View view)
+        {
+            if (circle.IsBound) throw new InvalidOperationException("A full-circle comparison requires an unbounded native Arc.");
+            var right = view.RightDirection.Normalize(); var up = view.UpDirection.Normalize(); var depth = view.ViewDirection.Normalize();
+            double[] Direction(XYZ v) => new[] { v.DotProduct(right), v.DotProduct(up), v.DotProduct(depth) };
+            return DraftingCurveReadback.CircleKey(Direction(circle.Center - view.Origin), circle.Radius, Direction(circle.Normal));
+        }
+
+        public static string EllipseRelativeKey(Ellipse ellipse, View view)
+        {
+            var right = view.RightDirection.Normalize(); var up = view.UpDirection.Normalize(); var depth = view.ViewDirection.Normalize();
+            double[] Direction(XYZ v) => new[] { v.DotProduct(right), v.DotProduct(up), v.DotProduct(depth) };
+            return DraftingCurveReadback.EllipseKey(Direction(ellipse.Center-view.Origin), ellipse.RadiusX, ellipse.RadiusY,
+                Direction(ellipse.XDirection), Direction(ellipse.YDirection),
+                ellipse.IsBound ? ellipse.GetEndParameter(0) : (double?)null,
+                ellipse.IsBound ? ellipse.GetEndParameter(1) : (double?)null);
+        }
+
         private static object Point(XYZ point) => new { x = point.X, y = point.Y, z = point.Z };
+        private static double[] Vector(XYZ point)
+        {
+            var v = new[] { point.X, point.Y, point.Z };
+            if (v.Any(n => double.IsNaN(n) || double.IsInfinity(n)))
+                throw new InvalidOperationException("Native curve vector must be finite.");
+            return v;
+        }
     }
 }

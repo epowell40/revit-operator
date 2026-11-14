@@ -25,6 +25,14 @@ test("hosted native C# ships source and native scope to the existing target cour
     for (const value of [null,{}, {schema:"operator.native-program-workstation-result.v1",exitCode:0,evidence:[],verified:true},
       {schema:"operator.native-program-workstation-result.v1",exitCode:2,evidence:{}}])
       await assert.rejects(runNativeProgramViaCourier(body,"read",undefined,(async()=>value) as any));
+    const large = { nativeExecutionReceipt: "x".repeat(2200000) };
+    const transported = await runNativeProgramViaCourier(body,"apply",undefined,(async()=>({
+      schema:"operator.native-program-workstation-result.v1",exitCode:0,evidence:large
+    })) as any);
+    assert.equal(transported.evidence,large,"Transport accepts bounded large evidence; runner authentication is still required.");
+    await assert.rejects(runNativeProgramViaCourier(body,"apply",undefined,(async()=>({
+      schema:"operator.native-program-workstation-result.v1",exitCode:0,evidence:{padding:"界".repeat(3*1024*1024)}
+    })) as any),/invalid/);
     let calls=0;
     await assert.rejects(runNativeProgramViaCourier(body,"apply",undefined,(async()=>{calls++;throw Error("transport_lost");}) as any),/transport_lost/);
     assert.equal(calls,1,"A transport failure must never retry a write.");

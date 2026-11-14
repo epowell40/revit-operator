@@ -1,4 +1,5 @@
 import os from "node:os";
+import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { CodexAppServer } from "../codex/app_server.js";
@@ -89,6 +90,7 @@ export function resolveConversationIntakeSourceQuotes(value:unknown,input:Pick<I
 }
 
 export class ModelConversationIntake implements ConversationIntakeInterpreter {
+  readonly startupTimeoutMs=30_000;
   constructor(private readonly dependencies={
     prepareIsolation:prepareCertifiedCodexIsolation,
     createClient:(options:ConstructorParameters<typeof CodexAppServer>[0])=>new CodexAppServer(options)
@@ -105,7 +107,23 @@ export class ModelConversationIntake implements ConversationIntakeInterpreter {
     clearTimeout(this.idleTimer);
     const client=this.client,isolation=this.isolation;this.client=null;this.isolation=null;this.completed=0;
     if(client||isolation){
-      this.closing=Promise.all([this.closing,client?.stopAndWait()]).then(()=>isolation?.release?.());
+      this.closing=Promise.all([this.closing,client?.stopAndWait()]).then(async()=>{
+        try{await isolation?.release?.();}
+        catch(error){
+          const code=(error as NodeJS.ErrnoException)?.code;
+          // Only reclamation after confirmed provider exit can be deferred.
+          // Ownership/reparse errors and unconfirmed shutdown remain blocking.
+          if(!["EBUSY","ENOTEMPTY","EPERM","EACCES"].includes(code??""))throw error;
+          const logs=ensureWorkspaceLayout().logs;
+          fs.appendFileSync(path.join(logs,"operator-backend-audit.jsonl"),JSON.stringify({
+            ts:new Date().toISOString(),kind:"conversation.intake.cleanup_deferred",code,
+            provider_exit_confirmed:true,codex_home:isolation?.codexHome,cwd:isolation?.cwd,
+            state_directory_reused:false,usage:"not_established_by_cleanup",retention:"Existing age/count/byte/headroom policy remains in force"
+          })+"\n","utf8");
+          // If recording fails, the rejection remains blocking. Never erase the
+          // retained directory or interpret cleanup success as provider usage.
+        }
+      });
       // The next admission awaits this same promise. A failed shutdown cannot
       // silently reopen the state directory while its previous owner survives.
       void this.closing.catch(()=>{});
@@ -113,7 +131,7 @@ export class ModelConversationIntake implements ConversationIntakeInterpreter {
     return this.closing;
   }
 
-  async interpret(input:IntakeInput,signal:AbortSignal,correction?:IntakeCorrection,observePhase?:IntakePhaseObserver):Promise<{value:unknown;telemetry:Record<string,unknown>;acknowledge?:()=>void}> {
+  async interpret(input:IntakeInput,signal:AbortSignal,correction?:IntakeCorrection,observePhase?:IntakePhaseObserver,beginInference?:()=>void):Promise<{value:unknown;telemetry:Record<string,unknown>;acknowledge?:()=>void}> {
     const phase=(name:IntakeHostPhase)=>{try{observePhase?.(name);}catch{/* Diagnostics cannot change routing or execution. */}};
     signal.throwIfAborted();
     phase("preparing_input");
@@ -131,6 +149,7 @@ export class ModelConversationIntake implements ConversationIntakeInterpreter {
       const key=resolveOpenAiApiKey();
       if (!key || brain==="rule")throw Error("Conversation intake model is unavailable");
       phase("requesting_response");
+      beginInference?.();signal.throwIfAborted();
       const response=await createOpenAiClient(key).responses.create({model,reasoning:{effort},store:false,
         instructions:`${turnInstructions.baseInstructions}\n${turnInstructions.developerInstructions}`,input:modelInput,max_output_tokens:1400,
         text:{format:{type:"json_schema",name:"operator_conversation_intake",strict:true,schema:outputSchema}}} as any,
@@ -146,7 +165,7 @@ export class ModelConversationIntake implements ConversationIntakeInterpreter {
     if (this.busy)throw Error("Conversation intake worker is busy");
     this.busy=true;clearTimeout(this.idleTimer);
     let off=()=>{};
-    const abort=()=>this.close();
+    const abort=()=>{void this.close().catch(()=>{});};
     signal.addEventListener("abort",abort,{once:true});
     try {
       signal.throwIfAborted();
@@ -188,6 +207,7 @@ export class ModelConversationIntake implements ConversationIntakeInterpreter {
       });
       signal.throwIfAborted();
       phase("starting_turn");
+      beginInference?.();signal.throwIfAborted();
       const turn=await client.startBoundTurn({threadId,model,effort,environments:[],
         input:[{type:"text",text:modelInput,text_elements:[]}],outputSchema:outputSchema as any},turnInstructions);
       phase("waiting_for_model");

@@ -47,6 +47,16 @@ public sealed class OperatorNativeProgramExecutionTests
         OperatorNativeProgramExecution.AppendRuntimeDiagnostic(result,error);
         Assert.Equal("unchanged",result["error"]);
     }
+
+    [Fact]
+    public void SourceStepDiagnosticIsBoundedConservativeAndRejectsMissingOrMalformedMarkers()
+    {
+        foreach(var marker in new string?[]{null,"","0:4","1:0","-1:3","1:2:3","+1:2","9999999999999999:1","1:C:/private","1:2\nforged"}) {
+            var error=new Exception("original");error.Data["revit_operator.native_source_line.v1"]=marker;error.Data["revit_operator.native_source_column.v1"]=4;
+            var result=new Dictionary<string,object?>{{"success",false},{"error","original"}};
+            OperatorNativeProgramExecution.AppendRuntimeDiagnostic(result,error);Assert.Equal("original",result["error"]);
+        }
+    }
     [Theory]
     [InlineData("development_laboratory_v1", null, null, true)]
     [InlineData("development_laboratory_v1", "", "", true)]

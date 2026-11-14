@@ -5,6 +5,7 @@ import { projectParameterTable } from "./parameter_table_projection.js";
 import { projectTagReferences } from "./tag_reference_projection.js";
 import { projectScopedHelperFindings } from "./scoped_helper_projection.js";
 import { projectNativeProgram } from "./native_program_projection.js";
+import { projectNativeCorrectionTargets } from "./native_correction_projection.js";
 import { viewOwnedDetailingSummaryV2 } from "../verification/view_owned_detailing_v2.js";
 import { extractMcpStructuredPayload, parseBoundedStructuredJson } from "./structured_payload.js";
 import {
@@ -414,6 +415,15 @@ export function projectEvidence(ref: EvidenceRefV1, raw: unknown, maxBytes = 8_1
           const nativeProgram = projectNativeProgram(ref, payload, maxBytes - projectionBytes(nativeProgramBase) - 32);
           if (nativeProgram) {
             const compact = { ...nativeProgramBase, inline_payload: nativeProgram, truncated: true };
+            if (projectionBytes(compact) <= maxBytes) candidate = compact;
+          }
+          // The automatic native read already contains identities and locations.
+          // Present useful correction fields instead of only the first ID/name
+          // facts; retain exact source bytes, row indices, scope and authority.
+          const correctionBase = { ...base, key_counts: {}, key_facts: {}, diagnostics: [], target_scope: ref.target_scope.slice(0, 4) };
+          const correction = projectNativeCorrectionTargets(ref, payload, maxBytes - projectionBytes(correctionBase) - 32);
+          if (correction) {
+            const compact = { ...correctionBase, inline_payload: correction, truncated: true };
             if (projectionBytes(compact) <= maxBytes) candidate = compact;
           }
         }

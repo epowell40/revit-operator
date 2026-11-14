@@ -82,4 +82,22 @@
     <Compile Include="..\RevitBridge\Operator\OperatorActionAllowlist.cs" Link="Operator\OperatorActionAllowlist.cs" />
   </ItemGroup>
 
+  <!-- Exercise the actual native courier producer and durable-outbox handoff
+       without loading Revit. The subprocess is an explicitly test-only fixture. -->
+  <ItemGroup Condition="'$(TargetFramework)'=='net8.0-windows'">
+    <Compile Include="..\RevitBridge\Operator\OperatorNativeProgramCourierExecution.cs" Link="Operator\OperatorNativeProgramCourierExecution.cs" />
+    <ProjectReference Include="..\RevitBridge.Courier.Fixture\RevitBridge.Courier.Fixture.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)'!='net8.0-windows'">
+    <Compile Remove="OperatorNativeProgramCourierConsumerTests.cs" />
+  </ItemGroup>
+  <Target Name="StageNativeCourierTestFixture" AfterTargets="Build" Condition="'$(TargetFramework)'=='net8.0-windows'">
+    <ItemGroup>
+      <CourierFixture Include="$(MSBuildThisFileDirectory)..\RevitBridge.Courier.Fixture\bin\$(Configuration)\net8.0-windows\*" />
+    </ItemGroup>
+    <MakeDir Directories="$(TargetDir)dynamic-runtime\supervisor;$(TargetDir)dynamic-runtime\worker" />
+    <Copy SourceFiles="@(CourierFixture)" DestinationFolder="$(TargetDir)dynamic-runtime\supervisor" SkipUnchangedFiles="true" />
+    <WriteLinesToFile File="$(TargetDir)dynamic-runtime\worker\DynamicRevitWorker.exe" Lines="test-only sentinel, never executed" Overwrite="true" />
+  </Target>
+
 </Project>

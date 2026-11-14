@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';import test from 'node:test';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import {createHash} from 'node:crypto';
 import {boundDesktopNativeOutput} from '../src/assignments/desktop_native_output.js';
 import {retrieveEvidence,storeEvidence} from '../src/evidence/evidence_store.js';
-import {assertBoundedModelEvidencePayload,modelEvidenceEnvelope} from '../src/evidence/model_context_budget.js';
+import {assertBoundedModelEvidencePayload,modelEvidenceEnvelope,prepareBoundedModelEvidenceInput} from '../src/evidence/model_context_budget.js';
 const scope={session_id:'session',assignment_id:'assignment',run_id:'run',generation:1};
 function isolated(run:()=>void){const prior=process.env.OPERATOR_WORKSPACE_ROOT;process.env.OPERATOR_WORKSPACE_ROOT=fs.mkdtempSync(path.join(os.tmpdir(),'native-output-'));try{run();}finally{if(prior===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=prior;}}
 function project(text:string,success=true){return boundDesktopNativeOutput({success,contentItems:[{type:'inputText',text}]},scope,'call');}
@@ -43,4 +43,54 @@ test('secret screening, malformed content and aggregate request budgets remain e
  const text=JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[item],omitted:0,retrieval:'bounded'});
  assert.throws(()=>boundDesktopNativeOutput({success:true,contentItems:Array.from({length:5},()=>({type:'inputText',text}))},scope,'call'),/model-request budget/);
  assert.throws(()=>assertBoundedModelEvidencePayload({type:'function_call_output',output:'x'.repeat(8193)}),/8192-byte/);
+}));
+
+function readbackAggregate(){
+ // A committed native result followed by two automatic readbacks and their
+ // retained supporting control snapshots. Each item fits; their aggregate
+ // reproduces the producer boundary that previously ended a correction turn.
+ const projections=Array.from({length:6},(_,i)=>{
+  const supporting=i===2||i>=4;
+  const raw={facts:Object.fromEntries(Array.from({length:50},(_,n)=>['field'+n+'_state','value'.repeat(22)]))};
+  const stored=storeEvidence({scope,source:supporting?`desktop_native_transport:readback:${i}`:'assignment_kernel_v2:revit_call_tool',
+   trust_level:supporting?'untrusted_caller':'authoritative_native',verification_relevance:supporting?'supporting':'required',raw});
+  const p={...stored.projection,truncated:true};
+  assert(Buffer.byteLength(JSON.stringify(p))<=8192,'fixture item bytes '+Buffer.byteLength(JSON.stringify(p)));
+  return p;
+ });
+ return {projections,contentItems:projections.map(p=>({type:'inputText' as const,text:JSON.stringify(modelEvidenceEnvelope([p]))}))};
+}
+
+test('native correction plus readbacks reaches the downstream consumer without changing native evidence or controls',()=>isolated(()=>{
+ const {projections,contentItems}=readbackAggregate();
+ const controls={type:'inputText' as const,text:JSON.stringify({pending_verification:[{operation_id:'pending',state:'unknown'}],unknown_effects:['unknown'],pause_requested:true})};
+ contentItems.splice(1,0,controls);
+ const original=JSON.stringify(contentItems);
+ assert.throws(()=>assertBoundedModelEvidencePayload({type:'function_call_output',output:contentItems.map(b=>({type:'input_text',text:b.text}))}),/model-request budget/);
+ const result=boundDesktopNativeOutput({success:true,contentItems},scope,'correction');
+ assert.equal(JSON.stringify(contentItems),original,'caller-owned input must not be mutated');
+ assert.equal(result.success,true);assert(result.contentItems.some(b=>b.type==='inputText'&&b.text===controls.text));
+ const delivered=result.contentItems.flatMap(b=>b.type==='inputText'?JSON.parse(b.text).evidence_projections??[]:[]);
+ assert.equal(delivered.length,6);
+ for(const p of projections){
+  const actual=delivered.find((v:any)=>v.evidence_id===p.evidence_id);
+  if(p.trust_level==='authoritative_native')assert.deepEqual(actual,modelEvidenceEnvelope([p]).evidence_projections[0]);
+  else {
+   for(const key of ['evidence_id','content_hash','byte_count','source','trust_level','assignment_id','run_id','generation','artifact_ref','effect_state'])assert.deepEqual(actual[key],(p as any)[key]);
+   assert.equal(actual.truncated,true);assert.equal(actual.verification_relevance,'supporting');
+   assert.deepEqual(retrieveEvidence({scope,evidence_id:actual.evidence_id,fields:['facts.field0_state'],max_bytes:1024,purpose:'Read retained control'}).selection,{'facts.field0_state':'value'.repeat(22)});
+  }
+ }
+ const wire=[{type:'function_call_output',call_id:'correction',output:result.contentItems.map(b=>b.type==='inputText'?{type:'input_text',text:b.text}:{type:'input_image',image_url:b.imageUrl})}];
+ assert.deepEqual(prepareBoundedModelEvidenceInput(wire),wire);assertBoundedModelEvidencePayload(wire);
+}));
+
+test('aggregate packing preserves failed status, interleaved errors and actual images',()=>isolated(()=>{
+ const {contentItems}=readbackAggregate();
+ const image={type:'inputImage' as const,imageUrl:'data:image/png;base64,AQID'};
+ const error={type:'inputText' as const,text:'Readback unavailable; committed change remains unverified. Do not replay.'};
+ const result=boundDesktopNativeOutput({success:false,contentItems:[...contentItems.slice(0,2),image,error,...contentItems.slice(2)]},scope,'failed-correction');
+ assert.equal(result.success,false);assert(result.contentItems.some(b=>b.type==='inputImage'&&b.imageUrl===image.imageUrl));
+ assert(result.contentItems.some(b=>b.type==='inputText'&&b.text===error.text));
+ assert(result.contentItems.some(b=>b.type==='inputText'&&b.text.includes('visual_inputs')));
 }));
