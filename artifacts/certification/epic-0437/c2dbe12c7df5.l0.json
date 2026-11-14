@@ -155,7 +155,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/dynamicRevitSdkGuide.ts",
-      "sha256": "sha256:8c233a4c98289773b8a6bf55d4eb200f069536013047210b5be3ce01fd8eb2fa"
+      "sha256": "sha256:02df3cb5eb32a581214746e61902c3eb4924a39b1441cf3c09d7d953a4cd2e9b"
     },
     {
       "path": "apps/mcp-server/src/lib/dynamicRuntimeInstallation.test.ts",
@@ -12617,7 +12617,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:393063f3127e2c79d04238139d765adaa009f777b90c6a419f90ac9deebac3b1",
+  "inputs_hash": "sha256:d429a56f2a491ec49788044bdcb83075411c9edee79fa3d4ececf8647ae3fab7",
   "result": {
     "passed": true,
     "checks": [
