@@ -17,6 +17,16 @@ function fixture() {
       call_ids: [], in_flight_call_ids: [], calls: {} } };
 }
 
+test('renewal discovery is additive and older server publications do not promise support',()=>{
+ const p=fixture();assert.equal(parseAssignmentKernelPublicationV2(p).supports_explicit_resource_renewal_v1,undefined);
+ p.supports_explicit_resource_renewal_v1=true;
+ assert.equal(parseAssignmentKernelPublicationV2(p).supports_explicit_resource_renewal_v1,true);
+ for(const invalid of [false,'true',{},null,1]) {
+  p.supports_explicit_resource_renewal_v1=invalid;
+  assert.throws(()=>parseAssignmentKernelPublicationV2(p),/resource_renewal_capability/);
+ }
+});
+
 test("a zero-response usage hold round-trips as bounded canonical data; older no-hold publications remain valid", () => {
   const p = fixture(); assert.deepEqual(parseAssignmentKernelPublicationV2(JSON.parse(JSON.stringify(p))), p);
   for (const key of ["hold_id", "attempt_id", "provider_thread_id", "provider_turn_id"]) p.snapshot.provider_usage_hold[key] = "a".repeat(240);

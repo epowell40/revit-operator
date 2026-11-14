@@ -71,6 +71,7 @@ export interface AssignmentKernelPublicationV2Contract {
   readonly assignment_version: number;
   readonly snapshot: Readonly<Record<string, unknown>>;
   readonly provider_ledger: Readonly<Record<string, unknown>>;
+  readonly supports_explicit_resource_renewal_v1?: true;
 }
 
 export function parseAssignmentKernelPublicationV2(value: unknown): AssignmentKernelPublicationV2Contract;

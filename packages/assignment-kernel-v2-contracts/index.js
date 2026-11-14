@@ -223,6 +223,8 @@ export function parseAssignmentKernelSessionIndexResponseV2(value) {
 export function parseAssignmentKernelPublicationV2(value) {
   const publication = record(value);
   if (!publication || publication.schema !== ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA) publicationInvalid("schema");
+  if (publication.supports_explicit_resource_renewal_v1 !== undefined
+      && publication.supports_explicit_resource_renewal_v1 !== true) publicationInvalid("resource_renewal_capability");
   const assignmentId = requiredString(publication.assignment_id);
   const assignmentVersion = publication.assignment_version;
   const snapshot = record(publication.snapshot);

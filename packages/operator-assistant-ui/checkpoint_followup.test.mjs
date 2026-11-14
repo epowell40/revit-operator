@@ -51,6 +51,30 @@ test('authenticated task review uses existing follow-up and Resume without enabl
  }
 });
 
+test('product renewal requires current backend support and exact trusted task provenance',()=>{
+ const {publication,goal}=fixture(),s=publication.snapshot;
+ s.spec.requested_effect='apply';s.spec.binding.principal_id=s.current_binding.principal_id='principal';
+ s.spec.execution_policy={mode:'single_actor_review_v1',selected_by:'trusted_runtime_host',principal_id:'principal',
+   session_id:'conversation',document_fingerprint:'document',ready_work_handoff:'continue_ready_work_v1'};
+ assert.equal(checkpointTools.checkpointResourceRenewalAvailable(s),false,'Old backend stays unavailable');
+ assert.throws(()=>checkpointTools.checkpointResourceRenewalContext(publication,goal));
+ publication.supports_explicit_resource_renewal_v1=true;
+ assert.equal(checkpointTools.checkpointResourceRenewalAvailable(s,true),true);
+ assert.deepEqual(checkpointTools.checkpointResourceRenewalContext(publication,goal).resource_renewal,{provider_calls:64,total_tokens:16_000_000});
+ for(const change of [{selected_by:'agent'},{principal_id:'foreign'},{session_id:'foreign'},
+  {document_fingerprint:'foreign'},{ready_work_handoff:undefined}]) {
+  const p=structuredClone(publication);Object.assign(p.snapshot.spec.execution_policy,change);
+  assert.equal(checkpointTools.checkpointResourceRenewalAvailable(p.snapshot,true),false);
+  assert.throws(()=>checkpointTools.checkpointResourceRenewalContext(p,goal));
+ }
+ for(const change of [x=>x.quiescent=false,x=>x.provider_usage_hold={hold_id:'pending'},
+  x=>x.execution_control={state:'paused',command_id:'pause'},x=>x.in_flight_operation_ids=['op'],
+  x=>x.in_flight_provider_call_ids=['call'],x=>x.unresolved_unknown_operation_ids=['unknown']]) {
+  const p=structuredClone(publication);change(p.snapshot);
+  assert.equal(checkpointTools.checkpointResourceRenewalAvailable(p.snapshot,true),false);
+ }
+});
+
 test('explicit resource-renewal button uses the existing exact checkpoint fences and bounded window',()=>{
   assert.equal(typeof checkpointTools.checkpointResourceRenewalContext,'function');
   const {publication,goal}=fixture();publication.snapshot.spec.requested_effect='apply';
