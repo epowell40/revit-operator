@@ -69,6 +69,64 @@ export function canonicalNativeCodeReviewReceipts(snapshot,binding,evidenceIds){
   });
 }
 
+/** Historical continuity only. The authenticated journal and the existing
+ * native checkpoint contract must prove every Save As edge; a common filename
+ * or project fingerprint alone cannot join distinct native document sessions. */
+export function nativeCodeReviewSaveAsTransitions(snapshot,binding,executions,validateCheckpoint){
+  if(typeof validateCheckpoint!=='function'||snapshot?.schema!=='revit-operator.assignment-snapshot/v2'
+    ||!sameOwner(snapshot.current_binding,binding)||!object(snapshot.operations)||!object(snapshot.observations)
+    ||snapshot.execution_control?.state==='paused'||snapshot.unresolved_unknown_operation_ids?.length
+    ||snapshot.in_flight_operation_ids?.length)fail('document_session_changed');
+  const operations=Object.values(snapshot.operations);
+  if(operations.length>16384)fail('canonical_journal_too_large');
+  const selected=executions.map(e=>{
+    const rows=canonicalNativeCodeReviewReceipts(snapshot,binding,[e.evidence_id]);
+    if(rows.length!==1)fail('save_as_execution_custody_missing');
+    const row=rows[0],op=snapshot.operations[row.canonical_operation_id];
+    const canonicalRef=nativeProjection(row,binding).ref;
+    const source=row.arguments?.source?.replaceAll('\r\n','\n').replaceAll('\r','\n');
+    if(typeof source!=='string'||'sha256:'+createHash('sha256').update(source).digest('hex')!==e.source_sha256
+      ||row.arguments.mode!==e.mode||canonicalRef.content_hash!==e.content_hash)fail('save_as_execution_custody_mismatch');
+    const start=Date.parse(op.opened_at),end=Date.parse(op.result.completed_at);
+    if(!Number.isFinite(start)||!Number.isFinite(end)||end<start)fail('save_as_execution_time_invalid');
+    return {execution:e,start,end};
+  }).sort((a,b)=>a.start-b.start);
+  const transitions=[];
+  for(let i=1;i<selected.length;i++){
+    const previous=selected[i-1],next=selected[i];
+    if(previous.execution.document_session_id===next.execution.document_session_id)continue;
+    if(previous.end>=next.start)fail('save_as_transition_order_invalid');
+    const saves=operations.filter(op=>op.input?.method==='POST'&&op.input?.path==='/revit/save-as'
+      &&Date.parse(op.opened_at)>=previous.end&&Date.parse(op.opened_at)<next.start)
+      .sort((a,b)=>Date.parse(a.opened_at)-Date.parse(b.opened_at));
+    if(!saves.length||saves.length>16)fail('document_session_changed');
+    let session=previous.execution.document_session_id,end=previous.end;
+    for(const op of saves){
+      const r=op.result,save=r?.native_artifact_receipt?.save_document;
+      const observations=(op.observation_ids??[]).map(id=>snapshot.observations[id]);
+      const source=r?.payload_provenance?.source;
+      const observed=observations.some(o=>o?.authority==='native-host'&&o.operation_id===op.operation_id
+        &&o.capability_id===op.capability_id&&sameOwner(o.binding,binding)
+        &&o.payload_provenance?.source?.digest===source?.digest);
+      if(!sameOwner(op.binding,binding)||!sameOwner(r?.binding,binding)||r?.operation_id!==op.operation_id
+        ||op.capability_id!=='revit_call_tool'||op.requested_effect!=='apply'||op.settlement_state!=='settled'
+        ||op.dispatch_state!=='dispatched'||op.persistent_effect!=='applied'||!observed
+        ||source?.algorithm!=='sha256'||source.representation!=='utf8_json_bytes'||!hash('sha256:'+source.digest)
+        ||!validateCheckpoint(op,binding.document_fingerprint)||save.before.session_id!==session
+        ||!Number.isFinite(Date.parse(r.completed_at))||Date.parse(op.opened_at)<end
+        ||Date.parse(r.completed_at)<Date.parse(op.opened_at)||Date.parse(r.completed_at)>=next.start)
+        fail('save_as_transition_invalid');
+      transitions.push({operation_id:op.operation_id,completed_at:r.completed_at,
+        before_document_session_id:save.before.session_id,after_document_session_id:save.after.session_id,
+        basis:'native_same_document_save_as_receipt',current_model_verification:false});
+      session=save.after.session_id;end=Date.parse(r.completed_at);
+    }
+    if(session!==next.execution.document_session_id)fail('document_session_changed');
+  }
+  if(!transitions.length)fail('document_session_changed');
+  return transitions;
+}
+
 /** Read existing immutable evidence through the existing scoped retrieval route.
  * Code comes from the host's actual call journal, not reviewer-tool input. The
  * native source digest binds its normalized bytes to the executed artifact.
@@ -151,9 +209,14 @@ export async function buildNativeCodeReviewPacket(callIds,host){
       return_value_authority:'program_return_not_independent_verification'});
     if(bytes(executions)>196608)fail('batch_too_large_select_fewer_calls');
   }
-  if(new Set(executions.map(e=>e.document_session_id)).size!==1)fail('document_session_changed');
+  let documentTransitions=[];
+  if(new Set(executions.map(e=>e.document_session_id)).size!==1){
+    documentTransitions=nativeCodeReviewSaveAsTransitions(host.canonicalSnapshot?.(),binding,executions,host.validateCheckpoint);
+    await host.assertControl();if(!sameOwner(localOwner,host.owner()))fail('owner_changed');
+  }
   const journal=host.receipts(),available=journal.filter(r=>object(nativeProgramArguments(r)?.native_program));
   return {schema:'operator.native-code-review-packet/v1',owner:binding,executions,
+    ...(documentTransitions.length?{document_transitions:documentTransitions}:{}),
     coverage:{selected_calls:ids.length,all_assignment_calls:false,complete_source_bytes:true,predicted_dependents_required:false,
       journal_native_calls:available.length,unselected_native_call_ids:available.filter(r=>!executions.some(e=>e.call_id===r.call_id)).map(r=>r.call_id),journal_may_be_truncated:journal.length>=100},
     authority:'executed_code_and_native_outcome_audit',native_postcondition_verified:false,whole_task_verified:false};
