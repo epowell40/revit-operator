@@ -16,6 +16,34 @@ public sealed class NativeCompileFactAttribute : FactAttribute
 public sealed class NativeProgramCompilerTests
 {
     [NativeCompileFact]
+    public void StaticFieldRefusalIdentifiesUninitializedStateAndActualSourceLocation()
+    {
+        const string source = "using Autodesk.Revit.DB;\npublic class NativeTask {\n static Document document;\n public static string Execute(Document doc) { return doc.Title; }\n}";
+        var result = Compile(source);
+        Assert.Null(result.Artifact);
+        var diagnostic = Assert.Single(result.Diagnostics, d => d.Code == "NATIVE_SOURCE_LIFECYCLE");
+        Assert.Contains("document", diagnostic.Message);
+        Assert.Contains("instance or local", diagnostic.Message);
+        Assert.Equal(3, diagnostic.Line);
+        Assert.True(diagnostic.Column > 0);
+        Assert.Equal(3, diagnostic.EndLine);
+    }
+
+    [NativeCompileFact]
+    public void NativeApiCompilerErrorPreservesOriginalSourceLocationNotMappedDirective()
+    {
+        const string source = "using Autodesk.Revit.DB;\npublic class NativeTask {\n public static string Execute(Document doc) {\n #line 900 \"fake.cs\"\n ModelCurveArray edges;\n doc.Create.NewFootPrintRoof(new CurveArray(), ElementId.InvalidElementId, null, out edges);\n return \"done\";\n }\n}";
+        var result = Compile(source, "write");
+        Assert.Null(result.Artifact);
+        var diagnostic = Assert.Single(result.Diagnostics, d => d.Code == "CS1503");
+        Assert.Contains("Level", diagnostic.Message);
+        Assert.Equal(6, diagnostic.Line);
+        Assert.True(diagnostic.Column > 0);
+        Assert.Equal(6, diagnostic.EndLine);
+        Assert.True(diagnostic.EndColumn > diagnostic.Column);
+    }
+
+    [NativeCompileFact]
     public void DocumentedPublicClassWithStaticEntryCompilesWithoutInstanceConstruction()
     {
         var result = Compile(Read.Replace("public static class NativeTask", "public class NativeTask"));

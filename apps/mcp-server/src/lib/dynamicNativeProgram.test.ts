@@ -19,6 +19,18 @@ const sourceHash = hash(source), fingerprint = hash("document");
 const env = { REVIT_OPERATOR_MODE: "development", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" };
 type RecordValue = Record<string, any>;
 
+test("native compile refusal delivers source coordinates without a fabricated native outcome or retry authority", () => {
+  const diagnostics = [{ code: "NATIVE_SOURCE_LIFECYCLE", message: "Static field 'document' retains process-wide state, even without an initializer. Use instance or local state; the public Execute entry remains static.",
+    phase: "native_compile", severity: "error", repair_action: "edit_source", line: 3, column: 2, end_line: 3, end_column: 27, retryable: true }];
+  const visible = presentDynamicProgramResult({ schema: "revit-operator.dynamic-revit-program-run.v1", run_id: "compile-refusal", requested_mode: "apply", execution_lane: "native", execution_status: "failed", execution_ok: false,
+    native_outcome: null, diagnostics, verification: { evidence_sha256: hash("retained failure") } });
+  assert.deepEqual(visible.diagnostics, diagnostics);
+  assert.equal(visible.native_outcome, null); assert.equal(visible.execution_ok, false);
+  assert.deepEqual(visible.affected_target_identities, []);
+  assert.doesNotMatch(String(visible.guidance), /Confirmed rollback/);
+  assert.match(String(visible.guidance), /Do not retry unknown effects/);
+});
+
 // Retained reconstruction failure: the body compiled and ran, then the host
 // verified rollback because implicit Revit owners were outside the scope.
 const collateralFailure = "Native program exceeded its admitted effects: existing_element_out_of_scope: native-api-mutation-ops affected existing elements outside transaction.allowedExistingElementIds: 101014,378358,669230,731023,1321945,1420970,1422218,1488968,1521719,1521731; this rejection requires verified failure-processing rollback.";

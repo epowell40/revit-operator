@@ -109,12 +109,25 @@ internal static class NativeProgramCompiler
             syntaxDiagnostics.RemoveAll(d => d.Code == "POLICY_SOURCE_FORBIDDEN" && d.Message == "Generated code may not use typeof.");
         syntaxDiagnostics.AddRange(StaticAdmission.CheckSemantic(compilation,
             node => node.SyntaxTree == tree && node is TypeOfExpressionSyntax && collectorTypeSpans.Contains(node.Span)));
-        if (root.DescendantNodes().Any(n => n is ConstructorDeclarationSyntax c && c.Modifiers.Any(SyntaxKind.StaticKeyword)
+        foreach (var node in root.DescendantNodes().Where(n => n is ConstructorDeclarationSyntax c && c.Modifiers.Any(SyntaxKind.StaticKeyword)
             || n is FieldDeclarationSyntax f && f.Modifiers.Any(SyntaxKind.StaticKeyword) && !f.Modifiers.Any(SyntaxKind.ConstKeyword)
             || n is PropertyDeclarationSyntax p && p.Modifiers.Any(SyntaxKind.StaticKeyword) && p.Initializer != null
-            || n is EventDeclarationSyntax or EventFieldDeclarationSyntax or DestructorDeclarationSyntax or AwaitExpressionSyntax or RefTypeSyntax)
-            || root.DescendantTokens().Any(t => t.IsKind(SyntaxKind.AsyncKeyword)))
-            syntaxDiagnostics.Add(Diagnostic("NATIVE_SOURCE_LIFECYCLE", "Source-owned static initialization, events, finalizers, async work and ref returns/locals are outside the synchronous native program contract."));
+            || n is EventDeclarationSyntax or EventFieldDeclarationSyntax or DestructorDeclarationSyntax or AwaitExpressionSyntax or RefTypeSyntax))
+        {
+            var reason = node switch
+            {
+                FieldDeclarationSyntax field => "Static field '" + FieldNames(field) + "' retains process-wide state, even without an initializer. Use instance or local state; the public Execute entry remains static.",
+                ConstructorDeclarationSyntax => "A static constructor runs outside the host-owned invocation. Move initialization into the synchronous Execute call.",
+                PropertyDeclarationSyntax => "A static property initializer runs outside the host-owned invocation. Use instance or local state.",
+                EventDeclarationSyntax or EventFieldDeclarationSyntax => "Events may outlive the host-owned invocation. Keep work synchronous without event subscriptions.",
+                DestructorDeclarationSyntax => "A finalizer may run after the host-owned invocation. Do not use finalizers.",
+                RefTypeSyntax => "Ref returns/locals are outside the synchronous native program contract. Use ordinary values or references.",
+                _ => "Await is outside the synchronous native program contract. Complete work synchronously in Execute."
+            };
+            syntaxDiagnostics.Add(Diagnostic("NATIVE_SOURCE_LIFECYCLE", reason, node.GetLocation()));
+        }
+        foreach (var token in root.DescendantTokens().Where(t => t.IsKind(SyntaxKind.AsyncKeyword)))
+            syntaxDiagnostics.Add(Diagnostic("NATIVE_SOURCE_LIFECYCLE", "Async work is outside the synchronous native program contract. Complete work synchronously in Execute.", token.GetLocation()));
         if (root.DescendantTokens().Any(t => t.IsKind(SyntaxKind.IdentifierToken) && t.ValueText == "NativeExecutionBoundaryV1"))
             syntaxDiagnostics.Add(Diagnostic("NATIVE_RESERVED_BOUNDARY", "The execution boundary is compiler-owned and cannot be named by task source."));
 
@@ -161,7 +174,7 @@ internal static class NativeProgramCompiler
         // otherwise unresolved name. Compiler-owned code is never user-edited.
         var sourceErrors = compilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).Take(32).ToArray();
         if (sourceErrors.Length > 0)
-            return new(null, sourceErrors.Select(d => Diagnostic(d.Id, d.GetMessage())).ToArray());
+            return new(null, sourceErrors.Select(d => Diagnostic(d.Id, d.GetMessage(), d.Location)).ToArray());
         var instrumented = (CSharpSyntaxNode)new NativeProgramInstrumentation(model).Visit(root)!;
         var rewrittenTree = CSharpSyntaxTree.Create(instrumented, (CSharpParseOptions)tree.Options, tree.FilePath, Encoding.UTF8);
         var bridgeTree = CSharpSyntaxTree.ParseText(NativeProgramInstrumentation.Bridge(entry!.ToDisplayString()),
@@ -192,8 +205,26 @@ internal static class NativeProgramCompiler
             members.Values.OrderBy(m => m.Id, StringComparer.Ordinal).ToArray()), Array.Empty<WorkerDiagnostic>());
     }
 
-    private static WorkerDiagnostic Diagnostic(string code, string message) => new()
-    { Code = code, Message = message, Phase = "native_compile", Severity = "error", RepairAction = "edit_source", Retryable = true };
+    private static WorkerDiagnostic Diagnostic(string code, string message, Location? location = null)
+    {
+        // These are offsets in the supplied source, not caller-controlled #line
+        // mappings or instrumented/compiler-owned bridge coordinates.
+        var span = location?.IsInSource == true ? location.GetLineSpan() : default;
+        return new WorkerDiagnostic
+        {
+            Code = code, Message = message, Phase = "native_compile", Severity = "error", RepairAction = "edit_source", Retryable = true,
+            Line = location?.IsInSource == true && span.IsValid ? span.StartLinePosition.Line + 1 : null,
+            Column = location?.IsInSource == true && span.IsValid ? span.StartLinePosition.Character + 1 : null,
+            EndLine = location?.IsInSource == true && span.IsValid ? span.EndLinePosition.Line + 1 : null,
+            EndColumn = location?.IsInSource == true && span.IsValid ? span.EndLinePosition.Character + 1 : null
+        };
+    }
+
+    private static string FieldNames(FieldDeclarationSyntax field)
+    {
+        var names = string.Join(", ", field.Declaration.Variables.Select(v => v.Identifier.ValueText));
+        return names.Length <= 256 ? names : names.Substring(0, 256) + "…";
+    }
 
     private static bool IsCollectorTypeLiteral(TypeOfExpressionSyntax node, SemanticModel model)
     {
