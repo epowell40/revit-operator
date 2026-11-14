@@ -5605,11 +5605,15 @@
     },
     {
       "path": "apps/operator-backend/test/desktop_bounded_window.test.ts",
-      "sha256": "sha256:ed2289db9c89e8b8fad73b0f11dc66b04d6f1524e073d93d9d2a604f62e6db1d"
+      "sha256": "sha256:c66a8ddc926dbf6a4f4fbb75da2650e9b46b7ed3f80d018da10e5e55c5ae833a"
     },
     {
       "path": "apps/operator-backend/test/desktop_cache_stable_history.test.ts",
       "sha256": "sha256:0b64eef97e8ab4ea01b8f16361def742e0a03ffe24735e9a08e071f4e223aa72"
+    },
+    {
+      "path": "apps/operator-backend/test/desktop_cache_wire.fixtures.ts",
+      "sha256": "sha256:818b0e1c675f25b9322389876c49b884b38806c7cf680a920e85e379e1af332c"
     },
     {
       "path": "apps/operator-backend/test/desktop_compacted_pixels.test.ts",
@@ -5649,7 +5653,7 @@
     },
     {
       "path": "apps/operator-backend/test/desktop_durable_window_relay.test.ts",
-      "sha256": "sha256:2b75c4159eeb5178996b068cf8401ff018cf8900343a6edb572637a26cd3e0a0"
+      "sha256": "sha256:cc8328f2d7267a25bb4ecfa29099170e9167c76b371cf813a6c9a139b5ce547e"
     },
     {
       "path": "apps/operator-backend/test/desktop_dynamic_contract.test.ts",
@@ -12617,7 +12621,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:d429a56f2a491ec49788044bdcb83075411c9edee79fa3d4ececf8647ae3fab7",
+  "inputs_hash": "sha256:495e970a104c47041ebfe9290e30e72cabbfb5d44e8abbcfce5a06c44748bfb2",
   "result": {
     "passed": true,
     "checks": [
