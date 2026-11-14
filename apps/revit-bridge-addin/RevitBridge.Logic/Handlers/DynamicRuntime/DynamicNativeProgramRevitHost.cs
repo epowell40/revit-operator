@@ -50,11 +50,12 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 if(active==null || DynamicRuntimeSnapshotHandler.Fingerprint(active)!=fingerprint || DynamicRuntimeSnapshotHandler.Session(active)!=session)
                     throw new InvalidOperationException("Native program active document changed.");
             }
+            Exception? programFailure=null;
             string Invoke()
             {
                 Checkpoint();
                 try {return OperatorNativeProgramExecution.ValidateResult((string)entry.Invoke(null,new object[]{document,(Action)Checkpoint})!);}
-                catch(TargetInvocationException ex) when(ex.InnerException!=null){ExceptionDispatchInfo.Capture(ex.InnerException).Throw();throw;}
+                catch(TargetInvocationException ex) when(ex.InnerException!=null){programFailure=ex.InnerException;ExceptionDispatchInfo.Capture(ex.InnerException).Throw();throw;}
             }
             Dictionary<string,object?> result;
             if(artifact.Mode=="read")
@@ -65,6 +66,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 catch(Exception ex){result=new Dictionary<string,object?>{["success"]=false,["error"]=ex.Message,["read_only"]=true,["transaction"]=OperatorNativeTransactionReceipt.NotStarted()};}
             }
             else result=Write(app,document,scope,Invoke,Checkpoint);
+            OperatorNativeProgramExecution.AppendRuntimeDiagnostic(result,programFailure);
             result["source_hash"]=artifact.SourceHash;result["assembly_hash"]=artifact.AssemblyHash;
             result["native_binding_hash"]=binding;result["document_fingerprint"]=fingerprint;result["document_session_id"]=session;
             result["document_revision_before"]=currentNativeRevision;result["elapsed_milliseconds"]=clock.ElapsedMilliseconds;

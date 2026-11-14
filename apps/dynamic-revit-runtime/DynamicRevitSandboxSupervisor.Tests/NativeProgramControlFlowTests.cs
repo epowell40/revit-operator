@@ -55,6 +55,74 @@ public sealed class NativeProgramControlFlowTests
     private static string Run(string source, Action checkpoint) => WithProgram(source, assembly => Invoke(assembly, checkpoint));
 
     [NativeCompileFact]
+    public void RuntimeNullFailureIdentifiesOriginalStatementWithoutChangingException()
+    {
+        var source = "using System; using Autodesk.Revit.DB; public static class NativeTask {\n" +
+            "public static string Execute(Document doc) {\nvar first = 1;\nthrow new ArgumentNullException(null, \"Value cannot be null.\");\n}}";
+        var error = Assert.Throws<ArgumentNullException>(() => Run(source, () => { }));
+        Assert.Equal("Value cannot be null.", error.Message);
+        Assert.Equal(4, error.Data["revit_operator.native_source_line.v1"]);
+        Assert.Equal(1, error.Data["revit_operator.native_source_column.v1"]);
+    }
+
+    [NativeCompileFact]
+    public void RuntimeHelperFailureUsesPhysicalSourceAndNotLineDirective()
+    {
+        var source = "using System; using Autodesk.Revit.DB; public static class NativeTask {\n" +
+            "public static string Execute(Document doc) {return Fail();}\n#line 900 \"pretend.cs\"\n" +
+            "static string Fail()=>throw new ArgumentException(\"bad layer\");\n}";
+        var error = Assert.Throws<ArgumentException>(() => Run(source, () => { }));
+        Assert.Equal(4, error.Data["revit_operator.native_source_line.v1"]);
+        Assert.Equal(23, error.Data["revit_operator.native_source_column.v1"]);
+    }
+
+    [NativeCompileFact]
+    public void SingleLineProgramFailureRetainsDistinctStatementColumn()
+    {
+        var source = Source("int a=1; int b=2; throw new ArgumentException(\"bad layer\");");
+        var error = Assert.Throws<ArgumentException>(() => Run(source, () => { }));
+        Assert.Equal(1, error.Data["revit_operator.native_source_line.v1"]);
+        Assert.Equal(source.IndexOf("throw", StringComparison.Ordinal)+1, error.Data["revit_operator.native_source_column.v1"]);
+    }
+
+    [Theory]
+    [InlineData("if(true) throw new ArgumentException(\"failure\");return \"\";")]
+    [InlineData("switch(1){case 1: throw new ArgumentException(\"failure\");default:return \"\";}")]
+    [InlineData("Func<string> f=()=>throw new ArgumentException(\"failure\");return f();")]
+    [InlineData("for(int i=0;i<2;i++) throw new ArgumentException(\"failure\");return \"\";")]
+    public void EmbeddedStatementsSwitchAndLambdaRetainOriginalCoordinates(string body)
+    {
+        var source=Source(body);
+        var error=Assert.Throws<ArgumentException>(()=>Run(source,()=>{}));
+        Assert.Equal(source.IndexOf("throw",StringComparison.Ordinal)+1,error.Data["revit_operator.native_source_column.v1"]);
+    }
+
+    [NativeCompileFact]
+    public void HostFailureHasNoSourceDiagnosisAndNextInvocationHasFreshLocation()
+    {
+        WithProgram(Source("int value=1;throw new ArgumentException(\"program\");"),assembly=>{
+            var ticks=0;
+            var error=Assert.Throws<ArgumentException>(()=>Invoke(assembly,()=>{if(++ticks==2)throw new ArgumentException("host");}));
+            Assert.Equal("host",error.Message);Assert.Empty(error.Data);
+            error=Assert.Throws<ArgumentException>(()=>Invoke(assembly,()=>{}));
+            Assert.Equal("program",error.Message);Assert.Equal(1,error.Data["revit_operator.native_source_line.v1"]);
+            return "checked";
+        });
+        var cancel=Assert.Throws<OperationCanceledException>(()=>Run(Source("throw new OperationCanceledException(\"stop\");"),()=>{}));
+        Assert.Empty(cancel.Data);
+    }
+
+    [NativeCompileFact]
+    public void FinallyAndNormalControlFlowRemainTruthfulWithoutClaimingExactThrowSite()
+    {
+        var source=Source("try{throw new ArgumentException(\"original\");}finally{int cleanup=1;}");
+        var error=Assert.Throws<ArgumentException>(()=>Run(source,()=>{}));
+        Assert.Equal("original",error.Message);
+        Assert.Equal(source.IndexOf("int cleanup",StringComparison.Ordinal)+1,error.Data["revit_operator.native_source_column.v1"]);
+        Assert.Equal("6",Run(Source("int sum=0;for(int i=0;i<3;i++){if(i==1)continue;sum+=i;}switch(sum){case 2:int n=4;sum+=n;break;}return sum.ToString();"),()=>{}));
+    }
+
+    [NativeCompileFact]
     public void OrdinaryReadAlgorithmReturnsWithoutNativeExecutionOrAWriteGrant()
     {
         var ticks = 0;

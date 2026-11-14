@@ -93,9 +93,10 @@ test("authenticated native rollback reports its actual cause without inventing a
     fs.writeFileSync(supervisor, "stub"); fs.mkdirSync(worker); fs.writeFileSync(token, "0123456789abcdef");
     const runtime = { ...process.env, ...env, OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH: supervisor,
       OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY: worker, OPERATOR_TOKEN_FILE: token };
-    for (const supervisorFailure of [false, true]) {
+    for (const supervisorFailure of [false, true]) for (const failure of [collateralFailure,
+      "Value cannot be null. [Native C# last executed statement: submitted source line 1, column 5125. This is a repair hint, not an exact throw-site or model-result check.]"]) {
       const e = fixture("apply", "rolled_back", false);
-      const receipt = JSON.parse(e.nativeExecutionReceipt); receipt.error = collateralFailure;
+      const receipt = JSON.parse(e.nativeExecutionReceipt); receipt.error = failure;
       e.nativeExecutionReceipt = JSON.stringify(receipt); authenticate(e);
       if (supervisorFailure) e.failure = "Supervisor cleanup failed";
       await runWithAssignmentKernelV2(metadata("apply"), async () => {
@@ -105,10 +106,11 @@ test("authenticated native rollback reports its actual cause without inventing a
           return { exitCode: 1, stdout: "", stderr: supervisorFailure ? "cleanup failed" : "" };
         });
         assert.equal(result.diagnostics.some(d => d.code === "SUPERVISOR_FAILURE"), supervisorFailure);
-        assert.equal(result.diagnostics.find(d => d.code === "NATIVE_PROGRAM_FAILED")?.message, collateralFailure);
+        assert.equal(result.diagnostics.find(d => d.code === "NATIVE_PROGRAM_FAILED")?.message, failure);
         assert.equal(result.canonical_attempt_settlement?.effect_state, "none");
         assert.equal(result.iteration.retryable, false);
         const view: any = presentDynamicProgramResult(result);
+        assert.equal(view.diagnostics.find((d: any) => d.code === "NATIVE_PROGRAM_FAILED")?.message, failure);
         assert.equal(view.native_outcome.native_transaction_state, "rolled_back");
         assert.match(view.guidance, /fresh request/);
         assert.match(view.guidance, /not automatically authorize/);
