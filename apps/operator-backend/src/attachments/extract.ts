@@ -119,7 +119,7 @@ async function extractDocxExcerpts(fullPath: string): Promise<AttachmentExcerpt[
   return trimmed ? [{ anchor: "DOCX", text: trimmed }] : [];
 }
 
-function decodePngSize(buf: Buffer): ImageMeta | null {
+export function decodePngSize(buf: Buffer): ImageMeta | null {
   // PNG signature + IHDR: width/height are big-endian uint32 at bytes 16..23.
   if (!buf || buf.length < 24) return null;
   const sig = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
@@ -130,7 +130,7 @@ function decodePngSize(buf: Buffer): ImageMeta | null {
   return { widthPx, heightPx, kind: "png" };
 }
 
-function decodeJpegSize(buf: Buffer): ImageMeta | null {
+export function decodeJpegSize(buf: Buffer): ImageMeta | null {
   // JPEG SOF segment contains width/height. Scan markers in a header chunk.
   if (!buf || buf.length < 4) return null;
   if (buf[0] !== 0xff || buf[1] !== 0xd8) return null; // SOI

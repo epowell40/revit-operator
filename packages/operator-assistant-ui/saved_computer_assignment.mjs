@@ -83,6 +83,7 @@ export function savedComputerConversation(goal,snapshot,history){
  const context={role:'assistant',text:'SAVED TASK CONTEXT. Historical reports and operation references are not current proof. '
    +'Continue the latest user direction, inspect the actual result and correct/recheck supported discrepancies. '
    +'Do not replay uncertain or input-invalidated writes. Earlier attachment IDs refer to retained sources, not newly attached pixels. '
+   +'Recover reference pixels with operator_read_attachment using the retained attachment ID (PNG/JPEG: pages=[1], mode=detail; PDF: select the relevant page). Do not reconstruct visual details from attachment IDs or search workstation folders for them. '
    +'Older conversation messages and operation references may be omitted; inspect retained evidence rather than infer success.\n'+text};
  savedContexts.set(context,savedComputerBinding(snapshot.current_binding));
  return [context,...recent.map(m=>({role:m.role,text:m.text}))];

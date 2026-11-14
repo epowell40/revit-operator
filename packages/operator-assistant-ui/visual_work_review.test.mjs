@@ -47,6 +47,23 @@ function attachmentReadFixture(){
  const summary={source:'record.pdf',attachment_id:'source',sha256:sha,page_count:2,pages_returned:[2],mode:'detail',coverage:[{page:2,visual_scope:'region',image_bytes:Buffer.from(image,'base64').length}]};
  return {selection:{call_id:'call_source',page:2},summary,attachments:[{id:'source',filename:'record.pdf',mime:'application/pdf',dataBase64:pdf.toString('base64')}],receipts:[{call_id:'call_source',tool_name:'native__operator_read_attachment',status:'success',arguments:{attachment_id:'source',pages:[2],mode:'detail',region},result:{ok:true,native_stop_reason:null,content:[{type:'inputText',text:JSON.stringify(summary)},{type:'inputImage',imageUrl:'data:image/png;base64,'+image}]}}]};
 }
+
+test('registered raster read supports warm and recovered reference review without replacing source identity',()=>{
+ for(const cold of [false,true]) {
+  const f=attachmentReadFixture(),r=f.receipts[0];
+  f.selection.page=1;r.arguments.pages=[1];
+  Object.assign(f.summary,{source:'reference.png',source_kind:'raster_image',source_format:'png',page_count:1,pages_returned:[1],sha256:createHash('sha256').update(Buffer.from(image,'base64')).digest('hex')});
+  f.summary.coverage[0].page=1;r.result.content[0].text=JSON.stringify(f.summary);
+  f.attachments=[{id:'source',filename:'reference.png',mime:'image/png',dataBase64:image}];
+  if(cold){f.attachments=[];f.registeredAttachmentIds=['source'];}
+  const found=identityReview.resolveAttachmentReviewImage(f.selection,f);
+  assert.equal(found.image_url,'data:image/png;base64,'+image);
+  assert.equal(found.source_render.page,1);assert.match(found.source_render.limitation,/Not model evidence/);
+  if(!cold){f.attachments[0].mime='application/pdf';assert.throws(()=>identityReview.resolveAttachmentReviewImage(f.selection,f),/source_not_current/);}
+  f.summary.source_format='svg';r.result.content[0].text=JSON.stringify(f.summary);
+  assert.throws(()=>identityReview.resolveAttachmentReviewImage(f.selection,f),/source_invalid/);
+ }
+});
 function trackedAttachmentReadFixture(){
  const f=attachmentReadFixture(),content=f.receipts[0].result.content;
  const overlay=Buffer.from(image,'base64');overlay[overlay.length-1]^=1;

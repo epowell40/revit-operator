@@ -65,6 +65,8 @@ export function resolveAttachmentReviewImage(selection,{receipts,attachments,reg
     .filter(v=>object(v)&&Array.isArray(v.pages_returned)&&Array.isArray(v.coverage));
   if(summaryCandidates.length!==1)throw Error('visual_review_attachment_source_invalid');
   const s=summaryCandidates[0],images=cleanAttachmentReviewImages(content,s);
+  const raster=s.source_kind==='raster_image';
+  if((s.source_kind!==undefined&&!raster)||raster&&(!['png','jpeg'].includes(s.source_format)||s.page_count!==1||s.pages_returned.length!==1||s.pages_returned[0]!==1))throw Error('visual_review_attachment_source_invalid');
   if(s.attachment_id!==args.attachment_id||s.mode!==(args.mode??'detail')||!/^([a-f0-9]{64})$/.test(s.sha256??'')
     ||!s.pages_returned.every(positive)||new Set(s.pages_returned).size!==s.pages_returned.length
     ||s.pages_returned.some(p=>!args.pages.includes(p))||images.length!==s.pages_returned.length)throw Error('visual_review_attachment_source_invalid');
@@ -80,7 +82,7 @@ export function resolveAttachmentReviewImage(selection,{receipts,attachments,reg
   if(!bounded(a.filename,240)||/[\\/:]/.test(a.filename))throw Error('visual_review_attachment_source_not_current');
   let sourceIdentityBasis='current_uploaded_bytes';
   if(candidates.length===1){
-    if(a.mime!=='application/pdf'||a.filename!==s.source
+    if(a.mime!==(raster?(s.source_format==='png'?'image/png':'image/jpeg'):'application/pdf')||a.filename!==s.source
       ||typeof a.dataBase64!=='string'||a.dataBase64.length>72_000_000||!/^[A-Za-z0-9+/=\r\n]+$/.test(a.dataBase64)
       ||createHash('sha256').update(Buffer.from(a.dataBase64,'base64')).digest('hex')!==s.sha256)throw Error('visual_review_attachment_source_not_current');
   }else{
@@ -104,7 +106,7 @@ export function resolveAttachmentReviewImage(selection,{receipts,attachments,reg
   return {filename:a.filename,image_url:url,source_render:{source_read_call_id:r.call_id,attachment_id:a.id,source_sha256:s.sha256,source_identity_basis:sourceIdentityBasis,
     page:selected.page,mode:s.mode,visual_scope:coverage[0].visual_scope,requested_region:region?{...region}:null,
     width_px:width,height_px:height,image_sha256:createHash('sha256').update(bytes).digest('hex'),
-    limitation:'Only this delivered PDF page/region at this resolution. Not model evidence, a placement transform, or proof of source completeness.'}};
+    limitation:'Only this delivered source page/image region at this resolution. Not model evidence, a placement transform, or proof of source completeness.'}};
 }
 
 // Native render inventories are host guard evidence, not reviewer instructions.

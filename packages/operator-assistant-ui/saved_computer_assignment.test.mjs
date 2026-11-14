@@ -29,6 +29,7 @@ test('restart context retains exact source references, current direction and unf
  const {goal,snapshot}=fixture();snapshot.input_values={direction:'Remove the gap, keep border settings'};snapshot.work_plan={items:[{id:'item',status:'partial'}]};
  const conversation=savedComputerConversation(goal,snapshot,{session_id:'session',messages:[{role:'assistant',text:'I changed the border'},{role:'user',text:'Keep working'}]});
  assert.match(conversation[0].text,/not current proof/);assert.match(conversation[0].text,/reference/);assert.match(conversation[0].text,/Remove the gap/);assert.match(conversation[0].text,/partial/);
+ assert.match(conversation[0].text,/operator_read_attachment/);assert.match(conversation[0].text,/PNG\/JPEG: pages=\[1\]/);assert.match(conversation[0].text,/not newly attached pixels/);
  assert.equal(conversation.at(-1).text,'Keep working');assert.throws(()=>savedComputerConversation(goal,snapshot,{session_id:'other',messages:[]}));
  snapshot.work_plan={text:'x'.repeat(80001)};assert.throws(()=>savedComputerConversation(goal,snapshot,{session_id:'session',messages:[]}),/not restarted or clipped/);
 });
