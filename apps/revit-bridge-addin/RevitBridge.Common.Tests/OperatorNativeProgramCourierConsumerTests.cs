@@ -16,6 +16,33 @@ public sealed class NativeCourierConsumerCollection { }
 [Collection("NativeCourierConsumer")]
 public sealed class OperatorNativeProgramCourierConsumerTests
 {
+    [Fact]
+    public async Task LargeEvidenceReachesDurableOutboxWithoutLosingReceiptBytes()
+    {
+        await WithWorkspace("large", async root =>
+        {
+            Action? retained = null;
+            var output = await Invoke(action => retained = action);
+            var run = Assert.Single(Directory.GetDirectories(Path.Combine(root, "artifacts", "dynamic-runtime-runs")));
+            var exact = File.ReadAllBytes(Path.Combine(run, "evidence.json"));
+            var serialized = JsonSerializer.SerializeToUtf8Bytes(output);
+            Assert.True(serialized.Length <= OperatorCourierResultCompactor.MaxTransportResultBytes);
+            using var result = JsonDocument.Parse(serialized);
+            var transport = result.RootElement.GetProperty("evidenceTransport");
+            using var packed = new MemoryStream(Convert.FromBase64String(transport.GetProperty("data").GetString()!));
+            using var gzip = new System.IO.Compression.GZipStream(packed, System.IO.Compression.CompressionMode.Decompress);
+            using var decoded = new MemoryStream(); gzip.CopyTo(decoded);
+            Assert.Equal(exact, decoded.ToArray());
+            Assert.Equal(exact.Length, transport.GetProperty("uncompressedBytes").GetInt32());
+            using var sha = System.Security.Cryptography.SHA256.Create();
+            Assert.Equal("sha256:" + BitConverter.ToString(sha.ComputeHash(exact)).Replace("-", "").ToLowerInvariant(), transport.GetProperty("sha256").GetString());
+            var outbox = new OperatorCourierCompletionOutbox(Path.Combine(root, "outbox"));
+            outbox.Save("session", "job", "executor", output);
+            Assert.NotNull(retained); retained!();
+            Assert.False(Directory.Exists(run)); Assert.Single(outbox.ReadPending());
+        });
+    }
+
     [Theory][InlineData("missing")][InlineData("malformed")]
     public async Task MissingOrMalformedEvidenceRetainsActualLauncherRun(string mode)
     {
