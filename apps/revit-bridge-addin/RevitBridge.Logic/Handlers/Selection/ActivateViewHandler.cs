@@ -238,7 +238,21 @@ namespace RevitBridge.Logic.Handlers
 
                 try
                 {
-                    uiView.ZoomAndCenterRectangle(new XYZ(minX, minY, minZ), new XYZ(maxX, maxY, maxZ));
+                    var lower = new XYZ(minX, minY, minZ);
+                    var upper = new XYZ(maxX, maxY, maxZ);
+                    if (view is View3D view3D && !view3D.IsPerspective)
+                    {
+                        // World-box opposite corners are not screen-rectangle
+                        // opposite corners in an angled orthographic view.
+                        var right = view.RightDirection;
+                        var up = view.UpDirection;
+                        var frame = OrthographicBoxFocus.Project(
+                            new[] { minX, minY, minZ }, new[] { maxX, maxY, maxZ },
+                            new[] { right.X, right.Y, right.Z }, new[] { up.X, up.Y, up.Z });
+                        lower = new XYZ(frame[0][0], frame[0][1], frame[0][2]);
+                        upper = new XYZ(frame[1][0], frame[1][1], frame[1][2]);
+                    }
+                    uiView.ZoomAndCenterRectangle(lower, upper);
                     didZoom = true;
                 }
                 catch (Exception ex)
