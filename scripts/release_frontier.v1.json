@@ -290,6 +290,7 @@
     "provider_token_cost.test.ts",
     "read_attachment_modes.test.ts",
     "raster_png_metadata.test.ts",
+    "model_evidence_correction_batch.test.ts",
     "raster_attachment_read.test.ts",
     "schedule_cell_kernel_v2.test.ts",
     "schedule_cell_postcondition_v2.test.ts",
@@ -5526,6 +5527,13 @@
         "dotnet:OperatorNativeProgramCourierConsumerTests",
         "dotnet:OperatorNativeProgramEvidenceTransportTests",
         "mcp:lib/dynamicNativeCourier.test.ts"
+      ]
+    },
+    {
+      "id": "batched_native_correction_feedback_overflow_20261114",
+      "coverage": [
+        "backend:model_evidence_correction_batch.test.ts",
+        "backend:native_correction_projection.test.ts"
       ]
     },
     {
