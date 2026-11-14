@@ -639,3 +639,16 @@ test("native C# keeps explicit supported years for read/write without adding aut
     assert.throws(() => normalizeNativeProgram({ entry_type: "Query" }, "read", year, fingerprint, env));
   }
 });
+
+test('native result scope is a bounded check selector, separate from write authority',()=>{
+ const env={REVIT_OPERATOR_MODE:'development',OPERATOR_TOOL_EXPOSURE_PROFILE:'laboratory'};
+ const base={entry_type:'Edit',effect_scope:'active_document' as const};
+ const ordinary=normalizeNativeProgram(base,'apply','2024',fingerprint,env);
+ const scoped=normalizeNativeProgram({...base,result_targets:{element_ids:[42],result_field:'created'}},'apply','2024',fingerprint,env);
+ assert.deepEqual(scoped,ordinary,'result selection does not change native authorization or transaction scope');
+ for(const result_targets of [{},null,{element_ids:[]},{element_ids:[0]},{element_ids:[42,42]},{result_field:'x.y'},
+  {result_field:'constructor'},{element_ids:[42],unknown:true},{element_ids:Array.from({length:257},(_,i)=>i+1)}])
+  assert.throws(()=>normalizeNativeProgram({...base,result_targets} as any,'apply','2024',fingerprint,env));
+ assert.throws(()=>normalizeNativeProgram({entry_type:'Read',result_targets:{element_ids:[42]}},'read','2024',fingerprint,env));
+ assert.throws(()=>normalizeNativeProgram({...base,result_targets:{element_ids:[42]},parameter_checks:[{element_id:42,parameter_name:'Mark',expected_value:'A'}]},'apply','2024',fingerprint,env));
+});

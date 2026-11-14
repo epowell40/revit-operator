@@ -1,4 +1,5 @@
 export * from "./native-parameter-checks.js";
+export * from "./native-result-targets.js";
 import { parseProviderUsageHoldV1 } from "./provider-usage-hold.js";
 export * from "./provider-usage-hold.js";
 export * from "./native-artifact.js";

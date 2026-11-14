@@ -90,6 +90,19 @@ namespace RevitBridge.Logic
                 // Never infer their private role from a name or adjacent ID, or claim private fields read.
                 shape = new { kind = "opaque_element_public_state", category = (object?)null, typeId = -1,
                     location = (object?)null, box = (object?)null, privateStateInspected = false };
+            else if (e.GetType() != typeof(Element) && e.GetType().Assembly == typeof(Element).Assembly &&
+                e.GetType().FullName?.StartsWith("Autodesk.Revit.DB.", StringComparison.Ordinal) == true)
+                // Capture the existing public Element interface for native subclasses,
+                // instead of adding a new class whitelist for every useful edit.
+                // This is deliberately limited public observation, NOT
+                // complete geometry, circuit topology, or preservation proof. The
+                // consumer must additionally require an unchanged native version.
+                shape = new { kind = "public_element_observation", category = e.Category?.Name,
+                    typeId = ElementIdCompat.GetValue(e.GetTypeId()), location = Location(e), box = Box(e),
+                    nativeType = new { assembly = e.GetType().Assembly.GetName().Name,
+                        fullName = e.GetType().FullName, baseType = typeof(Element).FullName },
+                    observedFields = new[]{"identity","parameters","location","modelBoundingBox"},
+                    privateStateInspected = false, geometryTopologyInspected = false };
             else return OperatorNativeEffectState.Unavailable(id, "unsupported_native_effect_class:" + e.GetType().Name);
             var type = doc.GetElement(e.GetTypeId());
             return OperatorNativeEffectState.Capture(id, true, new { elementId = id, found = true, uniqueId = e.UniqueId,
@@ -183,6 +196,28 @@ namespace RevitBridge.Logic
                 textAdjustable=adjustable,textPosition=adjustable?NullablePoint(dimension.TextPosition):null,
                 hasLeader=dimension.HasLeader,leaderEnd=adjustable&&dimension.HasLeader?NullablePoint(dimension.LeaderEndPosition):null,
                 typeParameters=Parameters(type)};
+        }
+        private static object? Location(Element e)
+        {
+            // IndependentTag exposes a base Location, not LocationPoint. Read
+            // its documented native head instead of inventing a point/rotation.
+            if (e is IndependentTag tag) return new { kind="tag_head", point=Point(tag.TagHeadPosition),
+                orientation=tag.TagOrientation.ToString(), hasLeader=tag.HasLeader };
+            var location = e.Location;
+            if (location == null) return null;
+            // Revit does not support LocationPoint.Rotation for spatial
+            // elements. Preserve the actual point and declare that limitation.
+            if (location is LocationPoint spatialPoint && e is SpatialElement)
+                return new { kind="point", point=Point(spatialPoint.Point), rotation=(double?)null,
+                    rotationState="not_supported_for_spatial_element" };
+            if (location is LocationPoint point) return new { kind="point", point=Point(point.Point), rotation=point.Rotation };
+            if (location is LocationCurve curve) return new { kind="curve", curve=NativeDraftingCurveGeometry.Read(curve.Curve) };
+            if (location.GetType() == typeof(Autodesk.Revit.DB.Location))
+                // The base API object exposes no point/curve. Declare that limit;
+                // never invent coordinates or imply class-specific geometry read.
+                return new {kind="unavailable",apiType=location.GetType().FullName,
+                    reason="base_location_has_no_point_or_curve"};
+            throw new InvalidOperationException("Native location observation unavailable.");
         }
         private static object Point(XYZ p) => new { x = p.X, y = p.Y, z = p.Z };
         private static object? Box(Element e) { var b = e.get_BoundingBox(null); return b == null ? null : new { min = Point(b.Min), max = Point(b.Max) }; }

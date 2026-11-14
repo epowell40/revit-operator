@@ -1,4 +1,5 @@
 export * from "./native-parameter-checks.js";
+export * from "./native-result-targets.js";
 export * from "./provider-usage-hold.js";
 export * from "./native-artifact.js";
 export * from "./native-completion.js";

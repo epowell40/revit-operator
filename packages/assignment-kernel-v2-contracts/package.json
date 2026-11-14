@@ -46,6 +46,8 @@
     "provider-usage-hold.js",
     "provider-usage-hold.d.ts",
     "native-parameter-checks.js",
-    "native-parameter-checks.d.ts"
+    "native-parameter-checks.d.ts",
+    "native-result-targets.js",
+    "native-result-targets.d.ts"
   ]
 }

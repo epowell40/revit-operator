@@ -1,4 +1,4 @@
-import {normalizeNativeParameterChecks,type NativeParameterCheck} from "@revitoperator/assignment-kernel-v2-contracts";
+import {normalizeNativeParameterChecks,normalizeNativeResultTargets,type NativeResultTargets,type NativeParameterCheck} from "@revitoperator/assignment-kernel-v2-contracts";
 export {normalizeNativeParameterChecks} from "@revitoperator/assignment-kernel-v2-contracts";
 import { createHash } from "node:crypto";
 import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
@@ -16,6 +16,7 @@ export type NativeProgramInput = {
   max_affected_elements?: number;
   deadline_ms?: number;
   parameter_checks?: NativeParameterCheck[];
+  result_targets?: NativeResultTargets;
 };
 
 /** Requested bounds, never authority. Identity comes from the admitted task. */
@@ -34,10 +35,13 @@ export function normalizeNativeProgram(value: NativeProgramInput, mode: string, 
     throw new Error("Native C# requires a local General Agent, hosted workstation courier or development/laboratory, a supported Revit target and explicit read or apply mode.");
   const expectedDocumentFingerprint = fingerprint?.startsWith("sha256:") ? fingerprint : `sha256:${fingerprint}`;
   if (!hash(expectedDocumentFingerprint)) throw new Error("Native C# requires the admitted task's current document identity.");
-  if (Object.keys(input).some(key => !["entry_type", "effect_scope", "allowed_existing_unique_ids", "allow_create", "max_affected_elements", "deadline_ms", "parameter_checks"].includes(key))
+  if (Object.keys(input).some(key => !["entry_type", "effect_scope", "allowed_existing_unique_ids", "allow_create", "max_affected_elements", "deadline_ms", "parameter_checks", "result_targets"].includes(key))
       || typeof input.entry_type !== "string" || !input.entry_type.trim() || input.entry_type.length > 256 || /[\x00-\x1f\x7f]/.test(input.entry_type))
     throw new Error("Native C# entry type or request fields are invalid.");
   normalizeNativeParameterChecks(input.parameter_checks, mode);
+  normalizeNativeResultTargets(input.result_targets, mode);
+  if (Object.hasOwn(input,'parameter_checks') && Object.hasOwn(input,'result_targets'))
+    throw new Error('Use desired parameter_checks or result_targets, not two conflicting verification scopes.');
   const ids = input.allowed_existing_unique_ids ?? [];
   const effectScope = input.effect_scope === undefined ? "listed_elements" : input.effect_scope;
   if (!["listed_elements", "active_document"].includes(String(effectScope))

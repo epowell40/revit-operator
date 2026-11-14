@@ -150,3 +150,36 @@ test('program output cannot become verification and stale, foreign, failed, malf
   const x=presentedFixture();mutate(x.snapshot);assert.equal(presentation(x.snapshot),null);
  }
 }));
+
+test('requested text verification excludes dependent notifications from checked-work credit',()=>workspace(()=>{
+ const f=fixture(p=>{
+  const r=JSON.parse(p.evidence.nativeExecutionReceipt);
+  r.transaction.modified_element_ids=[42,43];r.transaction.added_element_ids=[44];r.transaction.affected_element_ids=[42,43,44];
+  p.evidence.nativeExecutionReceipt=JSON.stringify(r);
+ });
+ f.subject.result.affected_target_identities=['element_id:42','element_id:43','element_id:44'];
+ assert.deepEqual(plan(f.snapshot,f.subject)?.body.elementIds,[42]);
+ assert.equal(satisfied(f.snapshot,f.subject,f.read,f.readPayload),true);
+ f.readPayload.items[0].parameters.Author='Wrong';f.read.raw_payload_hash=payloadDigestV2(f.readPayload).digest;
+ assert.equal(satisfied(f.snapshot,f.subject,f.read,f.readPayload),false);
+}));
+
+test('text-only requested checks reject deleted or unmodified requested targets',()=>workspace(()=>{
+ for(const missing of [false,true]){
+  const f=fixture(p=>{const r=JSON.parse(p.evidence.nativeExecutionReceipt);
+   r.transaction.modified_element_ids=[43];r.transaction.deleted_element_ids=missing?[]:[42];r.transaction.affected_element_ids=missing?[43]:[42,43];
+   p.evidence.nativeExecutionReceipt=JSON.stringify(r);});
+  f.subject.result.affected_target_identities=missing?['element_id:43']:['element_id:42','element_id:43'];
+  assert.equal(plan(f.snapshot,f.subject),null);
+ }
+}));
+
+test('dependent record replacement does not invalidate an independently checked requested text field',()=>workspace(()=>{
+ const f=fixture(p=>{const r=JSON.parse(p.evidence.nativeExecutionReceipt);
+  r.transaction.added_element_ids=[44];r.transaction.deleted_element_ids=[43];r.transaction.affected_element_ids=[42,43,44];
+  p.evidence.nativeExecutionReceipt=JSON.stringify(r);});
+ f.subject.result.affected_target_identities=['element_id:42','element_id:43','element_id:44'];
+ assert.equal(satisfied(f.snapshot,f.subject,f.read,f.readPayload),true);
+ assert.deepEqual(plan(f.snapshot,f.subject)?.body.elementIds,[42]);
+ assert.deepEqual(f.subject.result.affected_target_identities,['element_id:42','element_id:43','element_id:44']);
+}));

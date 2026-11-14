@@ -98,12 +98,14 @@ namespace RevitBridge.Common
                 if (item.stateJson == null) continue;
                 using var state = JsonDocument.Parse(item.stateJson);
                 if (state.RootElement.TryGetProperty("shape", out var shape) && shape.ValueKind == JsonValueKind.Object &&
-                    shape.TryGetProperty("kind", out var kind) && kind.GetString() == "opaque_element_public_state" && nativeVersion == null)
-                { item.complete = false; item.reason = "opaque_state_requires_stable_native_version"; complete = false; }
+                    shape.TryGetProperty("kind", out var kind) &&
+                    (kind.GetString() == "opaque_element_public_state" || kind.GetString() == "public_element_observation") && nativeVersion == null)
+                { item.complete = false; item.reason = kind.GetString() == "opaque_element_public_state"
+                    ? "opaque_state_requires_stable_native_version" : "public_state_requires_stable_native_version"; complete = false; }
             }
             return new { scope = Scope, documentFingerprint = fingerprint, documentSessionId = session,
                 complete, requestedElementIds = ids, items, observedStateBytes = bytes, nativeVersion,
-                meaning = "Public fields are observed directly. Opaque internals are not inspected; native version supplies continuity only, never correctness. Not code intent, requested design, visual fidelity or saved-file proof." };
+                meaning = "Public fields are observed directly. Opaque internals and class-specific geometry/topology outside the declared fields are not inspected; native version supplies continuity only, never correctness. Not code intent, requested design, visual fidelity or saved-file proof." };
         }
     }
 }

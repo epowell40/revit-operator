@@ -15,11 +15,15 @@ import {nativeDraftingInspectionTargetsV2} from '../src/assignments/native_draft
 import {retainWorkPlanInspectionV2} from '../src/assignments/work_plan_inspection.js';
 import {completeWorkPlanItemV2} from '../src/domain/assignment-kernel/work_plan.js';
 import {qualifiedLargeInspectionDiscoveryV2} from '../src/assignments/large_inspection_discovery.js';
+import {nativeProgramResultScopeNoticeV2} from '../src/verification/native_program_effect_postcondition_v2.js';
+import {verifiedDeliverableTargetGroupsV2} from '../src/verification/verified_deliverable_targets_v2.js';
+import {checkedEditIsCurrentV2,checkedReadIsCurrentV2} from '../src/verification/current_postcondition_v2.js';
+import {codexAssignmentEvidenceContextV2} from '../src/brains/codex_assignment_evidence.js';
 
 const sha=(s:string)=>createHash('sha256').update(s).digest('hex');
 function state(id:number,found=true){const json=JSON.stringify({elementId:id,found,identity:found?'native-'+id:null,geometry:found?{kind:'Line',start:[0,0,0],end:[1,0,0]}:null});
  return {elementId:id,found,complete:true,stateJson:json,stateHash:'sha256:'+sha(json)};}
-function fixture(mutate?:(p:any)=>void,trust:any='authoritative_native'){
+function fixture(mutate?:(p:any,input:any)=>void,trust:any='authoritative_native'){
  const binding={assignment_id:'assignment',run_id:'run',session_id:'session',generation:1,principal_id:'local:shared-token',document_fingerprint:'c'.repeat(64)};
  const source='public class Draw { public static string Execute(Autodesk.Revit.DB.Document d) { return "not verification"; } }';
  const input:any={mode:'apply',source,native_program:{entry_type:'Draw',effect_scope:'active_document'}};
@@ -32,7 +36,7 @@ function fixture(mutate?:(p:any)=>void,trust:any='authoritative_native'){
  const payload:any={schema:'revit-operator.dynamic-revit-program-run.v1',execution_lane:'native',requested_mode:'apply',execution_status:'completed',execution_ok:true,
   iteration:{source_sha256:sourceHash},native_outcome:{persistent_effect:'applied',native_transaction_state:'committed',task_verified:false,verification_required:true},
   evidence:{schema:'dynamic-revit-native-program-evidence/v1',ok:true,nativeExecutionReceipt:JSON.stringify(receipt),snapshotReceipt:JSON.stringify({Schema:'dynamic-revit-native-preparation/v1',PreparationId:'prep',SourceHash:sourceHash,Document:{ProjectFingerprint:fingerprint,SessionId:'native-session'}})}};
- mutate?.(payload);
+ mutate?.(payload,input);
  const ref=storeEvidence({scope:{...binding,attempt_id:'apply'},source:'assignment_kernel_v2:operator_run_dynamic_revit_program',trust_level:trust,raw:payload}).ref;
  const request={capability_id:'operator_run_dynamic_revit_program',request_signature:sha(canonicalJsonV2({capability_id:'operator_run_dynamic_revit_program',input}))};
  const subject:any={operation_id:'apply',binding,input,capability_id:'operator_run_dynamic_revit_program',requested_effect:'apply',admission_state:'admitted',dispatch_state:'dispatched',settlement_state:'settled',persistent_effect:'applied',observation_ids:['obs'],verification_operation_ids:[],request_identity:request,
@@ -212,6 +216,71 @@ function opaqueFixture(change?:(receipt:any)=>void){
  f.result.raw_payload_hash=payloadDigestV2(f.fresh).digest;return f;
 }
 
+// Electrical rehosting changes several native classes in one commit. Public
+// observations are not exhaustive geometry/connection proof: continuity must
+// be native-version-bound, even when all exposed values happen to match.
+function publicElementFixture(className='FamilyInstance',change?:(receipt:any)=>void){
+ return opaqueFixture(r=>{
+  const item=r.effect_observation.items[1],s=JSON.parse(item.stateJson);
+  s.className=className;
+  s.shape={kind:'public_element_observation',category:'Electrical Fixtures',typeId:55,
+   location:{kind:'point',point:{x:1,y:2,z:3},rotation:0},box:null,
+   observedFields:['identity','parameters','location','modelBoundingBox'],
+   privateStateInspected:false,geometryTopologyInspected:false};
+  item.stateJson=JSON.stringify(s);item.stateHash='sha256:'+sha(item.stateJson);change?.(r);
+ });
+}
+test('general native public-state contract covers sheet collateral without claiming class-specific inspection',()=>workspace(()=>{
+ // Exact classes rejected by full43b SheetEdit, plus an unrelated native class.
+ for(const cls of ['ViewSchedule','ViewSheet','ScheduleSheetInstance','Viewport','ViewSheetSet','Wall']){
+  const f=publicElementFixture(cls,r=>{const i=r.effect_observation.items[1],s=JSON.parse(i.stateJson);
+   s.shape.nativeType={assembly:'RevitAPI',fullName:'Autodesk.Revit.DB.'+cls,baseType:'Autodesk.Revit.DB.Element'};
+   i.stateJson=JSON.stringify(s);i.stateHash='sha256:'+sha(i.stateJson);
+  });
+  assert.ok(plan(f.snapshot,f.subject),cls);assert.equal(match(f.snapshot,f.subject,f.result,f.fresh),true,cls);
+  f.fresh.nativeProgramEffectState.nativeVersion.Sequence++;
+  f.result.raw_payload_hash=payloadDigestV2(f.fresh).digest;
+  assert.equal(match(f.snapshot,f.subject,f.result,f.fresh),false,'Same public values never replace continuity');
+ }
+}));
+test('generic native descriptors never promote foreign, malformed or incomplete observations',()=>workspace(()=>{
+ for(const change of [
+  (s:any)=>s.shape.nativeType.assembly='GeneratedProgram',
+  (s:any)=>s.shape.nativeType.fullName='Generated.ViewSheet',
+  (s:any)=>s.shape.nativeType.fullName='Autodesk.Revit.DB.Viewport',
+  (s:any)=>s.shape.nativeType.baseType='System.Object',
+  (s:any)=>s.className='Element',
+  (s:any)=>delete s.shape.observedFields,
+  (s:any)=>s.shape.geometryTopologyInspected=true,
+ ]){
+  const f=publicElementFixture('ViewSheet',r=>{const i=r.effect_observation.items[1],s=JSON.parse(i.stateJson);
+   s.shape.nativeType={assembly:'RevitAPI',fullName:'Autodesk.Revit.DB.ViewSheet',baseType:'Autodesk.Revit.DB.Element'};change(s);
+   i.stateJson=JSON.stringify(s);i.stateHash='sha256:'+sha(i.stateJson);
+  });assert.equal(plan(f.snapshot,f.subject),null);
+ }
+ // A native descriptor cannot repair the actual historical incomplete receipt.
+ const f=publicElementFixture('ViewSheet',r=>{r.effect_observation.complete=false;});
+ assert.equal(plan(f.snapshot,f.subject),null);
+}));
+test('public electrical effect observations require unchanged native version and explicit limited scope',()=>workspace(()=>{
+ for(const cls of ['View','Space','FamilyInstance','ElectricalSystem','IndependentTag']){
+  const f=publicElementFixture(cls);assert.ok(plan(f.snapshot,f.subject));assert.equal(match(f.snapshot,f.subject,f.result,f.fresh),true);
+  for(const key of ['ProcessId','Epoch','DocumentSessionId','Sequence']){
+   const changed=publicElementFixture(cls);changed.fresh.nativeProgramEffectState.nativeVersion[key]=key==='Sequence'?8:key==='ProcessId'?4321:'foreign';
+   changed.result.raw_payload_hash=payloadDigestV2(changed.fresh).digest;
+   assert.equal(match(changed.snapshot,changed.subject,changed.result,changed.fresh),false,cls+':'+key);
+  }
+ }
+ for(const change of [(r:any)=>delete r.effect_observation.nativeVersion,(r:any)=>delete r.document_revision_before]){
+  const f=publicElementFixture('FamilyInstance',change);assert.equal(plan(f.snapshot,f.subject),null);
+ }
+ for(const cls of ['ForeignClass','Element','Wall']){const f=publicElementFixture(cls);assert.equal(plan(f.snapshot,f.subject),null);}
+ for(const field of ['privateStateInspected','geometryTopologyInspected']){
+  const f=publicElementFixture('FamilyInstance',r=>{const item=r.effect_observation.items[1],s=JSON.parse(item.stateJson);s.shape[field]=true;item.stateJson=JSON.stringify(s);item.stateHash='sha256:'+sha(item.stateJson);});
+  assert.equal(plan(f.snapshot,f.subject),null,'Unsupported coverage claim: '+field);
+ }
+}));
+
 test('native region contours, fill and sketch/dimension references must persist independently of equal bounding boxes',()=>workspace(()=>{
  const shapes=[{kind:'filled_region',box:[0,0,1,1],boundaries:[[[0,0],[1,0],[0,1]]],regionType:{foreground:{solid:true},foregroundColor:{r:0,g:0,b:0}}},
   {kind:'sketch',profile:[[[0,0],[1,0],[0,1]]],memberIds:[11,12,13]},
@@ -294,4 +363,192 @@ test('native commit and immutable source guards cannot be replaced with a progra
  p=>{const r=JSON.parse(p.evidence.nativeExecutionReceipt);r.transaction.modified_element_ids.push(99);p.evidence.nativeExecutionReceipt=JSON.stringify(r);}];
  for(const mutate of mutations){const f=fixture(mutate);assert.equal(match(f.snapshot,f.subject,f.result,f.fresh),false);}
  const f=fixture();f.subject.input.native_program.parameter_checks=[];assert.equal(match(f.snapshot,f.subject,f.result,f.fresh),false,'explicit checks may never fall back to persistence');
+}));
+
+test('scoped result persistence tolerates unavailable dependent notifications without claiming their preservation',()=>workspace(()=>{
+ const f=fixture((p,input)=>{
+  input.native_program.result_targets={element_ids:[42,43]};
+  const r=JSON.parse(p.evidence.nativeExecutionReceipt);
+  r.effect_observation.complete=false;
+  r.effect_observation.items[0]={elementId:41,complete:false,found:null,stateJson:null,stateHash:null,reason:'native_state_read_failed:InvalidOperationException.get_Red'};
+  p.evidence.nativeExecutionReceipt=JSON.stringify(r);
+ });
+ const before=JSON.stringify(f.payload);
+ f.op.input.body.elementIds=[42,43];
+ f.fresh.nativeProgramEffectState.requestedElementIds=[42,43];
+ f.fresh.nativeProgramEffectState.items=f.fresh.nativeProgramEffectState.items.slice(1);
+ f.result.raw_payload_hash=payloadDigestV2(f.fresh).digest;
+ assert.deepEqual(plan(f.snapshot,f.subject)?.body.elementIds,[42,43]);
+ assert.equal(match(f.snapshot,f.subject,f.result,f.fresh),true);
+ assert.equal(JSON.stringify(f.payload),before,'do not promote partial source evidence or erase footprint');
+ assert.deepEqual(verifiedDeliverableTargetGroupsV2(f.snapshot,f.subject,f.result),[['element_id:42','element_id:43']]);
+ const notice=nativeProgramResultScopeNoticeV2(f.snapshot,f.subject)!;
+ assert.equal(notice.notification_count,3);assert.equal(notice.other_notification_count,1);
+ assert.match(notice.notice,/not certified harmless or preserved/);
+}));
+
+function scopedFixture(declaration:any={element_ids:[42,43]},mutate?:(r:any)=>void,trust='authoritative_native'){
+ const f=fixture((p,input)=>{
+  input.native_program.result_targets=declaration;
+  const r=JSON.parse(p.evidence.nativeExecutionReceipt);r.program_result=JSON.stringify({created:[41],checked:[42,43]});
+  mutate?.(r);p.evidence.nativeExecutionReceipt=JSON.stringify(r);
+ },trust);
+ const targets=declaration?.result_field==='created'?[41,43]:[42,43];
+ f.op.input.body.elementIds=targets;
+ f.fresh.nativeProgramEffectState.requestedElementIds=targets;
+ f.fresh.nativeProgramEffectState.items=f.fresh.nativeProgramEffectState.items.filter((i:any)=>targets.includes(i.elementId));
+ f.result.raw_payload_hash=payloadDigestV2(f.fresh).digest;return f;
+}
+
+function checkedScopedFixture(scoped=true){
+ const f=scoped?scopedFixture():fixture();
+ assert.equal(match(f.snapshot,f.subject,f.result,f.fresh),true);
+ f.subject.target={target_id:'document',semantic_scope:{}};
+ f.subject.verification_operation_ids=['read'];
+ Object.assign(f.op,{settlement_state:'settled',result:f.result,observation_ids:['verified']});
+ f.snapshot.observations.verified={operation_id:'read',binding:f.subject.binding,authority:'native-host',raw_payload_hash:f.result.raw_payload_hash,
+  facts:[{fact_id:'verification.postcondition_satisfied',fact_class:'verification',value:true}]};
+ return f;
+}
+function laterTouch(f:ReturnType<typeof checkedScopedFixture>,ids:number[]){
+ f.snapshot.operations.later={...f.subject,operation_id:'later',verification_operation_ids:[],observation_ids:[],
+  target:{target_id:'element_id:'+ids[0],semantic_scope:{}},opened_at:'2026-11-08T10:00:04Z',
+  result:{...f.subject.result,operation_id:'later',completed_at:'2026-11-08T10:00:05Z',affected_target_identities:ids.map(id=>'element_id:'+id)}};
+}
+
+test('checked requested results stay current across incidental notification overlap, without rewriting history',()=>workspace(()=>{
+ const f=checkedScopedFixture();assert.equal(checkedEditIsCurrentV2(f.snapshot,'apply'),true);
+ laterTouch(f,[41]);const before=JSON.stringify(f.snapshot);
+ assert.equal(checkedReadIsCurrentV2(f.snapshot,'read'),true);
+ assert.equal(checkedEditIsCurrentV2(f.snapshot,'apply'),true);
+ assert.equal(JSON.stringify(f.snapshot),before);
+ assert.deepEqual(f.subject.result.affected_target_identities,['element_id:41','element_id:42','element_id:43']);
+ const legacy=checkedScopedFixture(false);laterTouch(legacy,[41]);
+ assert.equal(checkedEditIsCurrentV2(legacy.snapshot,'apply'),false,'unscoped legacy proof keeps full footprint');
+}));
+
+test('requested-result freshness still rejects actual target touches, unknown and in-flight writes',()=>workspace(()=>{
+ for(const id of [42,43])for(const mode of ['applied','unknown','in-flight']){
+  const f=checkedScopedFixture();laterTouch(f,[id]);
+  if(mode==='unknown')f.snapshot.operations.later.persistent_effect='unknown';
+  if(mode==='in-flight'){f.snapshot.in_flight_operation_ids=['later'];f.snapshot.operations.later.result=undefined;}
+  assert.equal(checkedEditIsCurrentV2(f.snapshot,'apply'),false,`${id}/${mode}`);
+ }
+ const f=checkedScopedFixture();laterTouch(f,[]);f.snapshot.operations.later.target={target_id:'',semantic_scope:{}};
+ assert.equal(checkedEditIsCurrentV2(f.snapshot,'apply'),false,'unknown target footprint remains conservative');
+}));
+
+test('actor feedback retains checked requested results while incidental notifications overlap',()=>workspace(()=>{
+ const f=checkedScopedFixture();laterTouch(f,[41]);
+ f.snapshot.spec={requested_effect:'apply',execution_policy:{verification_mode:'advisory'}};
+ for(const [id,o] of Object.entries(f.snapshot.observations) as Array<[string,any]>){
+  o.observation_id=id;o.observed_at='2026-11-08T10:00:03Z';o.raw_payload_ref??='evidence:read';o.facts??=[];o.eligible_criterion_ids=[];
+ }
+ const before=JSON.stringify(f.snapshot);
+ const feedback=()=>JSON.parse(codexAssignmentEvidenceContextV2(f.snapshot));
+ let visible=feedback();
+ assert.equal(visible.pending_verification.some((o:any)=>o.operation_id==='apply'),false);
+ assert.equal(visible.verified_postconditions.some((o:any)=>o.operation_id==='apply'),true);
+ assert.equal(JSON.stringify(f.snapshot),before,'projection cannot settle or rewrite the task');
+ laterTouch(f,[42]);visible=feedback();
+ assert.equal(visible.pending_verification.some((o:any)=>o.operation_id==='apply'),true);
+ assert.equal(visible.verified_postconditions.some((o:any)=>o.operation_id==='apply'),false);
+ f.snapshot.execution_control={state:'paused'};
+ assert.deepEqual(feedback().verified_postconditions,[],'Pause still suppresses active verified guidance');
+}));
+
+test('freshness narrowing requires trusted source, selector, binding, digest and exact checked read scope',()=>workspace(()=>{
+ for(const mutate of [
+  (f:any)=>f.subject.input.source+='foreign',
+  (f:any)=>f.subject.input.native_program.result_targets=null,
+  (f:any)=>f.subject.input.native_program.result_targets={element_ids:[42]},
+  (f:any)=>f.subject.input.native_program.parameter_checks=[],
+  (f:any)=>f.subject.result.raw_payload_hash='foreign',
+  (f:any)=>f.snapshot.observations.obs.authority='model',
+  (f:any)=>f.snapshot.observations.obs.raw_payload_ref='evidence:missing',
+  (f:any)=>f.subject.result.binding={...f.subject.binding,run_id:'foreign'},
+  (f:any)=>f.snapshot.input_invalidated_operation_ids=['apply'],
+  (f:any)=>f.snapshot.input_invalidated_operation_ids=['read'],
+  (f:any)=>f.op.input.body.elementIds=[42],
+  (f:any)=>f.op.input.body.includeNativeProgramEffectState=false,
+  (f:any)=>f.op.input.body.extra=true,
+  (f:any)=>f.op.request_identity.path='/revit/get-parameters',
+  (f:any)=>f.snapshot.observations.verified.raw_payload_hash='foreign',
+ ]){const f=checkedScopedFixture();mutate(f);assert.equal(checkedEditIsCurrentV2(f.snapshot,'apply'),false,String(mutate));}
+}));
+
+test('created result IDs are selectors only and require actual native matching state',()=>workspace(()=>{
+ const f=scopedFixture({element_ids:[43],result_field:'created'});
+ assert.deepEqual(plan(f.snapshot,f.subject)?.body.elementIds,[41,43]);
+ assert.equal(match(f.snapshot,f.subject,f.result,f.fresh),true);
+ f.fresh.nativeProgramEffectState.items[0]=state(41,false);f.result.raw_payload_hash=payloadDigestV2(f.fresh).digest;
+ assert.equal(match(f.snapshot,f.subject,f.result,f.fresh),false);
+}));
+
+test('scoped checks reject out-of-footprint, malformed and conflicting selectors',()=>workspace(()=>{
+ for(const declaration of [null,{},[],{element_ids:[]},{element_ids:[42,43,99]},
+  {element_ids:[42,43,43]},{element_ids:['42',43]},{element_ids:[42.1,43]},
+  {result_field:'missing'}, {result_field:'nested.ids'},{result_field:'constructor'},
+  {element_ids:[42,43],unexpected:true},{element_ids:Array.from({length:257},(_,i)=>i+1)}]){
+  const f=scopedFixture(declaration);assert.equal(plan(f.snapshot,f.subject),null,JSON.stringify(declaration));
+  assert.equal(match(f.snapshot,f.subject,f.result,f.fresh),false);
+ }
+ for(const mutate of [
+  (r:any)=>r.effect_observation.items[1].complete=false,
+  (r:any)=>r.effect_observation.items[1].stateHash='bad',
+  (r:any)=>r.effect_observation.items[0].elementId=42,
+  (r:any)=>r.effect_observation.items.pop(),
+  (r:any)=>r.effect_observation.documentSessionId='other',
+  (r:any)=>r.transaction.deleted_element_ids.push(99),
+  (r:any)=>r.effect_observation.complete=false,
+ ]){const f=scopedFixture(undefined,mutate);assert.equal(plan(f.snapshot,f.subject),null,String(mutate));}
+ for(const output of ['not json','{}','{"checked":[999]}','{"checked":[42,43,43]}']){
+  const f=scopedFixture({result_field:'checked'},r=>r.program_result=output);assert.equal(plan(f.snapshot,f.subject),null);
+ }
+}));
+
+test('scoped checks retain source binding, Pause, unknown, current-version and mismatched-result safeguards',()=>workspace(()=>{
+ for(const mutate of [
+  (f:any)=>f.subject.input.source+='foreign',
+  (f:any)=>f.subject.input.native_program.result_targets={element_ids:[41,42,43]},
+  (f:any)=>f.subject.result.raw_payload_hash='wrong',
+  (f:any)=>f.snapshot.current_binding={...f.snapshot.current_binding,run_id:'foreign'},
+  (f:any)=>f.snapshot.unresolved_unknown_operation_ids=['unknown'],
+  (f:any)=>f.snapshot.execution_control={state:'paused'},
+  (f:any)=>f.fresh.nativeProgramEffectState.items[0]=state(42,false),
+  (f:any)=>f.fresh.nativeProgramEffectState.requestedElementIds=[41,42,43],
+  (f:any)=>f.op.opened_at='2026-11-08T09:00:00Z',
+  (f:any)=>f.snapshot.operations.other={...f.subject,operation_id:'other',opened_at:'2026-11-08T10:00:02Z'},
+ ]){const f=scopedFixture();mutate(f);f.result.raw_payload_hash=payloadDigestV2(f.fresh).digest;assert.equal(match(f.snapshot,f.subject,f.result,f.fresh),false,String(mutate));}
+ const f=scopedFixture(undefined,undefined,'model_report');assert.equal(plan(f.snapshot,f.subject),null);
+}));
+
+test('requested-target inspection completes without crediting dependent notification identities',()=>workspace(()=>{
+ const f=scopedFixture();assert.equal(match(f.snapshot,f.subject,f.result,f.fresh),true);
+ f.subject.verification_operation_ids=['read'];f.op.result=f.result;f.op.settlement_state='settled';f.op.observation_ids=['verified'];
+ const identities=verifiedDeliverableTargetGroupsV2(f.snapshot,f.subject,f.result)[0];
+ f.snapshot.observations.verified={operation_id:'read',binding:f.subject.binding,authority:'native-host',facts:[
+  {fact_id:'verification.postcondition_satisfied',fact_class:'verification',value:true},
+  {fact_id:'verification.deliverable_target_identities',fact_class:'verification',value:identities}]};
+ f.snapshot.work_plan={schema:'revit-operator.assignment-work-plan/v2',assumptions:[],items:[
+  {item_id:'edit',kind:'edit',declared_at:'2026-11-08T09:00:00Z',completed_at:'2026-11-08T10:00:04Z',operation_ids:['apply']},
+  {item_id:'review',kind:'inspection',depends_on:['edit'],declared_at:'2026-11-08T09:00:00Z',operation_ids:[]}]};
+ f.snapshot.operations.review={...f.op,operation_id:'review',opened_at:'2026-11-08T10:00:05Z',result:{...f.result,raw_payload_hash:'fresh'},observation_ids:['inspected']};
+ f.snapshot.observations.inspected={operation_id:'review',binding:f.subject.binding,authority:'native-host',raw_payload_hash:'fresh'};
+ const proof={observation_ids:['inspected'],target_ids:identities};
+ assert.ok(completeWorkPlanItemV2(f.snapshot,'review',['review'],'2026-11-08T10:00:06Z',proof).items[1]!.completed_at);
+ assert.deepEqual(identities,['element_id:42','element_id:43']);
+}));
+
+test('dependent deletions remain explicit audit warnings and never become checked deliverables',()=>workspace(()=>{
+ const f=scopedFixture({element_ids:[42]});
+ f.op.input.body.elementIds=[42];f.fresh.nativeProgramEffectState.requestedElementIds=[42];
+ f.fresh.nativeProgramEffectState.items=f.fresh.nativeProgramEffectState.items.filter((i:any)=>i.elementId===42);
+ f.result.raw_payload_hash=payloadDigestV2(f.fresh).digest;
+ assert.equal(match(f.snapshot,f.subject,f.result,f.fresh),true,'proves only requested state persistence');
+ const notice=nativeProgramResultScopeNoticeV2(f.snapshot,f.subject)!;
+ assert.equal(notice.other_deleted_count,1);assert.deepEqual(notice.other_deleted_sample,[43]);
+ assert.deepEqual(verifiedDeliverableTargetGroupsV2(f.snapshot,f.subject,f.result),[['element_id:42']]);
+ assert.match(notice.notice,/existing code\/visual review path/);
+ assert.match(notice.notice,/not certified harmless or preserved/);
 }));

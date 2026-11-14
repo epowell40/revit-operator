@@ -4,8 +4,27 @@ import { sameAssignmentBindingV2 } from '../domain/assignment-kernel/identity.js
 import { operationTargetIdentityAliasesV2 } from '../domain/assignment-kernel/operation_target_identity.js';
 import { hasCompleteNativeChangeInventoryV2 } from './native_change_inventory_v2.js';
 import {VECTOR_DETAIL_SOURCE_FACT_V2} from './vector_source_proof_contract_v2.js';
+import {nativeProgramEffectStateV2} from './native_program_effect_postcondition_v2.js';
 
-function reviewedTargets(op: AssignmentSnapshotV2['operations'][string], read: AssignmentSnapshotV2['operations'][string]) {
+function reviewedTargets(snapshot: AssignmentSnapshotV2, op: AssignmentSnapshotV2['operations'][string], read: AssignmentSnapshotV2['operations'][string]) {
+  const args = (op.input?.arguments ?? op.input) as Record<string, unknown> | undefined;
+  const native = args?.native_program;
+  if (op.capability_id === 'operator_run_dynamic_revit_program' && native && typeof native === 'object'
+    && Object.hasOwn(native, 'result_targets')) {
+    // Match the scope of the already accepted persistence check. DocumentChanged
+    // notifications are an audit footprint, not additional checked deliverables.
+    // Resolve selectors only from authenticated source/native receipts; never
+    // trust a model-returned ID list or the read's requested IDs by themselves.
+    const state = nativeProgramEffectStateV2(snapshot, op);
+    const body = read.input?.body as Record<string, unknown> | undefined;
+    if (!state?.scoped || read.request_identity?.method !== 'POST'
+      || read.request_identity.path !== '/revit/get-element-summary'
+      || read.input?.method !== 'POST' || read.input.path !== '/revit/get-element-summary'
+      || !body || Object.keys(body).length !== 2 || body.includeNativeProgramEffectState !== true
+      || !Array.isArray(body.elementIds) || body.elementIds.length !== state.targets.length
+      || !body.elementIds.every((id, i) => id === state.targets[i])) return [];
+    return state.targets.map(id => `element_id:${id}`).flatMap(operationTargetIdentityAliasesV2);
+  }
   // These property verifiers check every exact requested owner. Incidental
   // panel/browser modifications are not subjects of a Type or parameter proof.
   // Relationship and geometry proofs keep their broader dependency footprint.
@@ -46,7 +65,7 @@ export function checkedReadIsCurrentV2(snapshot: AssignmentSnapshotV2, readId: s
         && sameAssignmentBindingV2(observed.binding, read.binding) && observed.raw_payload_hash === read.result?.raw_payload_hash
         && observed.facts.some(f => f.fact_id === 'verification.postcondition_satisfied' && f.fact_class === 'verification' && f.value === true);
     })) return false;
-  const readAt = Date.parse(read.result.completed_at), appliedAt=Date.parse(op.result?.completed_at??''), targets = new Set(reviewedTargets(op,read));
+  const readAt = Date.parse(read.result.completed_at), appliedAt=Date.parse(op.result?.completed_at??''), targets = new Set(reviewedTargets(snapshot,op,read));
   if (!targets.size || !Number.isFinite(readAt) || !Number.isFinite(appliedAt) || readAt < appliedAt) return false;
   // A newer backend-owned source mismatch must not be hidden by an older
   // passing check. Incomplete page prefixes issue no such mismatch fact.

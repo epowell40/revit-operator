@@ -1,6 +1,6 @@
 import { committedDrawingSpecImportReadbackPlanV2 } from "../verification/drawing_spec_import_v2.js";
-import {committedNativeProgramParameterReadbackPlanV2} from '../verification/native_program_parameter_postcondition_v2.js';
-import {committedNativeProgramEffectReadbackPlanV2} from '../verification/native_program_effect_postcondition_v2.js';
+import {committedNativeProgramParameterReadbackPlanV2,nativeProgramParameterScopeNoticeV2} from '../verification/native_program_parameter_postcondition_v2.js';
+import {committedNativeProgramEffectReadbackPlanV2,nativeProgramResultScopeNoticeV2} from '../verification/native_program_effect_postcondition_v2.js';
 import {committedExcelTableImportReadbackPlanV2} from '../verification/excel_table_import_v2.js';
 import {committedVectorDetailReadbackPlanV2,committedVectorAnnotationRefreshPlanV2} from '../verification/vector_detail_import_v2.js';
 import {committedVectorStrokeCadReadbackPlanV2} from '../verification/vector_stroke_cad_readback_v2.js';
@@ -595,6 +595,9 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
       if (hostReadResponse) response.contentItems.push({ type:"inputText", text:
         "Host requested a separate bounded native readback. Its result and verification status are retained in the assignment context; the edit receipt itself is not proof." },
         ...hostReadResponse.contentItems);
+      const scopeNotice=current?.operations[lease.operation_id]&&(nativeProgramResultScopeNoticeV2(current,current.operations[lease.operation_id]!)
+        ??nativeProgramParameterScopeNoticeV2(current,current.operations[lease.operation_id]!));
+      if(scopeNotice)response.contentItems.push({type:'inputText',text:JSON.stringify(scopeNotice)});
       const vectorHandoff=vectorVerificationHandoffV2(sourceProof,getAssignmentKernelSnapshotV2(lease.assignment_id),lease.operation_id);
       if(vectorHandoff)response.contentItems.push({type:'inputText',text:JSON.stringify(vectorHandoff)});
       attachCurrentAssignmentContext(response, params.tool, lease.assignment_id, lease.operation_id);

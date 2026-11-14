@@ -9,6 +9,7 @@ import {canonicalJsonV2,sameAssignmentBindingV2,type AssignmentSnapshotV2,type O
 const row=(v:unknown):Record<string,unknown>=>v!==null&&typeof v==='object'&&!Array.isArray(v)?v as Record<string,unknown>:{};
 const same=(a:unknown,b:unknown)=>JSON.stringify(a)===JSON.stringify(b);
 const sorted=(v:readonly string[])=>[...v].sort();
+const nativeIds=(v:unknown):v is number[]=>Array.isArray(v)&&v.length<=4096&&v.every(id=>Number.isSafeInteger(id)&&id>0)&&new Set(v).size===v.length;
 
 export function dynamicProgramParameterPostconditionSatisfiedV2(snapshot:AssignmentSnapshotV2,subject:OperationV2,result:OperationResultV2,payload:unknown):boolean{
  return nativeProgramParameterPostconditionSatisfiedV2(snapshot,subject,result,payload)
@@ -34,9 +35,8 @@ export function nativeProgramParameterChecksV2(snapshot:AssignmentSnapshotV2,sub
   ||args.mode!=='apply'||typeof args.source!=='string'||typeof native.entry_type!=='string'
   ||snapshot.input_invalidated_operation_ids?.includes(subject.operation_id))return null;
  try {
-  const checks=normalizeNativeParameterChecks(native.parameter_checks,'apply');if(!checks)return null;
+  const checks=normalizeNativeParameterChecks(native.parameter_checks,'apply');if(!checks||Object.hasOwn(native,'result_targets'))return null;
   const targets=sorted([...new Set(checks.map(c=>'element_id:'+c.element_id))]);
-  if(!same(targets,sorted(r.affected_target_identities??[])))return null;
   const sourceHash='sha256:'+createHash('sha256').update(args.source.replace(/\r\n?/g,'\n'),'utf8').digest('hex');
   const fingerprint='sha256:'+String(snapshot.current_binding.document_fingerprint??'').replace(/^sha256:/,'');
   for(const id of subject.observation_ids){
@@ -57,17 +57,19 @@ export function nativeProgramParameterChecksV2(snapshot:AssignmentSnapshotV2,sub
    const evidence=row(payload.evidence),outcome=row(payload.native_outcome);
    const parse=(v:unknown)=>typeof v==='string'&&v.length<=2*1024*1024?row(JSON.parse(v)):{};
    const receipt=parse(evidence.nativeExecutionReceipt),prepared=parse(evidence.snapshotReceipt),doc=row(prepared.Document),tx=row(receipt.transaction);
-   const affected=tx.affected_element_ids,modified=tx.modified_element_ids;
+   const affected=tx.affected_element_ids,modified=tx.modified_element_ids,added=tx.added_element_ids,deleted=tx.deleted_element_ids;
    if(evidence.schema!=='dynamic-revit-native-program-evidence/v1'||evidence.ok!==true
     ||receipt.schema!=='dynamic-revit-native-execution-receipt/v1'||receipt.success!==true||receipt.verified!==false
     ||receipt.source_hash!==sourceHash||prepared.Schema!=='dynamic-revit-native-preparation/v1'||prepared.SourceHash!==sourceHash
     ||receipt.preparation_id!==prepared.PreparationId||doc.ProjectFingerprint!==fingerprint||receipt.document_fingerprint!==fingerprint
     ||typeof doc.SessionId!=='string'||!doc.SessionId||receipt.document_session_id!==doc.SessionId
     ||outcome.persistent_effect!=='applied'||outcome.native_transaction_state!=='committed'||outcome.task_verified!==false||outcome.verification_required!==true
-    ||tx.status!=='committed'||tx.committed!==true||!same(tx.added_element_ids,[])||!same(tx.deleted_element_ids,[])
-    ||!Array.isArray(affected)||!Array.isArray(modified)||affected.some(id=>!Number.isSafeInteger(id)||id<=0)
-    ||new Set(affected).size!==affected.length||!same(sorted(affected.map(id=>'element_id:'+id)),targets)
-    ||!same(sorted(modified.map(id=>'element_id:'+id)),targets))continue;
+    ||tx.status!=='committed'||tx.committed!==true
+    ||!nativeIds(affected)||!nativeIds(modified)||!nativeIds(added)||!nativeIds(deleted)
+    ||added.some(id=>modified.includes(id)||deleted.includes(id))||modified.some(id=>deleted.includes(id))
+    ||!same(sorted(affected.map(id=>'element_id:'+id)),sorted(r.affected_target_identities??[]))
+    ||!same(sorted(affected.map(String)),sorted([...modified,...added,...deleted].map(String)))
+    ||!targets.every(id=>modified.some(n=>id==='element_id:'+n)))continue;
    return checks;
   }
  }catch{/* Malformed, foreign, missing or untrusted evidence is not a check. */}
@@ -82,6 +84,15 @@ export function committedNativeProgramParameterReadbackPlanV2(snapshot:Assignmen
  const checks=nativeProgramParameterChecksV2(snapshot,subject);if(!checks)return null;
  return {method:'POST',path:'/revit/get-parameters',body:{elementIds:[...new Set(checks.map(c=>c.element_id))].sort((a,b)=>a-b),
   names:sorted([...new Set(checks.map(c=>c.parameter_name))]),includeEmpty:true,limit:500}};
+}
+
+export function nativeProgramParameterScopeNoticeV2(snapshot:AssignmentSnapshotV2,subject:OperationV2){
+ const checks=nativeProgramParameterChecksV2(snapshot,subject);if(!checks)return null;
+ const targets=[...new Set(checks.map(c=>c.element_id))].sort((a,b)=>a-b);
+ const count=subject.result!.affected_target_identities!.length;
+ return {scope:'requested_parameter_values',result_element_ids:targets,notification_count:count,
+  other_notification_count:count-targets.length,
+  notice:'The separate read compares only the declared requested text fields. Full native added/modified/deleted notifications remain audited; they are not extra deliverables or certified preservation. Review exact executed source against the task using the existing code/visual review path and inspect the relevant drawing for unrelated actions or missing content. Dependency notification counts alone do not establish a mismatch.'};
 }
 
 export function nativeProgramParameterPostconditionSatisfiedV2(snapshot:AssignmentSnapshotV2,subject:OperationV2,

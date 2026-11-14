@@ -74,6 +74,30 @@ namespace RevitBridge.Common.Tests
                 Assert.False(result.GetProperty("complete").GetBoolean());
             }
         }
+        [Theory]
+        [InlineData("FamilyInstance")]
+        [InlineData("ViewSchedule")]
+        [InlineData("ViewSheet")]
+        [InlineData("ScheduleSheetInstance")]
+        [InlineData("Viewport")]
+        [InlineData("ViewSheetSet")]
+        [InlineData("Wall")]
+        public void PublicElementObservationRequiresStableVersionWithoutClaimingPrivateGeometry(string className)
+        {
+            OperatorNativeEffectState.Item Public(long id) => OperatorNativeEffectState.Capture(id,true,new {
+                elementId=id,found=true,className,shape=new {
+                    kind="public_element_observation",privateStateInspected=false,geometryTopologyInspected=false}});
+            var missing=Json(OperatorNativeEffectState.Observe("f","s",new long[]{1},Public));
+            Assert.False(missing.GetProperty("complete").GetBoolean());
+            var store=new OperatorDocumentChangeObservationStore(1234);
+            var good=Json(OperatorNativeEffectState.Observe("f","s",new long[]{1},Public,store.CaptureVersion));
+            Assert.True(good.GetProperty("complete").GetBoolean());
+            var changed=Json(OperatorNativeEffectState.Observe("f","s",new long[]{1},id=>{
+                store.Record("s","transaction",Array.Empty<string>(),new long[]{2},Array.Empty<long>(),Array.Empty<long>(),DateTimeOffset.UtcNow);
+                return Public(id);
+            },store.CaptureVersion));
+            Assert.False(changed.GetProperty("complete").GetBoolean());
+        }
         [Fact] public void ExactNativeStateIncludesActualIdentityAndDeletedAbsence()
         {
             var value=Json(OperatorNativeEffectState.Observe("fingerprint","session",new long[]{2,1},id=>
