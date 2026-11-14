@@ -1280,7 +1280,7 @@
     },
     {
       "path": "apps/operator-backend/src/attachments/read_attachment.ts",
-      "sha256": "sha256:35e41036eae2ce0dc0709641ccd1089e5b1670a401a700bf7a33dc965add233e"
+      "sha256": "sha256:0e1c71f9e423f5ec86ff52b649933d15b648fb33a79ba98ef54b25e460e7661d"
     },
     {
       "path": "apps/operator-backend/src/attachments/read_output_pdf.ts",
@@ -3405,11 +3405,11 @@
     },
     {
       "path": "apps/operator-backend/src/evidence/model_context_budget.ts",
-      "sha256": "sha256:34140bde5acc0d3bd5ce3614cdaec6c3c822f41777bb2bac0e0776905079db72"
+      "sha256": "sha256:9511aebf4971b4ba012a1d34f7267cd2243c104bf08892802725f12742798b6e"
     },
     {
       "path": "apps/operator-backend/src/evidence/native_correction_projection.ts",
-      "sha256": "sha256:35f6f98b46e9ae29f2ea99355c82e50b2c9b358d0c39e947fbc6e87b15b07d70"
+      "sha256": "sha256:fb9a8548a7f46cae194d0ce43d92b0bfe9b335ec84da3773ffa2152300e9f83a"
     },
     {
       "path": "apps/operator-backend/src/evidence/native_execution_audit.ts",
@@ -7240,6 +7240,14 @@
       "sha256": "sha256:b12bea9ff2e2cc512f0a203d630a274e74ff57730c7581f950adc2b649c4e3f6"
     },
     {
+      "path": "apps/operator-backend/test/model_evidence_correction_batch.fixtures.ts",
+      "sha256": "sha256:38647ece6f2b4ed1e37d1f34077755d81d379ee3f46353d58a028f9fdb303733"
+    },
+    {
+      "path": "apps/operator-backend/test/model_evidence_correction_batch.test.ts",
+      "sha256": "sha256:ea035532b7674067087d9841f7f449e3bf92ae68f5e32109ccf1f575db4fb88f"
+    },
+    {
       "path": "apps/operator-backend/test/model_evidence_multi_output.fixtures.ts",
       "sha256": "sha256:a624709fbdbdeed229d5655de9a0d5590838c34837fcc0bfc7c5ead148e01f1e"
     },
@@ -7353,7 +7361,7 @@
     },
     {
       "path": "apps/operator-backend/test/native_correction_projection.test.ts",
-      "sha256": "sha256:2a42ca46e8be557ad943f044726a2f013b96a7cd17a82ec3abb9f404d6250386"
+      "sha256": "sha256:08ee2954b9d35abffdd0ff877220c3861c9c9756227e56778befd9ee398244a4"
     },
     {
       "path": "apps/operator-backend/test/native_csharp_courier_claim.test.ts",
@@ -7698,6 +7706,10 @@
     {
       "path": "apps/operator-backend/test/raster_attachment_read.test.ts",
       "sha256": "sha256:37e00d374ae615114f574394f6c9ecaee56beef7cd6e5a284e742864038e0c06"
+    },
+    {
+      "path": "apps/operator-backend/test/raster_png_metadata.test.ts",
+      "sha256": "sha256:2f852859360c55078245cc175d7cdd1322102ccf43698704b2f3517ef40dcb14"
     },
     {
       "path": "apps/operator-backend/test/read_attachment.test.ts",
@@ -12629,7 +12641,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:bf65f28e746387109075c66b7dc1e7ff60f7be07972496fcea91c288413d2bfb",
+  "inputs_hash": "sha256:ea8086f4abec49dc5ce100afe535dbb7c1315ee5847dd59e6936b98fee9d2016",
   "result": {
     "passed": true,
     "checks": [
