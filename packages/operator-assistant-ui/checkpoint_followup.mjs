@@ -1,13 +1,27 @@
 const bindingKeys = ["assignment_id", "session_id", "run_id", "generation"];
 
+/** Display eligibility only. A button must not promise a renewal unsupported by
+ * the task's frozen policy. The authenticated endpoint still owns admission. */
+export function checkpointResourceRenewalAvailable(s) {
+  return Boolean(s && !s.terminal && s.quiescent && !s.provider_usage_hold
+    && s.execution_control?.state !== 'paused'
+    && s.spec?.requested_effect === 'apply'
+    && s.spec.execution_policy?.mode === 'local_advisory_v1'
+    && s.spec.execution_policy.progress_allowance
+    && s.completion_proposal?.verified === false
+    && typeof s.completion_proposal.review_id === 'string' && s.completion_proposal.review_id
+    && s.pending_review_ids?.length === 1 && s.pending_review_ids[0] === s.completion_proposal.review_id
+    && !s.unresolved_unknown_operation_ids?.length && !s.pending_input_variable_ids?.length
+    && !s.in_flight_operation_ids?.length && !s.in_flight_provider_call_ids?.length);
+}
+
 /** User-facing preparation only; the authenticated backend rechecks custody,
  * resource bounds and all execution fences before journaling an authorization. */
 export function checkpointResourceRenewalContext(publication,goal) {
   const context=checkpointDirectionContext(publication,goal),s=publication.snapshot;
-  if(!context.checkpoint||context.paused||s.terminal||!s.quiescent||s.provider_usage_hold
-    ||s.spec.requested_effect!=='apply'||!s.spec.execution_policy.progress_allowance
-    ||s.unresolved_unknown_operation_ids?.length||s.pending_input_variable_ids?.length
-    ||s.in_flight_operation_ids?.length||s.in_flight_provider_call_ids?.length)
+  if(s.spec.execution_policy?.mode!=='local_advisory_v1'||!s.spec.execution_policy.progress_allowance)
+    throw new Error('This task does not support an additional allowance. Its saved work and prior usage are retained.');
+  if(!context.checkpoint||context.paused||!checkpointResourceRenewalAvailable(s))
     throw new Error('Settle the current apply checkpoint before explicitly renewing its allowance.');
   return {...context.checkpoint,resource_renewal:{provider_calls:64,total_tokens:16_000_000}};
 }
