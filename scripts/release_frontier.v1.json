@@ -610,6 +610,7 @@
     "OperatorNativeProgramCourierFilesTests",
     "OperatorNativeProgramCourierOutputTests",
     "OperatorNativeProgramCourierConsumerTests",
+    "OperatorNativeProgramEvidenceTransportTests",
     "NativeCapturedFailureObservationTests"
   ],
   "failure_families": [
@@ -5515,6 +5516,14 @@
         "dotnet:OperatorNativeProgramCourierFilesTests",
         "dotnet:OperatorNativeProgramCourierOutputTests",
         "dotnet:OperatorNativeProgramCourierConsumerTests"
+      ]
+    },
+    {
+      "id": "native_committed_receipt_exceeds_courier_wire_limit_20261114",
+      "coverage": [
+        "dotnet:OperatorNativeProgramCourierConsumerTests",
+        "dotnet:OperatorNativeProgramEvidenceTransportTests",
+        "mcp:lib/dynamicNativeCourier.test.ts"
       ]
     },
     {
