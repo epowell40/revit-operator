@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { normalizeNativeProgram, readNativeProgramEvidence } from "./dynamicNativeProgram.js";
-import { runDynamicRevitProgram } from "./dynamicRevitProgramRunner.js";
+import { runDynamicRevitProgram, projectNativeFailureIdentity } from "./dynamicRevitProgramRunner.js";
 import { presentDynamicProgramResult } from "./dynamicProgramPresentation.js";
 import { DYNAMIC_REVIT_NATIVE_GUIDE } from "./dynamicRevitSdkGuide.js";
 import { runWithRevitToolAlias } from "./toolExposurePolicy.js";
@@ -151,6 +151,57 @@ test("authenticated warning rollback exposes bounded native cause to the actor w
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test("duplicate Type Mark repair retains the actual reported type pairs through model-visible feedback", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "native-warning-identities-"));
+  try {
+    const supervisor = path.join(root, "supervisor.exe"), worker = path.join(root, "worker"), token = path.join(root, "token");
+    fs.writeFileSync(supervisor, "stub"); fs.mkdirSync(worker); fs.writeFileSync(token, "0123456789abcdef");
+    const runtime = { ...env, OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH: supervisor,
+      OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY: worker, OPERATOR_TOKEN_FILE: token };
+    // Retained native warning pairs: earlier roof/wall/floor types, NOT the
+    // window/door types the actor tried to repair from message-only feedback.
+    const pairs = [[224, 1200228], [441451, 1200224], [441472, 1200226]];
+    const definition = "6e1efefe-c8e0-483d-8482-150b9f1da21a";
+    const e = fixture("apply", "rolled_back", false), receipt = JSON.parse(e.nativeExecutionReceipt);
+    receipt.native_failures = pairs.map(elementIds => ({ severity: "warning",
+      message: 'Elements have duplicate "Type Mark" values.', elementIds, failureDefinitionId: definition }));
+    e.nativeExecutionReceipt = JSON.stringify(receipt); authenticate(e);
+    await runWithAssignmentKernelV2(metadata("apply"), async () => {
+      const result = await runDynamicRevitProgram({ source, mode: "apply", native_program: { entry_type: "Query", allow_create: true,
+        allowed_existing_unique_ids: [], max_affected_elements: 20 } }, runtime, async (_exe, args) => {
+        fs.writeFileSync(JSON.parse(fs.readFileSync(args[1]!, "utf8")).evidencePath, JSON.stringify(e));
+        return { exitCode: 1, stdout: "", stderr: "" };
+      });
+      const visible: any = presentDynamicProgramResult(result);
+      const warnings = visible.diagnostics.filter((d: any) => d.code === "NATIVE_MODEL_WARNING");
+      assert.deepEqual(warnings.map((d: any) => d.native_failure?.element_ids), pairs);
+      for (const d of warnings) {
+        assert.equal(d.native_failure.failure_definition_id, definition);
+        assert.equal(d.native_failure.reported_element_count, 2);
+        assert.equal(d.native_failure.complete, true);
+        assert.match(d.native_failure.usage, /attempt-time/);
+        assert.match(d.native_failure.usage, /not authorize/);
+      }
+      assert.equal(result.canonical_attempt_settlement?.effect_state, "none");
+      assert.equal(result.iteration.retryable, false);
+      assert.deepEqual(visible.affected_target_identities, []);
+      assert.equal(visible.native_outcome.task_verified, false);
+    });
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("failure identity projection bounds work and distinguishes absent malformed and truncated IDs", () => {
+  assert.equal(projectNativeFailureIdentity({}).reported_element_count, null);
+  assert.equal(projectNativeFailureIdentity({}).complete, false);
+  assert.equal(projectNativeFailureIdentity({elementIds: []}).complete, true);
+  const malformed = projectNativeFailureIdentity({elementIds: [1, "2", null, NaN, Infinity, -1, 2.5, Number.MAX_SAFE_INTEGER + 1], failureDefinitionId: "not a guid"});
+  assert.deepEqual(malformed.element_ids, [1]); assert.equal(malformed.complete, false);
+  assert.equal(malformed.reported_element_count, 8); assert.equal(malformed.failure_definition_id, null);
+  const many = projectNativeFailureIdentity({elementIds: Array.from({length: 5000}, (_, i) => i + 1)});
+  assert.equal(many.returned_element_count, 16); assert.equal(many.reported_element_count, 5000);
+  assert.equal(many.complete, false);
+});
+
 test("warning details cannot override committed or unknown native effects and stay receipt-bound", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "native-warning-effects-"));
   try {
@@ -177,6 +228,10 @@ test("warning details cannot override committed or unknown native effects and st
         assert.doesNotMatch(visible.guidance, /Confirmed rollback/);
         receipt.native_failures[0].message = "Substituted warning text";
         e.nativeExecutionReceipt = JSON.stringify(receipt); // Deliberately do not authenticate changed bytes.
+        assert.throws(() => readNativeProgramEvidence(e, sourceHash, "apply", fingerprint), /authenticated receipt/);
+        receipt.native_failures[0].message = "W".repeat(5000);
+        receipt.native_failures[0].elementIds = [99999];
+        e.nativeExecutionReceipt = JSON.stringify(receipt);
         assert.throws(() => readNativeProgramEvidence(e, sourceHash, "apply", fingerprint), /authenticated receipt/);
       });
     }
