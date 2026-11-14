@@ -295,6 +295,7 @@ namespace RevitBridge.Operator
                 }
                 var startedAt = DateTime.UtcNow;
                 object? result;
+                Action? nativeCompletionRetained = null;
                 try
                 {
                     if (OperatorNativeProgramCourierRequest.IsRoute(method, path))
@@ -304,7 +305,8 @@ namespace RevitBridge.Operator
                         if (legacyAction == null || !job.TryGetProperty("general_agent_admission", out var nativeAdmission)
                             || nativeAdmission.GetProperty("alias").GetString() != "operator_run_dynamic_revit_program")
                             throw new InvalidOperationException("Native C# requires its exact General Agent tool admission.");
-                        result = await OperatorNativeProgramCourierExecution.ExecuteAsync(path, bodyJson, _getNativeUrl(), actionTimeout.Token).ConfigureAwait(false);
+                        result = await OperatorNativeProgramCourierExecution.ExecuteAsync(path, bodyJson, _getNativeUrl(), actionTimeout.Token,
+                            retained => nativeCompletionRetained = retained).ConfigureAwait(false);
                     }
                     else result = await ExecuteWithBusyRetryAsync(
                         actionFactory,
@@ -320,6 +322,7 @@ namespace RevitBridge.Operator
                 executionCompleted = true;
                 var transportResult = OperatorCourierResultCompactor.Prepare(result);
                 _completionOutbox.Save(sessionId!, jobId, _executorId, transportResult.Result);
+                nativeCompletionRetained?.Invoke();
                 using (var settlementTimeout = CreateAttemptTimeout(SettlementAttemptTimeout))
                 {
                     await _backendClient.CompleteRevitCourierJobJsonAsync(

@@ -68,5 +68,37 @@ namespace RevitBridge.Common
             if (result == null || result.Length > 32768) throw new InvalidOperationException("Native program result is null or exceeds32768characters.");
             return result;
         }
+
+        // Repair hint only, not a stack trace, effect receipt or verification.
+        // Finally/disposal/helper code can be the last statement; don't claim
+        // this is the exact throw site. Never replace settlement/rollback errors.
+        public static void AppendRuntimeDiagnostic(Dictionary<string, object?> result, Exception? error)
+        {
+            if (error == null || error is OperationCanceledException || error is TimeoutException ||
+                !result.TryGetValue("success", out var success) || !(success is bool ok) || ok ||
+                !result.TryGetValue("error", out var existing) || !(existing is string message)) return;
+            try
+            {
+                if (!(error.Data["revit_operator.native_source_line.v1"] is int line) || line < 1 || line > 200000 ||
+                    !(error.Data["revit_operator.native_source_column.v1"] is int column) || column < 1 || column > 200000) return;
+                result["error"] = message + " [Native C# last executed statement: submitted source line " + line +
+                    ", column " + column + ". This is a repair hint, not an exact throw-site or model-result check.]";
+            }
+            catch { /* A broken custom Exception.Data must not hide the original outcome. */ }
+        }
+
+        // Called only after transaction/group disposal. Paint is presentation,
+        // not a condition for retaining a committed edit or proof of its result.
+        public static void RefreshCommittedView(Dictionary<string,object?> result, Action refresh)
+        {
+            if(!result.TryGetValue("success",out var success) || !(success is bool ok) || !ok
+                || !result.TryGetValue("transaction",out var value)
+                || !(value is OperatorNativeTransactionReceipt receipt)
+                || receipt.Status!="committed" || receipt.CommittedValue!=true) return;
+            var feedback=new Dictionary<string,object?>{{"state","requested"},{"pixels_verified",false}};
+            try { refresh(); }
+            catch(Exception error) { feedback["state"]="unavailable";feedback["error_type"]=error.GetType().Name; }
+            result["view_refresh"]=feedback;
+        }
     }
 }

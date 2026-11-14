@@ -22,14 +22,14 @@ function authenticatedReviewHost(binding:AssignmentBindingV2,env:NodeJS.ProcessE
  * cannot enable a product policy; limits are the ordinary frozen product caps. */
 export function selectTaskReviewPolicy(binding:AssignmentBindingV2,requestedEffect:string,
  env:NodeJS.ProcessEnv=process.env,context=getRequestContext()):SingleActorReviewExecutionPolicyV1|undefined {
- if(env.OPERATOR_TASK_EXECUTION_PROFILE!==TASK_REVIEW_PROFILE_V1||requestedEffect!=='apply'
+ if(env.OPERATOR_TASK_EXECUTION_PROFILE!==TASK_REVIEW_PROFILE_V1||!['read','apply'].includes(requestedEffect)
    ||!authenticatedReviewHost(binding,env,context))return undefined;
  const budget=DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2;
  return {mode:TASK_REVIEW_PROFILE_V1,selected_by:'trusted_runtime_host',principal_id:binding.principal_id,
   session_id:binding.session_id,document_fingerprint:binding.document_fingerprint!,max_turns:8,
   max_provider_calls:budget.max_provider_calls,max_operations:budget.max_operations,
   max_total_tokens:budget.max_total_tokens,max_wall_clock_ms:budget.max_wall_clock_ms,
-  ready_work_handoff:'continue_ready_work_v1'};
+  ...(requestedEffect==='apply'?{ready_work_handoff:'continue_ready_work_v1' as const}:{})};
 }
 
 /** Current authenticated custody, independent from a provider's proposal or

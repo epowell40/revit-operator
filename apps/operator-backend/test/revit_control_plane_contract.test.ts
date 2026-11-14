@@ -359,7 +359,7 @@ test("hosted MCP courier is session-bound, approval-gated, and never auto-replay
   assert.match(worker, /OperatorActionDeadlinePolicy\.Resolve[\s\S]{0,200}ConstrainTo\(remaining\)/);
   assert.match(
     worker,
-    /OperatorCourierResultCompactor\.Prepare\(result\)[\s\S]{0,240}_completionOutbox\.Save[\s\S]{0,240}CompleteRevitCourierJobJsonAsync/,
+    /var transportResult\s*=\s*OperatorCourierResultCompactor\.Prepare\(result\);\s*_completionOutbox\.Save\(sessionId!, jobId, _executorId, transportResult\.Result\);\s*nativeCompletionRetained\?\.Invoke\(\);\s*using \(var settlementTimeout = CreateAttemptTimeout\(SettlementAttemptTimeout\)\)\s*\{\s*await _backendClient\.CompleteRevitCourierJobJsonAsync/,
   );
   assert.match(
     worker,

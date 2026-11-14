@@ -125,7 +125,7 @@ namespace RevitBridge.Operator
                 { "/revit/query", new QueryElementsHandler() },
                 { "/revit/view-owned-detailing", new RevitBridge.Logic.Handlers.ViewOwnedDetailingHandler() },
                 { "/revit/resolve", new ResolveHandler() },
-                { "/revit/get-element-summary", new GetElementSummaryHandler() },
+                { "/revit/get-element-summary", new RevitBridge.Logic.Handlers.GetElementSummaryHandler(RevitDocumentChangeObservations.CaptureVersion) },
                 { "/revit/get-parameters", new GetElementParametersHandler() },
                 { "/revit/quantify", new QuantifyElementsHandler() },
                 { "/revit/quantify-visualize", new QuantifyVisualizeHandler() },

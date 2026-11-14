@@ -4,8 +4,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { normalizeNativeProgram, readNativeProgramEvidence } from "./dynamicNativeProgram.js";
-import { runDynamicRevitProgram } from "./dynamicRevitProgramRunner.js";
+import { normalizeNativeProgram, readNativeProgramEvidence, NATIVE_PROGRAM_EVIDENCE_MAX_BYTES } from "./dynamicNativeProgram.js";
+import { runDynamicRevitProgram, projectNativeFailureIdentity } from "./dynamicRevitProgramRunner.js";
 import { presentDynamicProgramResult } from "./dynamicProgramPresentation.js";
 import { DYNAMIC_REVIT_NATIVE_GUIDE } from "./dynamicRevitSdkGuide.js";
 import { runWithRevitToolAlias } from "./toolExposurePolicy.js";
@@ -16,8 +16,37 @@ import { runWithAssignmentKernelV2, decorateAssignmentKernelMcpResultV2, ASSIGNM
 const hash = (value: string) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
 const source = "public static class Query { public static string Execute(Autodesk.Revit.DB.Document doc) { return doc.Title; } }";
 const sourceHash = hash(source), fingerprint = hash("document");
+
+test("native source guide explains static fields without initializers and conservative source-step feedback",()=>{
+  assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/static fields.*without initializers/i);
+  assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/last executed source step/i);
+  assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/not.*exact failing/i);
+});
+test('native drafting guide avoids unsupported DetailCurve class filters and cross-kind replacement',()=>{
+  assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/OfClass\(typeof\(CurveElement\)\).*OfType<DetailCurve>/);
+  assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/SetGeometryCurve.*same curve kind/);
+  assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/different curve kind.*replace only the confirmed element/);
+});
+test('native apply guide prevents an oversized all-element return from rolling back useful construction',()=>{
+  assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/BOTH read and apply.*32768characters.*apply rolls back/);
+  assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/component counts, representative actual Element.UniqueIds/);
+  assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/focused reads.*report omitted counts/);
+  assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/Unknown effects require reconciliation/);
+});
 const env = { REVIT_OPERATOR_MODE: "development", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" };
 type RecordValue = Record<string, any>;
+
+test("native compile refusal delivers source coordinates without a fabricated native outcome or retry authority", () => {
+  const diagnostics = [{ code: "NATIVE_SOURCE_LIFECYCLE", message: "Static field 'document' retains process-wide state, even without an initializer. Use instance or local state; the public Execute entry remains static.",
+    phase: "native_compile", severity: "error", repair_action: "edit_source", line: 3, column: 2, end_line: 3, end_column: 27, retryable: true }];
+  const visible = presentDynamicProgramResult({ schema: "revit-operator.dynamic-revit-program-run.v1", run_id: "compile-refusal", requested_mode: "apply", execution_lane: "native", execution_status: "failed", execution_ok: false,
+    native_outcome: null, diagnostics, verification: { evidence_sha256: hash("retained failure") } });
+  assert.deepEqual(visible.diagnostics, diagnostics);
+  assert.equal(visible.native_outcome, null); assert.equal(visible.execution_ok, false);
+  assert.deepEqual(visible.affected_target_identities, []);
+  assert.doesNotMatch(String(visible.guidance), /Confirmed rollback/);
+  assert.match(String(visible.guidance), /Do not retry unknown effects/);
+});
 
 // Retained reconstruction failure: the body compiled and ran, then the host
 // verified rollback because implicit Revit owners were outside the scope.
@@ -52,6 +81,96 @@ function authenticate(evidence: RecordValue) {
         host_receipt_mac: "hmac-sha256:" + "f".repeat(64), receipt: JSON.parse(raw) }))];
 }
 
+function largeAuthenticatedEvidence(state = "committed", success = true) {
+  const evidence = fixture("apply", state, success);
+  const receipt = JSON.parse(evidence.nativeExecutionReceipt);
+  // A native post-state inventory can exceed 2 MiB while the entire signed
+  // evidence (including its second authenticated copy) remains below 8 MiB.
+  receipt.effect_observation = { states: Array.from({ length: 900 }, (_, id) =>
+    ({ element_id: id + 1, retained_properties: "x".repeat(2400) })) };
+  evidence.nativeExecutionReceipt = JSON.stringify(receipt);
+  authenticate(evidence);
+  assert(Buffer.byteLength(evidence.nativeExecutionReceipt) > 2 * 1024 * 1024);
+  assert(Buffer.byteLength(JSON.stringify(evidence)) < NATIVE_PROGRAM_EVIDENCE_MAX_BYTES);
+  return evidence;
+}
+
+test("native receipts within the total transport budget preserve commit, rollback and unknown without granting verification", () => {
+  for (const [state, success, effect] of [["committed", true, "applied"], ["rolled_back", false, "none"], ["pending", false, "unknown"]] as const) {
+    const evidence = largeAuthenticatedEvidence(state, success);
+    const result = readNativeProgramEvidence(evidence, sourceHash, "apply", fingerprint)!;
+    assert.equal(result.effect, effect);
+    assert.equal(result.receipt.verified, false);
+    assert.equal(result.receipt.retry_permitted, false);
+  }
+});
+
+test("large native receipts still reject substituted bodies, foreign bindings, malformed JSON and aggregate byte overflow", () => {
+  const evidence = largeAuthenticatedEvidence();
+  assert.throws(() => readNativeProgramEvidence(evidence, hash("foreign-source"), "apply", fingerprint), /binding/);
+  assert.throws(() => readNativeProgramEvidence(evidence, sourceHash, "apply", hash("foreign-document")), /binding/);
+  const substituted = { ...evidence, nativeExecutionReceipt: evidence.nativeExecutionReceipt.replace('"document_revision_before":3', '"document_revision_before":4') };
+  assert.throws(() => readNativeProgramEvidence(substituted, sourceHash, "apply", fingerprint), /binding/);
+  const tampered = { ...evidence, nativeExecutionReceipt: evidence.nativeExecutionReceipt.replace('"element_id":1,', '"element_id":999,') };
+  assert.throws(() => readNativeProgramEvidence(tampered, sourceHash, "apply", fingerprint), /authenticated receipt/);
+  assert.throws(() => readNativeProgramEvidence({ ...evidence, nativeExecutionReceipt: "{" }, sourceHash, "apply", fingerprint), SyntaxError);
+  const oversized = { ...evidence, padding: "界".repeat(2 * 1024 * 1024) };
+  assert(JSON.stringify(oversized).length < NATIVE_PROGRAM_EVIDENCE_MAX_BYTES, "UTF-16 count alone would accept this fixture");
+  assert.throws(() => readNativeProgramEvidence(oversized, sourceHash, "apply", fingerprint), /transport byte budget/);
+});
+
+test("large authenticated native result crosses the runner and model-visible consumer without exposing its audit payload", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "native-receipt-budget-"));
+  try {
+    const supervisor = path.join(root, "supervisor.exe"), worker = path.join(root, "worker"), token = path.join(root, "token");
+    fs.writeFileSync(supervisor, "stub"); fs.mkdirSync(worker); fs.writeFileSync(token, "0123456789abcdef");
+    const runtime = { ...env, OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH: supervisor,
+      OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY: worker, OPERATOR_TOKEN_FILE: token };
+    const evidence = largeAuthenticatedEvidence();
+    await runWithAssignmentKernelV2(metadata("apply"), async () => {
+      const result = await runDynamicRevitProgram({ source, mode: "apply", native_program: { entry_type: "Query",
+        allowed_existing_unique_ids: ["uid"] } }, runtime, async (_exe, args) => {
+        fs.writeFileSync(JSON.parse(fs.readFileSync(args[1]!, "utf8")).evidencePath, JSON.stringify(evidence));
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      assert.equal(result.canonical_attempt_settlement?.effect_state, "applied");
+      const visible: any = presentDynamicProgramResult(result);
+      assert.equal(visible.native_outcome.task_verified, false);
+      assert.equal(visible.native_outcome.program_result, '{"matchingRooms":3}');
+      assert.equal(result.iteration.retryable, false);
+      assert.equal(visible.evidence, undefined);
+      assert(Buffer.byteLength(JSON.stringify(visible)) < 32768);
+      const decorated: any = decorateAssignmentKernelMcpResultV2({ content: [{ type: "text", text: JSON.stringify(visible) }] }, "operator_run_dynamic_revit_program");
+      assert.equal(decorated.structuredContent.operation_result_v2.persistent_effect, "applied");
+      assert.equal(decorated.structuredContent.operation_result_v2.native_transaction_state, "committed");
+    });
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("source-step error context reaches the actor without altering native rollback, commit or unknown outcomes",async()=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'native-source-step-'));
+  try {
+    const supervisor=path.join(root,'supervisor.exe'),worker=path.join(root,'worker'),token=path.join(root,'token');
+    fs.writeFileSync(supervisor,'stub');fs.mkdirSync(worker);fs.writeFileSync(token,'0123456789abcdef');
+    const runtime={...env,OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH:supervisor,OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY:worker,OPERATOR_TOKEN_FILE:token};
+    const message='Last executed generated source step: line 6, column 4. This is diagnostic context, not proof of the exact failing expression or native outcome. Object reference not set to an instance of an object.';
+    for(const [state,effect]of [['rolled_back','none'],['committed','applied'],['pending','unknown']]){
+      const evidence=fixture('apply',state!,false),receipt=JSON.parse(evidence.nativeExecutionReceipt);
+      receipt.error=message;evidence.nativeExecutionReceipt=JSON.stringify(receipt);authenticate(evidence);
+      await runWithAssignmentKernelV2(metadata('apply'),async()=>{
+        const result=await runDynamicRevitProgram({source,mode:'apply',native_program:{entry_type:'Query',allow_create:true,allowed_existing_unique_ids:[],max_affected_elements:20}},runtime,async(_exe,args)=>{
+          fs.writeFileSync(JSON.parse(fs.readFileSync(args[1]!,'utf8')).evidencePath,JSON.stringify(evidence));return{exitCode:1,stdout:'',stderr:''};
+        });
+        const visible:any=presentDynamicProgramResult(result);
+        assert.equal(visible.diagnostics.find((d:any)=>d.code==='NATIVE_PROGRAM_FAILED').message,message);
+        assert.equal(result.canonical_attempt_settlement?.effect_state,effect);
+        assert.equal(visible.native_outcome.task_verified,false);assert.equal(result.iteration.retryable,false);
+        assert.equal((result.evidence as RecordValue).nativeExecutionReceipt,evidence.nativeExecutionReceipt);
+      });
+    }
+  } finally {fs.rmSync(root,{recursive:true,force:true});}
+});
+
 test("document-scoped authenticated audit accepts unpredicted changes without granting result verification", () => {
   const e = fixture("apply", "committed", true);
   const preparation = JSON.parse(e.snapshotReceipt);
@@ -81,9 +200,10 @@ test("authenticated native rollback reports its actual cause without inventing a
     fs.writeFileSync(supervisor, "stub"); fs.mkdirSync(worker); fs.writeFileSync(token, "0123456789abcdef");
     const runtime = { ...process.env, ...env, OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH: supervisor,
       OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY: worker, OPERATOR_TOKEN_FILE: token };
-    for (const supervisorFailure of [false, true]) {
+    for (const supervisorFailure of [false, true]) for (const failure of [collateralFailure,
+      "Value cannot be null. [Native C# last executed statement: submitted source line 1, column 5125. This is a repair hint, not an exact throw-site or model-result check.]"]) {
       const e = fixture("apply", "rolled_back", false);
-      const receipt = JSON.parse(e.nativeExecutionReceipt); receipt.error = collateralFailure;
+      const receipt = JSON.parse(e.nativeExecutionReceipt); receipt.error = failure;
       e.nativeExecutionReceipt = JSON.stringify(receipt); authenticate(e);
       if (supervisorFailure) e.failure = "Supervisor cleanup failed";
       await runWithAssignmentKernelV2(metadata("apply"), async () => {
@@ -93,10 +213,11 @@ test("authenticated native rollback reports its actual cause without inventing a
           return { exitCode: 1, stdout: "", stderr: supervisorFailure ? "cleanup failed" : "" };
         });
         assert.equal(result.diagnostics.some(d => d.code === "SUPERVISOR_FAILURE"), supervisorFailure);
-        assert.equal(result.diagnostics.find(d => d.code === "NATIVE_PROGRAM_FAILED")?.message, collateralFailure);
+        assert.equal(result.diagnostics.find(d => d.code === "NATIVE_PROGRAM_FAILED")?.message, failure);
         assert.equal(result.canonical_attempt_settlement?.effect_state, "none");
         assert.equal(result.iteration.retryable, false);
         const view: any = presentDynamicProgramResult(result);
+        assert.equal(view.diagnostics.find((d: any) => d.code === "NATIVE_PROGRAM_FAILED")?.message, failure);
         assert.equal(view.native_outcome.native_transaction_state, "rolled_back");
         assert.match(view.guidance, /fresh request/);
         assert.match(view.guidance, /not automatically authorize/);
@@ -130,11 +251,65 @@ test("authenticated warning rollback exposes bounded native cause to the actor w
       assert.equal(visible.native_outcome.task_verified, false);
       assert.equal(visible.diagnostics.filter((d: any) => d.code === "NATIVE_MODEL_WARNING").length, 6);
       assert.match(visible.diagnostics.find((d: any) => d.code === "NATIVE_MODEL_WARNING").message, /Instance origin does not lie on host face/);
+      assert.deepEqual(visible.diagnostics.find((d: any) => d.code === "NATIVE_MODEL_WARNING").native_failure?.element_ids, [71]);
+      assert.equal(visible.diagnostics.find((d: any) => d.code === "NATIVE_MODEL_WARNING").native_failure?.reported_element_count, 1);
+      assert.equal(visible.diagnostics.find((d: any) => d.code === "NATIVE_MODEL_WARNING").native_failure?.complete, true);
       assert.match(visible.diagnostics.find((d: any) => d.code === "NATIVE_FAILURES_OMITTED").message, /6 additional/);
       assert.equal(result.iteration.retryable, false);
       assert.deepEqual((result.evidence as RecordValue).nativeExecutionReceipt, e.nativeExecutionReceipt);
     });
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("duplicate Type Mark repair retains the actual reported type pairs through model-visible feedback", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "native-warning-identities-"));
+  try {
+    const supervisor = path.join(root, "supervisor.exe"), worker = path.join(root, "worker"), token = path.join(root, "token");
+    fs.writeFileSync(supervisor, "stub"); fs.mkdirSync(worker); fs.writeFileSync(token, "0123456789abcdef");
+    const runtime = { ...env, OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH: supervisor,
+      OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY: worker, OPERATOR_TOKEN_FILE: token };
+    // Retained native warning pairs: earlier roof/wall/floor types, NOT the
+    // window/door types the actor tried to repair from message-only feedback.
+    const pairs = [[224, 1200228], [441451, 1200224], [441472, 1200226]];
+    const definition = "6e1efefe-c8e0-483d-8482-150b9f1da21a";
+    const e = fixture("apply", "rolled_back", false), receipt = JSON.parse(e.nativeExecutionReceipt);
+    receipt.native_failures = pairs.map(elementIds => ({ severity: "warning",
+      message: 'Elements have duplicate "Type Mark" values.', elementIds, failureDefinitionId: definition }));
+    e.nativeExecutionReceipt = JSON.stringify(receipt); authenticate(e);
+    await runWithAssignmentKernelV2(metadata("apply"), async () => {
+      const result = await runDynamicRevitProgram({ source, mode: "apply", native_program: { entry_type: "Query", allow_create: true,
+        allowed_existing_unique_ids: [], max_affected_elements: 20 } }, runtime, async (_exe, args) => {
+        fs.writeFileSync(JSON.parse(fs.readFileSync(args[1]!, "utf8")).evidencePath, JSON.stringify(e));
+        return { exitCode: 1, stdout: "", stderr: "" };
+      });
+      const visible: any = presentDynamicProgramResult(result);
+      const warnings = visible.diagnostics.filter((d: any) => d.code === "NATIVE_MODEL_WARNING");
+      assert.deepEqual(warnings.map((d: any) => d.native_failure?.element_ids), pairs);
+      for (const d of warnings) {
+        assert.equal(d.native_failure.failure_definition_id, definition);
+        assert.equal(d.native_failure.reported_element_count, 2);
+        assert.equal(d.native_failure.complete, true);
+        assert.match(d.native_failure.usage, /attempt-time/);
+        assert.match(d.native_failure.usage, /not authorize/);
+      }
+      assert.equal(result.canonical_attempt_settlement?.effect_state, "none");
+      assert.equal(result.iteration.retryable, false);
+      assert.deepEqual(visible.affected_target_identities, []);
+      assert.equal(visible.native_outcome.task_verified, false);
+    });
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("failure identity projection bounds work and distinguishes absent malformed and truncated IDs", () => {
+  assert.equal(projectNativeFailureIdentity({}).reported_element_count, null);
+  assert.equal(projectNativeFailureIdentity({}).complete, false);
+  assert.equal(projectNativeFailureIdentity({elementIds: []}).complete, true);
+  const malformed = projectNativeFailureIdentity({elementIds: [1, "2", null, NaN, Infinity, -1, 2.5, Number.MAX_SAFE_INTEGER + 1], failureDefinitionId: "not a guid"});
+  assert.deepEqual(malformed.element_ids, [1]); assert.equal(malformed.complete, false);
+  assert.equal(malformed.reported_element_count, 8); assert.equal(malformed.failure_definition_id, null);
+  const many = projectNativeFailureIdentity({elementIds: Array.from({length: 5000}, (_, i) => i + 1)});
+  assert.equal(many.returned_element_count, 16); assert.equal(many.reported_element_count, 5000);
+  assert.equal(many.complete, false);
 });
 
 test("warning details cannot override committed or unknown native effects and stay receipt-bound", async () => {
@@ -164,6 +339,54 @@ test("warning details cannot override committed or unknown native effects and st
         receipt.native_failures[0].message = "Substituted warning text";
         e.nativeExecutionReceipt = JSON.stringify(receipt); // Deliberately do not authenticate changed bytes.
         assert.throws(() => readNativeProgramEvidence(e, sourceHash, "apply", fingerprint), /authenticated receipt/);
+        receipt.native_failures[0].message = "W".repeat(5000);
+        receipt.native_failures[0].elementIds = [99999];
+        e.nativeExecutionReceipt = JSON.stringify(receipt);
+        assert.throws(() => readNativeProgramEvidence(e, sourceHash, "apply", fingerprint), /authenticated receipt/);
+      });
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("native failure locations are bounded diagnostic observations, with unknown and malformed coverage explicit", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "native-failure-locations-"));
+  try {
+    const supervisor = path.join(root, "supervisor.exe"), worker = path.join(root, "worker"), token = path.join(root, "token");
+    fs.writeFileSync(supervisor, "stub"); fs.mkdirSync(worker); fs.writeFileSync(token, "0123456789abcdef");
+    const runtime = { ...process.env, ...env, OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH: supervisor,
+      OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY: worker, OPERATOR_TOKEN_FILE: token };
+    const cases = [
+      { raw: Array.from({ length: 40 }, (_, i) => i + 1), count: 40, ids: Array.from({ length: 16 }, (_, i) => i + 1), complete: false },
+      { raw: [71, 71, 0, -1, "72", 42], count: 6, ids: [71, 71, 42], complete: false },
+      { raw: null, count: null, ids: [], complete: false },
+      { raw: [], count: 0, ids: [], complete: true },
+      { raw: [Number.MAX_SAFE_INTEGER + 1], count: 1, ids: [], complete: false }
+    ];
+    for (const state of ["rolled_back", "pending"]) for (const item of cases) {
+      const e = fixture("apply", state, false), receipt = JSON.parse(e.nativeExecutionReceipt);
+      receipt.native_failures = [{ severity: "error", message: "Can't keep elements joined.",
+        elementIds: item.raw, failureDefinitionId: "not-a-guid" }];
+      e.nativeExecutionReceipt = JSON.stringify(receipt); authenticate(e);
+      const original = e.nativeExecutionReceipt;
+      await runWithAssignmentKernelV2(metadata("apply"), async () => {
+        const result = await runDynamicRevitProgram({ source, mode: "apply", native_program: { entry_type: "Query", allow_create: true,
+          allowed_existing_unique_ids: [], max_affected_elements: 20 } }, runtime, async (_exe, args) => {
+          fs.writeFileSync(JSON.parse(fs.readFileSync(args[1]!, "utf8")).evidencePath, JSON.stringify(e));
+          return { exitCode: 1, stdout: "", stderr: "" };
+        });
+        const visible: any = presentDynamicProgramResult(result);
+        const diagnostic = visible.diagnostics.find((d: any) => d.code === "NATIVE_MODEL_FAILURE").native_failure;
+        assert.deepEqual(diagnostic.element_ids, item.ids);
+        assert.equal(diagnostic.reported_element_count, item.count);
+        assert.equal(diagnostic.complete, item.complete);
+        assert.equal(diagnostic.failure_definition_id, null);
+        assert.match(diagnostic.usage, /not verified current elements/);
+        assert.match(diagnostic.usage, /does not authorize edits or retries/);
+        assert.equal(visible.native_outcome.task_verified, false);
+        assert.equal(visible.native_outcome.persistent_effect, state === "pending" ? "unknown" : "none");
+        assert.deepEqual(visible.affected_target_identities, []);
+        assert.equal(result.iteration.retryable, false);
+        assert.equal((result.evidence as RecordValue).nativeExecutionReceipt, original);
       });
     }
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
@@ -415,4 +638,17 @@ test("native C# keeps explicit supported years for read/write without adding aut
   for (const year of ["2022", "2028", "2023.0", "2023 "]) {
     assert.throws(() => normalizeNativeProgram({ entry_type: "Query" }, "read", year, fingerprint, env));
   }
+});
+
+test('native result scope is a bounded check selector, separate from write authority',()=>{
+ const env={REVIT_OPERATOR_MODE:'development',OPERATOR_TOOL_EXPOSURE_PROFILE:'laboratory'};
+ const base={entry_type:'Edit',effect_scope:'active_document' as const};
+ const ordinary=normalizeNativeProgram(base,'apply','2024',fingerprint,env);
+ const scoped=normalizeNativeProgram({...base,result_targets:{element_ids:[42],result_field:'created'}},'apply','2024',fingerprint,env);
+ assert.deepEqual(scoped,ordinary,'result selection does not change native authorization or transaction scope');
+ for(const result_targets of [{},null,{element_ids:[]},{element_ids:[0]},{element_ids:[42,42]},{result_field:'x.y'},
+  {result_field:'constructor'},{element_ids:[42],unknown:true},{element_ids:Array.from({length:257},(_,i)=>i+1)}])
+  assert.throws(()=>normalizeNativeProgram({...base,result_targets} as any,'apply','2024',fingerprint,env));
+ assert.throws(()=>normalizeNativeProgram({entry_type:'Read',result_targets:{element_ids:[42]}},'read','2024',fingerprint,env));
+ assert.throws(()=>normalizeNativeProgram({...base,result_targets:{element_ids:[42]},parameter_checks:[{element_id:42,parameter_name:'Mark',expected_value:'A'}]},'apply','2024',fingerprint,env));
 });

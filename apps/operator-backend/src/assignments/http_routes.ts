@@ -324,10 +324,11 @@ export async function handleAssignmentHttpRoute(
       writeJson(res, 200, result);
     } catch (error) {
       const cause = error instanceof Error ? error.cause : undefined;
-      // This fixed domain explanation is useful for correcting the rejected
-      // declaration. Other exception causes, task data and stacks stay private.
+      // Only these bounded domain explanations reach the same task owner.
+      // Readback guidance names task-local operation IDs, never raw payloads,
+      // source, filesystem paths or arbitrary exception causes/stacks.
       const guidance = cause instanceof AssignmentKernelErrorV2
-        && cause.code === 'work_plan_dependencies_invalid' && error instanceof Error && error.message === cause.code
+        && ['work_plan_dependencies_invalid','drafting_check_readback_required'].includes(cause.code) && error instanceof Error && error.message === cause.code
         ? cause.message : undefined;
       writeJson(res, 409, { error: error instanceof Error ? error.message : String(error), ...(guidance ? { guidance } : {}) });
     }

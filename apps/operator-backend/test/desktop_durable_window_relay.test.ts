@@ -1,3 +1,4 @@
+import {assertCacheAnnotatedInputs} from './desktop_cache_wire.fixtures.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -37,7 +38,7 @@ test('production relay keeps owner compacted context across accounted independen
   const pixels=[{type:'input_image',image_url:'data:image/png;base64,AQID'},{type:'input_image',image_url:'data:image/png;base64,BAUG'}];
   await send('next',{previous_response_id:saved.previous_response_id,input:[...saved.input,{role:'user',content:[{type:'input_text',text:'Fresh corresponding reference/model.'},...pixels]}]});
   assert.equal(received.length,3);assert.equal(received[2].previous_response_id,undefined);
-  assert.deepEqual(received[2].input.slice(0,3),[compact,call,...outputs]);
+  assertCacheAnnotatedInputs(received[2].input.slice(0,3),[compact,call,...outputs],1);
   assert(received[2].input.some((i:any)=>i.content?.filter((c:any)=>c.type==='input_image').length===2));
   assert(!JSON.stringify(received[2].input).includes('Independently review this completed batch.'));
   assert.deepEqual(received[2].include,['reasoning.encrypted_content']);

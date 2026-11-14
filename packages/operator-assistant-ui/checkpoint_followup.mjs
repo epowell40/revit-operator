@@ -1,13 +1,35 @@
 const bindingKeys = ["assignment_id", "session_id", "run_id", "generation"];
 
+/** Display eligibility only. A button must not promise a renewal unsupported by
+ * the task's frozen policy. The authenticated endpoint still owns admission. */
+export function checkpointResourceRenewalAvailable(s, supportsProductRenewal = false) {
+  const p=s?.spec?.execution_policy,b=s?.current_binding;
+  const product=supportsProductRenewal===true && p?.mode==='single_actor_review_v1'
+    && p.selected_by==='trusted_runtime_host' && typeof p.principal_id==='string' && p.principal_id.length>0
+    && p.principal_id===b?.principal_id && p.principal_id===s.spec.binding?.principal_id
+    && p.session_id===b?.session_id && p.document_fingerprint===b?.document_fingerprint
+    && Boolean(p.document_fingerprint) && p.ready_work_handoff==='continue_ready_work_v1'
+    && bindingKeys.every(key=>b?.[key]!=null && b[key]===s.spec.binding?.[key])
+    && b.document_fingerprint===s.spec.binding?.document_fingerprint;
+  return Boolean(s && !s.terminal && s.quiescent && !s.provider_usage_hold
+    && s.execution_control?.state !== 'paused'
+    && s.spec?.requested_effect === 'apply'
+    && (p?.mode === 'local_advisory_v1' && p.progress_allowance || product)
+    && s.completion_proposal?.verified === false
+    && typeof s.completion_proposal.review_id === 'string' && s.completion_proposal.review_id
+    && s.pending_review_ids?.length === 1 && s.pending_review_ids[0] === s.completion_proposal.review_id
+    && !s.unresolved_unknown_operation_ids?.length && !s.pending_input_variable_ids?.length
+    && !s.in_flight_operation_ids?.length && !s.in_flight_provider_call_ids?.length);
+}
+
 /** User-facing preparation only; the authenticated backend rechecks custody,
  * resource bounds and all execution fences before journaling an authorization. */
 export function checkpointResourceRenewalContext(publication,goal) {
   const context=checkpointDirectionContext(publication,goal),s=publication.snapshot;
-  if(!context.checkpoint||context.paused||s.terminal||!s.quiescent||s.provider_usage_hold
-    ||s.spec.requested_effect!=='apply'||!s.spec.execution_policy.progress_allowance
-    ||s.unresolved_unknown_operation_ids?.length||s.pending_input_variable_ids?.length
-    ||s.in_flight_operation_ids?.length||s.in_flight_provider_call_ids?.length)
+  if(!(s.spec.execution_policy?.mode==='local_advisory_v1' && s.spec.execution_policy.progress_allowance)
+      && !(s.spec.execution_policy?.mode==='single_actor_review_v1' && publication.supports_explicit_resource_renewal_v1===true))
+    throw new Error('This task does not support an additional allowance. Its saved work and prior usage are retained.');
+  if(!context.checkpoint||context.paused||!checkpointResourceRenewalAvailable(s,publication.supports_explicit_resource_renewal_v1))
     throw new Error('Settle the current apply checkpoint before explicitly renewing its allowance.');
   return {...context.checkpoint,resource_renewal:{provider_calls:64,total_tokens:16_000_000}};
 }

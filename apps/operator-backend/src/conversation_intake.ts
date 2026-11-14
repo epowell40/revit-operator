@@ -35,7 +35,9 @@ export const INTAKE_HOST_PHASES=["preparing_input","requesting_response","respon
 export type IntakeHostPhase=typeof INTAKE_HOST_PHASES[number];
 export type IntakePhaseObserver=(phase:IntakeHostPhase)=>void;
 export interface ConversationIntakeInterpreter {
-  interpret(input: IntakeInput, signal: AbortSignal, correction?:IntakeCorrection, observePhase?:IntakePhaseObserver): Promise<{value:unknown; telemetry?:Record<string, unknown>; acknowledge?:()=>void}>;
+  /** Trusted host startup allowance, never supplied by the user or model. */
+  readonly startupTimeoutMs?:number;
+  interpret(input: IntakeInput, signal: AbortSignal, correction?:IntakeCorrection, observePhase?:IntakePhaseObserver, beginInference?:()=>void): Promise<{value:unknown; telemetry?:Record<string, unknown>; acknowledge?:()=>void}>;
 }
 export type IntakeCorrection={attempt:2;rejection:{candidate:BoundedIntakeValue;issues:OperationScopeIssue[]}};
 export type BoundedIntakeValue={json:string;byte_count:number;sha256:string;truncated:boolean};
@@ -206,7 +208,12 @@ export async function routeConversation(body:Partial<ChatRequest>&Record<string,
   if (savedDecision && savedDecision.route!=="answer") return {...handoff,route:savedDecision.route,replayed:true};
   if(!appendEvent(sessionId,"assistant","conversation.intake",{message_id:messageId,request_sha256:requestHash,
     attachment_count:attachments,state:"pending",accepted:false,decision:null}))throw Error("Conversation classification could not be saved.");
-  const start=Date.now(),expiresAt=start+(options.timeoutMs??30_000),controller=new AbortController();
+  const start=Date.now(),inferenceMs=options.timeoutMs??30_000,controller=new AbortController();
+  // Explicit caller deadlines stay total deadlines. Only the production host
+  // declares startup separately; model text and diagnostic phase callbacks do not.
+  const startupMs=options.timeoutMs===undefined&&Number.isFinite(interpreter.startupTimeoutMs)
+    ?Math.max(0,Math.min(30_000,interpreter.startupTimeoutMs!)):0;
+  let expiresAt=start+(startupMs||inferenceMs),inferenceStartedAt:number|null=null;
   const clockStart=performance.now(),phases:Array<{attempt:number;phase:IntakeHostPhase;elapsed_ms:number}>=[];
   let routingClosed=false,phaseAttempt=1,phaseCount=0,lastPhase:IntakeHostPhase|null=null;
   const observePhase:IntakePhaseObserver=phase=>{
@@ -216,7 +223,9 @@ export async function routeConversation(body:Partial<ChatRequest>&Record<string,
   };
   const hostTiming=()=>({schema:"operator.intake-host-timing/v1",clock:"host_monotonic_elapsed_ms",entries:[...phases],
     elapsed_ms:Math.round((performance.now()-clockStart)*1000)/1000,last_phase:lastPhase,
-    observed_count:phaseCount,dropped_count:phaseCount-phases.length,provider_usage:"not_established_by_host_timing"});
+    observed_count:phaseCount,dropped_count:phaseCount-phases.length,provider_usage:"not_established_by_host_timing",
+    budget:{startup_ms:startupMs,inference_ms:inferenceMs,total_max_ms:startupMs+inferenceMs,
+      inference_started_elapsed_ms:inferenceStartedAt===null?null:inferenceStartedAt-start}});
   const checkDeadline=()=>{
     if(Date.now()>=expiresAt&&!controller.signal.aborted)controller.abort(Error("Conversation intake timed out"));
     controller.signal.throwIfAborted();
@@ -225,17 +234,25 @@ export async function routeConversation(body:Partial<ChatRequest>&Record<string,
   if(options.signal?.aborted)abort();
   options.signal?.addEventListener("abort",abort,{once:true});
   let timer:ReturnType<typeof setTimeout>|undefined,softTimer:ReturnType<typeof setTimeout>|undefined;
+  const armDeadline=()=>{clearTimeout(timer);timer=setTimeout(()=>controller.abort(Error("Conversation intake timed out")),Math.max(0,expiresAt-Date.now()));};
+  const beginInference=()=>{
+    checkDeadline();
+    if(routingClosed)throw Error("Conversation intake is closed");
+    if(inferenceStartedAt!==null)return; // Correction shares the first window.
+    inferenceStartedAt=Date.now();
+    if(startupMs){expiresAt=Math.min(start+startupMs+inferenceMs,inferenceStartedAt+inferenceMs);armDeadline();}
+  };
   let rejectAborted=()=>{};
   const deadline=new Promise<never>((_,reject)=>{
     rejectAborted=()=>reject(controller.signal.reason??Error("Conversation intake was interrupted"));
     controller.signal.addEventListener("abort",rejectAborted,{once:true});
-    timer=setTimeout(()=>controller.abort(Error("Conversation intake timed out")),Math.max(0,expiresAt-Date.now()));
+    armDeadline();
   });
   // A synchronous expired-deadline check can abort before the first race is
   // installed. Keep that rejection observed without changing the raced promise.
   void deadline.catch(()=>{});
   // Eight seconds is a latency target, not permission to invent another task
-  // contract. Both tool-free interpretations share this original hard bound.
+  // contract. Both interpretations share one inference window and total bound.
   softTimer=setTimeout(()=>{
     try{appendEvent(sessionId,"assistant","conversation.intake.delayed",{message_id:messageId,request_sha256:requestHash,elapsed_ms:Date.now()-start});}catch{}
   },options.softTimeoutMs??8000);
@@ -249,7 +266,7 @@ export async function routeConversation(body:Partial<ChatRequest>&Record<string,
       phaseAttempt=attempt;
       // Exceptions (including transport/auth/quota/parse/tool failures) leave
       // through the outer catch. Only a returned, rejected value is correctable.
-      const result=await Promise.race([interpreter.interpret(input,controller.signal,correction,observePhase),deadline]);
+      const result=await Promise.race([interpreter.interpret(input,controller.signal,correction,observePhase,beginInference),deadline]);
       checkDeadline();
       const issues=intakeDecisionIssues(result.value,input);
       checkDeadline();

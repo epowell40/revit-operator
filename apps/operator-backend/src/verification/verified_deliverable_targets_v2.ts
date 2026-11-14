@@ -4,11 +4,19 @@ import {excelTableImportDeliverableTargetsV2} from "./excel_table_import_v2.js";
 import {vectorDetailImportDeliverableTargetsV2} from "./vector_detail_import_v2.js";
 import {settledVectorStrokeCadImportV2} from './vector_stroke_cad_readback_v2.js';
 import {committedNativeAnnotationDeliverableV2} from './native_annotation_postcondition_v2.js';
+import {nativeProgramEffectStateV2} from './native_program_effect_postcondition_v2.js';
+import {nativeProgramParameterChecksV2} from './native_program_parameter_postcondition_v2.js';
 
 /** Called only after the independent native postcondition has passed.
  * Platform owners/collateral are not principal work-credit targets. */
 export function verifiedDeliverableTargetGroupsV2(snapshot:AssignmentSnapshotV2,verificationSubject:OperationV2|null|undefined,result:OperationResultV2):string[][] {
  const groups:string[][]=[];
+    if(verificationSubject?.capability_id==='operator_run_dynamic_revit_program'){
+      const state=nativeProgramEffectStateV2(snapshot,verificationSubject);
+      if(state?.scoped)groups.push(state.targets.map(id=>`element_id:${id}`));
+      const checks=nativeProgramParameterChecksV2(snapshot,verificationSubject);
+      if(checks)groups.push([...new Set(checks.map(c=>`element_id:${c.element_id}`))].sort());
+    }
     if(verificationSubject?.request_identity?.path==='/revit/link-cad'){
       const cad=settledVectorStrokeCadImportV2(snapshot,verificationSubject);
       if(cad)groups.push([`element_id:${cad.applied.elementId}`]);

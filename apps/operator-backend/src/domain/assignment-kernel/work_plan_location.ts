@@ -29,6 +29,23 @@ const text = (v: unknown, max: number) => typeof v === 'string' && v.trim().leng
 const object = (v: unknown, allowed: readonly string[]) => Boolean(v && typeof v === 'object' && !Array.isArray(v)
   && Object.keys(v).every(k=>allowed.includes(k)));
 
+/** Actor backcheck eligibility only; never semantic or whole-task verification. */
+function latestEffectTime(snapshot:AssignmentSnapshotV2):number {
+  return Object.values(snapshot.operations).reduce((latest,op)=>op.requested_effect==='apply'&&op.persistent_effect!=='none'
+    ?Math.max(latest,Date.parse(op.result?.completed_at??op.opened_at)):latest,0);
+}
+export function draftingReadbackReasonV2(snapshot:AssignmentSnapshotV2,id:string,at:string,lastEdit=latestEffectTime(snapshot)):string|null {
+  const op=snapshot.operations[id];
+  if(!op)return 'unknown_operation';
+  if(op.requested_effect!=='read'||op.persistent_effect!=='none'||op.settlement_state!=='settled'
+    ||op.result?.authority!=='native-host'||op.result.status!=='succeeded')return 'not_successful_settled_native_read';
+  if(!sameAssignmentBindingV2(op.binding,snapshot.current_binding)||!sameAssignmentBindingV2(op.result.binding,snapshot.current_binding))return 'different_binding';
+  if(snapshot.input_invalidated_operation_ids?.includes(id))return 'invalidated_input';
+  if(!(Date.parse(op.opened_at)>lastEdit))return 'predates_latest_effect';
+  if(!(Date.parse(op.result.completed_at)<=Date.parse(at)))return 'completion_time_unavailable_or_future';
+  return null;
+}
+
 export function recordWorkPlanLocationV2(snapshot: AssignmentSnapshotV2, itemId: string,
   hint: WorkPlanLocationHintV2, at: string): AssignmentWorkPlanV2 {
   const plan = snapshot.work_plan, item = plan?.items.find(i=>i.item_id===itemId);
@@ -68,15 +85,14 @@ export function recordWorkPlanLocationV2(snapshot: AssignmentSnapshotV2, itemId:
     if(d.stage==='checked'){
       kernelAssertV2(Boolean(d.source_image_sha256&&d.model_image_sha256&&d.read_operation_ids.length)
         &&d.source_image_sha256!==d.model_image_sha256,'drafting_check_evidence_required','Backchecking needs distinct reference/model images and native readback; execution success alone is not a check.');
-      const lastEdit=Math.max(0,...Object.values(snapshot.operations).filter(o=>o.requested_effect==='apply'&&o.persistent_effect!=='none')
-        .map(o=>Date.parse(o.result?.completed_at??o.opened_at)));
-      kernelAssertV2(!snapshot.unresolved_unknown_operation_ids.length&&!snapshot.in_flight_operation_ids.length
-        &&d.read_operation_ids.every(id=>{
-          const op=snapshot.operations[id];return op?.requested_effect==='read'&&op.persistent_effect==='none'&&op.settlement_state==='settled'
-            &&op.result?.authority==='native-host'&&op.result.status==='succeeded'&&sameAssignmentBindingV2(op.binding,snapshot.current_binding)
-            &&sameAssignmentBindingV2(op.result.binding,snapshot.current_binding)&&!snapshot.input_invalidated_operation_ids?.includes(id)
-            &&Date.parse(op.opened_at)>lastEdit&&Date.parse(op.result.completed_at)<=Date.parse(at);
-        }),'drafting_check_readback_required','Keep drafted work, but obtain current same-document native readback before recording an actor backcheck. This does not certify the whole assignment.');
+      const held=Boolean(snapshot.unresolved_unknown_operation_ids.length||snapshot.in_flight_operation_ids.length);
+      const lastEdit=latestEffectTime(snapshot);
+      const rejected=d.read_operation_ids.flatMap(id=>{const reason=draftingReadbackReasonV2(snapshot,id,at,lastEdit);return reason?[`${id}: ${reason}`]:[];});
+      const candidates=held||!rejected.length?[]:Object.keys(snapshot.operations).filter(id=>draftingReadbackReasonV2(snapshot,id,at,lastEdit)===null).slice(-4);
+      kernelAssertV2(!held&&!rejected.length,'drafting_check_readback_required',
+        'Keep drafted work; current same-document native readback is required. '+(held?'Resolve pending or unknown operations before backchecking.':
+        `Rejected reads: ${rejected.join('; ')}. Current eligible native reads: ${candidates.join(', ')||'none'}. Select only current reads that actually cover this work; do not repeat construction. `)
+        +'C# native read mode is supported. This records an actor backcheck, not whole-task certification.');
     }
   }
   const history=item!.location_history??[];

@@ -15,6 +15,25 @@ function fixture() {
   return { publication, goal };
 }
 
+test('renewal presentation agrees with the supported policy and current checkpoint fences',()=>{
+  assert.equal(typeof checkpointTools.checkpointResourceRenewalAvailable,'function');
+  const {publication}=fixture(),s=publication.snapshot;
+  s.spec.requested_effect='apply';
+  s.spec.execution_policy.progress_allowance={mode:'observed_native_work_v1'};
+  assert.equal(checkpointTools.checkpointResourceRenewalAvailable(s),true);
+  for(const mutate of [
+    x=>x.spec.execution_policy.mode='single_actor_review_v1',
+    x=>delete x.spec.execution_policy.progress_allowance,
+    x=>x.terminal=true,x=>x.quiescent=false,x=>x.execution_control={state:'paused'},
+    x=>x.provider_usage_hold={hold_id:'usage'},x=>x.pending_input_variable_ids=['input'],
+    x=>x.in_flight_operation_ids=['op'],x=>x.in_flight_provider_call_ids=['call'],
+    x=>x.unresolved_unknown_operation_ids=['unknown'],x=>x.pending_review_ids=['foreign'],
+    x=>x.completion_proposal.verified=true,x=>delete x.completion_proposal,
+    x=>x.spec.requested_effect='read'
+  ]) { const changed=structuredClone(s);mutate(changed);assert.equal(checkpointTools.checkpointResourceRenewalAvailable(changed),false); }
+  assert.equal(checkpointTools.checkpointResourceRenewalAvailable(null),false);
+});
+
 test('authenticated task review uses existing follow-up and Resume without enabling resource renewal',()=>{
  const {publication,goal}=fixture(),s=publication.snapshot;
  s.spec.binding.principal_id=s.current_binding.principal_id='principal';
@@ -29,6 +48,30 @@ test('authenticated task review uses existing follow-up and Resume without enabl
  assert.equal(checkpointResumeReady(publication,goal,command),true);
  for(const change of [{provider_usage_hold:{hold_id:'usage'}},{unresolved_unknown_operation_ids:['unknown']},{in_flight_operation_ids:['pending'],quiescent:false}]){
   const p=structuredClone(publication);Object.assign(p.snapshot,change);assert.equal(checkpointResumeReady(p,{...goal,_providerUsageHold:p.snapshot.provider_usage_hold},command),false);
+ }
+});
+
+test('product renewal requires current backend support and exact trusted task provenance',()=>{
+ const {publication,goal}=fixture(),s=publication.snapshot;
+ s.spec.requested_effect='apply';s.spec.binding.principal_id=s.current_binding.principal_id='principal';
+ s.spec.execution_policy={mode:'single_actor_review_v1',selected_by:'trusted_runtime_host',principal_id:'principal',
+   session_id:'conversation',document_fingerprint:'document',ready_work_handoff:'continue_ready_work_v1'};
+ assert.equal(checkpointTools.checkpointResourceRenewalAvailable(s),false,'Old backend stays unavailable');
+ assert.throws(()=>checkpointTools.checkpointResourceRenewalContext(publication,goal));
+ publication.supports_explicit_resource_renewal_v1=true;
+ assert.equal(checkpointTools.checkpointResourceRenewalAvailable(s,true),true);
+ assert.deepEqual(checkpointTools.checkpointResourceRenewalContext(publication,goal).resource_renewal,{provider_calls:64,total_tokens:16_000_000});
+ for(const change of [{selected_by:'agent'},{principal_id:'foreign'},{session_id:'foreign'},
+  {document_fingerprint:'foreign'},{ready_work_handoff:undefined}]) {
+  const p=structuredClone(publication);Object.assign(p.snapshot.spec.execution_policy,change);
+  assert.equal(checkpointTools.checkpointResourceRenewalAvailable(p.snapshot,true),false);
+  assert.throws(()=>checkpointTools.checkpointResourceRenewalContext(p,goal));
+ }
+ for(const change of [x=>x.quiescent=false,x=>x.provider_usage_hold={hold_id:'pending'},
+  x=>x.execution_control={state:'paused',command_id:'pause'},x=>x.in_flight_operation_ids=['op'],
+  x=>x.in_flight_provider_call_ids=['call'],x=>x.unresolved_unknown_operation_ids=['unknown']]) {
+  const p=structuredClone(publication);change(p.snapshot);
+  assert.equal(checkpointTools.checkpointResourceRenewalAvailable(p.snapshot,true),false);
  }
 });
 

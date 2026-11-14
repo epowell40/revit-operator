@@ -151,7 +151,10 @@ test("C54 metadata can be retained but cannot pass the actual model-content crit
   assert.ok(metadata.observation);
   const evaluate=(state:AssignmentSnapshotV2,observationIds:string[])=>evaluateCriterionV2({snapshot:state,criterion_id:state.spec.criteria[0]!.criterion_id,
     observation_ids:observationIds,evaluator_authority:"operator-runtime",evaluated_at:new Date().toISOString()});
-  assert.notEqual(evaluate(metadata.snapshot,[metadata.observation.observation_id]).status,"pass");
+  const missingContent=evaluate(metadata.snapshot,[metadata.observation.observation_id]);
+  assert.equal(missingContent.status,"uncertain");
+  assert.match(missingContent.reason!,/Missing required semantic facts: model\.content_observed/);
+  assert.match(missingContent.reason!,/not proof.*absent/);
   assert.notEqual(metadata.snapshot.outcome,"complete");
   evaluateAssignmentObservationCriteriaV2({binding:metadata.snapshot.current_binding,
     claims:[{criterion_id:initial.spec.criteria[0]!.criterion_id,observation_ids:[metadata.observation.observation_id]}]});

@@ -5,11 +5,17 @@ import {desktopNativeModelTools,desktopNativeToolContract,desktopNativeResponseC
 function fixture(name:string){const file=[path.join(import.meta.dirname,'fixtures',name),path.resolve(import.meta.dirname,'../../test/fixtures',name)].find(p=>fs.existsSync(p));assert(file);return JSON.parse(fs.readFileSync(file,'utf8').replace(/^\uFEFF/,''));}
 const program=fixture('desktop-native-program-contract293.json').tool;
 const supplemental=fixture('desktop-owner-supplemental-tools298.json').tools;
+test('primary owner has the exact frequently-used work ledger schema without evidence lookup round trips',()=>{
+ const plan=supplemental.find((t:any)=>t.name==='operator_manage_work_plan');assert(plan);
+ const direct=desktopNativeModelTools([program,...supplemental]).find(t=>t.name==='native__operator_manage_work_plan');assert(direct);
+ assert.equal(direct.description,plan.description);assert.deepEqual(direct.parameters,plan.inputSchema);
+ assert(!desktopNativeModelTools([program]).some(t=>t.name==='native__operator_manage_work_plan'),'No fabricated tool when missing from current catalog');
+});
 
-test('single owner keeps exact executable contract while supplemental schemas are genuinely deferred',()=>{
+test('single owner keeps executor and work ledger contracts while less-used supplemental schemas stay deferred',()=>{
  const catalog=[program,...supplemental,{name:'revit_set_parameters',description:'An ordinary known edit',inputSchema:{type:'object'},deferLoading:false}];
  const exposed=desktopNativeModelTools(catalog);
- for(const tool of supplemental)assert(!exposed.some(t=>t.name==='native__'+tool.name),tool.name+' must not consume every provider turn');
+ for(const tool of supplemental.filter((t:any)=>t.name!=='operator_manage_work_plan'))assert(!exposed.some(t=>t.name==='native__'+tool.name),tool.name+' remains deferred');
  const direct=exposed.find(t=>t.name==='native__'+program.name);assert(direct);
  assert.equal(direct.description,program.description);assert.deepEqual(direct.parameters,program.inputSchema);
  assert(exposed.some(t=>t.name==='native__revit_set_parameters'));
@@ -24,7 +30,7 @@ test('single owner keeps exact executable contract while supplemental schemas ar
   assert.deepEqual(desktopNativeResponseCall(record,'response','call'),{tool:tool.name,arguments:{}});
  }
  const bytes=(v:unknown)=>Buffer.byteLength(JSON.stringify(v),'utf8');
- assert(bytes(exposed)<bytes(desktopNativeModelTools(supplemental))+bytes(direct)-24000,'retain measured catalog savings without deleting any schema');
+ assert(bytes(exposed)<bytes(desktopNativeModelTools(supplemental))+bytes(direct),'Unused schemas still stay out of the active catalog');
 });
 test('catalog without the general executor preserves legacy eager and already-deferred exposure',()=>{
  const ordinary=desktopNativeModelTools([...supplemental,{...program,name:'other_program'}]);

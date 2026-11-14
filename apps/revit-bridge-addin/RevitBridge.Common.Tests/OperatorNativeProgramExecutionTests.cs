@@ -5,6 +5,58 @@ using Xunit;
 
 public sealed class OperatorNativeProgramExecutionTests
 {
+    private sealed class UnreadableDiagnosticException : Exception
+    { public override System.Collections.IDictionary Data => throw new InvalidOperationException("unreadable diagnostic"); }
+    [Fact] public void DiagnosticReadFailureCannotHideOriginalResult()
+    {
+        var result=new Dictionary<string,object?>{{"success",false},{"error","original"}};
+        OperatorNativeProgramExecution.AppendRuntimeDiagnostic(result,new UnreadableDiagnosticException());
+        Assert.Equal("original",result["error"]);
+    }
+    [Fact]
+    public void RuntimeRepairHintPreservesFailureAndUnknownSettlement()
+    {
+        var error=new ArgumentNullException(null,"Value cannot be null.");
+        error.Data["revit_operator.native_source_line.v1"]=1;
+        error.Data["revit_operator.native_source_column.v1"]=5125;
+        var status="Uninitialized";
+        var result=OperatorNativeProgramExecution.ExecuteWrite(()=>status="Started",()=>"Committed",()=>"Committed",
+            ()=>throw new Exception("rollback failed"),()=>status,()=>throw error,
+            ()=>Array.Empty<long>(),()=>Array.Empty<long>(),()=>Array.Empty<long>(),Array.Empty<long>(),true,1);
+        var receipt=Receipt(result);
+        var original=(string)result["error"]!;
+        OperatorNativeProgramExecution.AppendRuntimeDiagnostic(result,error);
+        Assert.StartsWith(original,(string)result["error"]!);
+        Assert.Contains("source line 1, column 5125",(string)result["error"]!);
+        Assert.Contains("not an exact throw-site",(string)result["error"]!);
+        Assert.Same(receipt,Receipt(result));Assert.Null(receipt.CommittedValue);
+        Assert.False((bool)result["success"]!);Assert.False(result.ContainsKey("verified"));
+    }
+
+    [Theory]
+    [InlineData("missing")][InlineData("malformed")][InlineData("negative")][InlineData("oversize")]
+    [InlineData("cancel")][InlineData("timeout")][InlineData("success")]
+    public void RuntimeDiagnosticCannotInventLocationOrChangeStopAndSuccess(string kind)
+    {
+        Exception error=kind=="cancel"?new OperationCanceledException("stop"):kind=="timeout"?new TimeoutException("stop"):new Exception("failure");
+        if(kind!="missing"){
+            error.Data["revit_operator.native_source_line.v1"]=kind=="malformed"?(object)"1":kind=="negative"?-1:kind=="oversize"?200001:1;
+            error.Data["revit_operator.native_source_column.v1"]=2;
+        }
+        var result=new Dictionary<string,object?>{{"success",kind=="success"},{"error","unchanged"}};
+        OperatorNativeProgramExecution.AppendRuntimeDiagnostic(result,error);
+        Assert.Equal("unchanged",result["error"]);
+    }
+
+    [Fact]
+    public void SourceStepDiagnosticIsBoundedConservativeAndRejectsMissingOrMalformedMarkers()
+    {
+        foreach(var marker in new string?[]{null,"","0:4","1:0","-1:3","1:2:3","+1:2","9999999999999999:1","1:C:/private","1:2\nforged"}) {
+            var error=new Exception("original");error.Data["revit_operator.native_source_line.v1"]=marker;error.Data["revit_operator.native_source_column.v1"]=4;
+            var result=new Dictionary<string,object?>{{"success",false},{"error","original"}};
+            OperatorNativeProgramExecution.AppendRuntimeDiagnostic(result,error);Assert.Equal("original",result["error"]);
+        }
+    }
     [Theory]
     [InlineData("development_laboratory_v1", null, null, true)]
     [InlineData("development_laboratory_v1", "", "", true)]

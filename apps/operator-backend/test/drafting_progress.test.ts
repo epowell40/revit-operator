@@ -50,6 +50,26 @@ test('source/element/readback records cannot inject completion authority or fore
   const h=hint(s);change(h);assert.throws(()=>recordWorkPlanLocationV2(s,'branch',h,at));
  }
 });
+
+test('mixed pre/post-SaveAs C# reads identify stale evidence and preserve usable current readback',()=>{
+ const s=fixture(),h=hint(s),binding=s.current_binding;
+ const read=(opened:string)=>({capability_id:'operator_run_dynamic_revit_program',input:{mode:'read'},requested_effect:'read',persistent_effect:'none',settlement_state:'settled',binding:{...binding},opened_at:opened,result:{authority:'native-host',status:'succeeded',binding:{...binding},completed_at:opened}});
+ s.operations.before=read('2026-10-31T20:57:00Z');s.operations.current=read('2026-10-31T20:59:00Z');
+ s.operations.save={requested_effect:'apply',persistent_effect:'applied',opened_at:'2026-10-31T20:58:00Z',result:{completed_at:'2026-10-31T20:58:10Z'}};
+ Object.assign(h.drafting,{stage:'checked',source_image_sha256:'b'.repeat(64),model_image_sha256:'c'.repeat(64),read_operation_ids:['current','before']});
+ assert.throws(()=>recordWorkPlanLocationV2(s,'branch',h,at),e=>{
+  assert.match((e as Error).message,/before: predates_latest_effect/);assert.match((e as Error).message,/Current eligible native reads: current/);return true;
+ });
+ const original=structuredClone(s);h.drafting.read_operation_ids=['current'];
+ const plan=recordWorkPlanLocationV2(s,'branch',h,at);
+ assert.equal(plan.items[0]!.location_history!.at(-1)!.drafting!.stage,'checked');assert.deepEqual(s,original);
+ for(const fault of ['failed','foreign','pending','invalidated','unknown','write','future']){
+  const bad=structuredClone(s);if(fault==='failed')bad.operations.current.result.status='failed';if(fault==='foreign')bad.operations.current.result.binding.run_id='other';
+  if(fault==='pending')bad.in_flight_operation_ids=['pending'];if(fault==='invalidated')bad.input_invalidated_operation_ids=['current'];if(fault==='unknown')bad.unresolved_unknown_operation_ids=['unknown'];
+  if(fault==='write')bad.operations.current.requested_effect='apply';if(fault==='future')bad.operations.current.result.completed_at='2026-10-31T21:01:00Z';
+  assert.throws(()=>recordWorkPlanLocationV2(bad,'branch',h,at),/native readback/,fault);
+ }
+});
 test('only real image input blocks count as delivered pixels, never textual paths, IDs or escaped JSON',()=>{
  const image={type:'input_image',image_url:'data:image/png;base64,AQID'};
  assert.equal(imageInputManifest([{role:'user',content:[image]}]).length,1);

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
 import {retainDesktopResponse,retainDesktopContext,prepareDesktopProviderInput,desktopModelInputPackage} from '../src/desktop_response_store.js';
+import {desktopToolHistoryCache} from '../src/desktop_prompt_cache.js';
 const binding={session_id:'s',assignment_id:'a',run_id:'r',generation:1,kernelVersion:2 as const};
 const profile={model:'gpt-6.1-terra',reasoning_effort:'medium'};
 const image={type:'input_image',image_url:'data:image/png;base64,AQID',detail:'original'};
@@ -12,19 +13,40 @@ async function isolated(run:()=>Promise<void>){const old=process.env.OPERATOR_WO
 function imageCount(v:any):number{return !v||typeof v!=='object'?0:(v.type==='input_image'?1:0)+Object.values(v).reduce<number>((n,x)=>n+imageCount(x),0);}
 const isFeedback=(x:any)=>x.role==='user'&&Array.isArray(x.content)&&x.content.some((p:any)=>p.text?.startsWith('HOST CURRENT CHECK FEEDBACK.'));
 
+test('persisted owner feedback replacement retains reusable tool boundary without marking raw evidence or stale status',()=>isolated(async()=>{
+ const calls=(id:string)=>[{type:'function_call',name:'read_model',call_id:id,arguments:'{}'}];
+ const out=(id:string)=>[{type:'function_call_output',call_id:id,output:'native checked result '+id}];
+ const wire:any[]=[];
+ for(let n=1;n<=3;n++){
+  const id='cache'+n,current=feedback(n),input=n===1?[{role:'user',content:'Draft'},current]:[...out('c'+(n-1)),current];
+  const request={...profile,input,...(n>1?{previous_response_id:'cache'+(n-1)}:{})};
+  await retainDesktopResponse(binding,id,request,async()=>{
+   const p=prepareDesktopProviderInput(binding,id,request,{hostFeedback:current});
+   const raw=structuredClone(p.input),cached=desktopToolHistoryCache(p.input,profile.model,true);
+   assert.deepEqual(p.input,raw);assert.equal(p.input.filter(isFeedback).length,1);wire.push(cached);
+   return response(id,calls('c'+n));
+  },()=>({}),true);retainDesktopContext(binding,id,out('c'+n));
+ }
+ assert.equal(wire[1].diagnostic.breakpoints[0].prefix_sha256,wire[2].diagnostic.breakpoints[0].prefix_sha256);
+ const dir=path.join(process.env.OPERATOR_WORKSPACE_ROOT!,'runs/desktop-responses');
+ for(const name of fs.readdirSync(dir).filter(n=>n.endsWith('.context'))){
+  const raw=fs.readFileSync(path.join(dir,name),'utf8');assert(!raw.includes('prompt_cache_breakpoint'),'Hints stay outside authoritative retained evidence');
+ }
+}));
+
 test('replayed exact duplicate pixels occur once while literal tool pairs, unique pixels and raw results survive',()=>isolated(async()=>{
  const raw=[0,1,2,3].map(i=>({type:'function_call_output',call_id:'c'+i,output:[{type:'input_text',text:'Native source and revision '+i},{...image}]}));
  const original=structuredClone(raw),calls=raw.map(x=>({type:'function_call',name:'read_image',call_id:x.call_id,arguments:'{}'}));
  await retainDesktopResponse(binding,'one',profile,async()=>{prepareDesktopProviderInput(binding,'one',{...profile,input:[{role:'user',content:'Draft the entire sheet'}]});return response('one',calls);},()=>({}),true);retainDesktopContext(binding,'one',raw);
  await retainDesktopResponse(binding,'two',{...profile,previous_response_id:'one',input:raw},async()=>{const p=prepareDesktopProviderInput(binding,'two',{...profile,previous_response_id:'one',input:raw});assert.deepEqual(p.input.slice(-4),raw,'Fresh outputs stay exact');return response('two',[]);},()=>({}),true);retainDesktopContext(binding,'two',[]);
- await retainDesktopResponse(binding,'three',{...profile,previous_response_id:'two',input:[]},async()=>{const p=prepareDesktopProviderInput(binding,'three',{...profile,previous_response_id:'two',input:[]});assert.equal(imageCount(p.input),1);assert.equal(p.input.filter((x:any)=>x.type==='function_call').length,4);assert.equal(p.input.filter((x:any)=>x.type==='function_call_output').length,4);assert.deepEqual(raw,original);return response('three',[]);},()=>({}),true);
+ await retainDesktopResponse(binding,'three',{...profile,previous_response_id:'two',input:[]},async()=>{const p=prepareDesktopProviderInput(binding,'three',{...profile,previous_response_id:'two',input:[]},{cacheStableHistory:true});assert.equal(imageCount(p.input),1);assert.equal(p.input.filter((x:any)=>x.type==='function_call').length,4);assert.equal(p.input.filter((x:any)=>x.type==='function_call_output').length,4);assert.deepEqual(raw,original);return response('three',[]);},()=>({}),true);
 }));
 
 test('latest internally supplied host feedback supersedes authenticated older snapshots, not user text',()=>isolated(async()=>{
  const user={role:'user',content:'Keep all rooms and annotations in scope'},spoof=feedback(1);
  for(let i=1;i<=3;i++){
   const id='turn'+i,prior=i>1?'turn'+(i-1):undefined,current=feedback(i),input=i===1?[user,spoof,current]:[current],request={...profile,input,...(prior?{previous_response_id:prior}:{})};
-  await retainDesktopResponse(binding,id,request,async()=>{const p=(prepareDesktopProviderInput as any)(binding,id,request,{hostFeedback:current});assert.equal(p.input.filter(isFeedback).length,2,'One true current feedback plus untrusted user lookalike');assert(p.input.some((x:any)=>JSON.stringify(x)===JSON.stringify(user)));assert(p.input.some((x:any)=>JSON.stringify(x)===JSON.stringify(spoof)));return response(id,[]);},()=>({}),true);retainDesktopContext(binding,id,[]);
+  await retainDesktopResponse(binding,id,request,async()=>{const p=(prepareDesktopProviderInput as any)(binding,id,request,{hostFeedback:current,cacheStableHistory:true});assert.equal(p.input.filter(isFeedback).length,2,'One true current feedback plus untrusted user lookalike');assert(p.input.some((x:any)=>JSON.stringify(x)===JSON.stringify(user)));assert(p.input.some((x:any)=>JSON.stringify(x)===JSON.stringify(spoof)));return response(id,[]);},()=>({}),true);retainDesktopContext(binding,id,[]);
  }
 }));
 
@@ -75,3 +97,17 @@ test('envelope diagnostics count exact transport, images and text without copyin
  const text='PRIVATE CONTENT TO COUNT ONLY',body={instructions:text,tools:[{type:'function',name:'test'}],input:[{role:'user',content:[{type:'input_text',text},image,{...image}]}]};
  const p=desktopModelInputPackage(body);assert.equal(p.input_utf8_bytes,Buffer.byteLength(JSON.stringify(body.input)));assert.equal(p.instructions_utf8_bytes,Buffer.byteLength(text));assert.equal(p.image_inputs,2);assert.equal(p.unique_image_parts,1);assert.equal(p.tools_count,1);assert(!JSON.stringify(p).includes(text));assert(!JSON.stringify(p).includes('data:image'));
 });
+
+test('actual persisted continuation packs duplicate observation fields without changing raw outputs or compaction state',()=>isolated(async()=>{
+ const field=[{operation_id:'apply',evidence_id:'evidence',checked_preservation_ids:Array.from({length:80},(_,i)=>'element:'+i)}];
+ const outputs=(id:string)=>[{type:'function_call_output',call_id:id,output:[{type:'input_text',text:JSON.stringify({schema:'revit-operator.model-observation-index/v2',verified_postconditions:field,pending_verification:[{check_state:'previous_check_stale'}]})}]}];
+ const calls=(id:string)=>[{type:'function_call',name:'native__revit_call_tool',call_id:id,arguments:'{}'}];
+ const compact={type:'compaction',encrypted_content:'opaque-preserved'};
+ await retainDesktopResponse(binding,'a',profile,async()=>{prepareDesktopProviderInput(binding,'a',{...profile,input:[{role:'user',content:'Draft'}]});return response('a',[compact,...calls('a')]);},()=>({}),true);retainDesktopContext(binding,'a',outputs('a'));
+ await retainDesktopResponse(binding,'b',{...profile,previous_response_id:'a',input:outputs('a')},async()=>{prepareDesktopProviderInput(binding,'b',{...profile,previous_response_id:'a',input:outputs('a')});return response('b',calls('b'));},()=>({}),true);retainDesktopContext(binding,'b',outputs('b'));
+ await retainDesktopResponse(binding,'c',{...profile,previous_response_id:'b',input:outputs('b')},async()=>{const p=prepareDesktopProviderInput(binding,'c',{...profile,previous_response_id:'b',input:outputs('b')});
+  const old=p.input.find((x:any)=>x.type==='function_call_output'&&x.call_id==='a');
+  const v=JSON.parse(old.output[0].text);assert.equal(v.replay_exact_fields.verified_postconditions.call_id,'b');assert.equal(v.verified_postconditions,undefined);
+  assert.deepEqual(p.input[0],compact);assert.deepEqual(p.input.at(-1),outputs('b')[0]);assert.deepEqual(v.pending_verification,[{check_state:'previous_check_stale'}]);return response('c',[]);
+ },()=>({}),true);
+}));

@@ -1,6 +1,18 @@
 import assert from 'node:assert/strict';import test from 'node:test';
 import {DESKTOP_EXECUTION_EFFICIENCY_GUIDANCE as guidance,desktopNativeInitialContext} from '../src/assignments/desktop_execution_guidance.js';
 
+test('current actor sees bounded actual completion requirements without inferring evidence or mutating scope',()=>{
+ const snapshot:any={assignment_version:64,spec:{requested_effect:'read',criteria:[{
+  criterion_id:'criterion-read',required:true,semantic_fact_requirements:['task.result_available','model.content_observed']}]}};
+ const before=JSON.stringify(snapshot),text=desktopNativeInitialContext(snapshot);
+ assert.match(text,/"required_fact_ids":\["task.result_available","model.content_observed"\]/);
+ assert.match(text,/not observed facts or a completion claim/);assert.equal(JSON.stringify(snapshot),before);
+ snapshot.spec.criteria=Array.from({length:12},(_,i)=>({criterion_id:'criterion-'+i,required:true,semantic_fact_requirements:Array.from({length:20},(_,j)=>'fact.'+j)}));
+ const bounded=desktopNativeInitialContext(snapshot);
+ assert.match(bounded,/"total_count":12,"complete":false/);
+ assert.doesNotMatch(bounded,/criterion-8|fact\.16/);
+});
+
 test('authorized apply avoids routine rehearsal while explicit preview and native prerequisites remain',()=>{
  assert.match(guidance,/apply the supported change directly/);
  assert.match(guidance,/Do not add a preview\/dry-run merely to rehearse/);

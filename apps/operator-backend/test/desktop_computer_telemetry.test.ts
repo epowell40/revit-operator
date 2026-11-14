@@ -61,8 +61,13 @@ test("bound desktop HTTP relay retains canonical in-flight and usage without ver
     const result = await relayBoundDesktopComputerResponse({ model: "gpt-6.1-sol", reasoning_effort: "medium", input: "Inspect PDF", message_id: "direct-request-a", tools:modelTools },
       { ...binding, kernelVersion: 2 });
     assert.equal(requests, 1);
-    for(const tool of supplemental)assert(!upstreamRequest.tools.some((t:any)=>t.name==='native__'+tool.name),
-      'the actual provider request must defer supplemental schemas, not just report a smaller catalog');
+    for(const tool of supplemental){
+      const sent=upstreamRequest.tools.find((t:any)=>t.name==='native__'+tool.name);
+      if(tool.name==='operator_manage_work_plan'){
+        assert(sent,'frequently used work-plan schema must reach the actual provider request');
+        assert.deepEqual(sent.parameters,tool.inputSchema,'direct exposure preserves the full current contract');
+      }else assert(!sent,'remaining supplemental schemas stay deferred in the actual request');
+    }
     assert.deepEqual(upstreamRequest.tools,modelTools);
     const submittedProgram=upstreamRequest.tools.find((tool:any)=>tool.name==='native__'+program.name);
     assert(submittedProgram,'full executor SDK must reach the actual provider HTTP request');

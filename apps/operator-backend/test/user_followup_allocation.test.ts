@@ -15,6 +15,45 @@ function fixture(): AssignmentSnapshotV2 {
       usage:{total_tokens:100_000,cached_input_tokens:90_000}}])),operations:{},observations:{},current_binding:{}} as unknown as AssignmentSnapshotV2;
 }
 const budget=(snapshot:AssignmentSnapshotV2)=>defaultAssignmentWorkBudgetV2(snapshot,DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2);
+
+function productFixture(): AssignmentSnapshotV2 {
+  const s=fixture();
+  const binding={assignment_id:'product',run_id:'run',generation:1,session_id:'session',principal_id:'principal',document_fingerprint:'model'};
+  s.current_binding={...binding};s.spec.binding={...binding};
+  s.spec.execution_policy={mode:'single_actor_review_v1',selected_by:'trusted_runtime_host',principal_id:'principal',
+    session_id:'session',document_fingerprint:'model',ready_work_handoff:'continue_ready_work_v1',max_turns:8,
+    max_provider_calls:32,max_operations:128,max_total_tokens:4_000_000,max_wall_clock_ms:1_800_000};
+  s.provider_calls=Object.fromEntries(Object.entries(s.provider_calls).slice(0,32));
+  return s;
+}
+
+test('authenticated product checkpoint can explicitly renew calls and tokens without enabling automatic credit',()=>{
+  const s=productFixture(),original=structuredClone(s),request={provider_calls:64,total_tokens:16_000_000};
+  assert.equal(allocateAuthenticatedFollowupV1(s,'ordinary',now),s,'Ordinary direction cannot mint product allowance');
+  const renewed=allocateAuthenticatedFollowupV1(s,'approved',now,request),b=budget(renewed);
+  assert.equal(b.max_provider_calls,96);assert.equal(b.max_total_tokens,19_200_000);
+  assert.equal(b.max_operations,128);assert.equal(b.max_wall_clock_ms,1_800_000);
+  assert.deepEqual(s,original);assert.deepEqual(renewed.spec,s.spec);assert.deepEqual(renewed.provider_calls,s.provider_calls);
+  assert.deepEqual(renewed.operations,s.operations);assert.equal(renewed.spec.execution_policy!.progress_allowance,undefined);
+  assert.deepEqual(budget(JSON.parse(JSON.stringify(renewed))),b);
+  assert.deepEqual(budget(allocateAuthenticatedFollowupV1(renewed,'idle',now,request)),b);
+  assert.deepEqual(budget(allocateAuthenticatedFollowupV1(renewed,'ordinary-again',now)),b);
+});
+
+test('product renewal rejects untrusted policy or binding and keeps usage, Pause and finite resource guards',()=>{
+  const request={provider_calls:64,total_tokens:16_000_000};
+  for(const mutate of [
+    (s:any)=>s.spec.execution_policy.selected_by='agent',
+    (s:any)=>s.spec.execution_policy.principal_id='foreign',
+    (s:any)=>s.spec.execution_policy.document_fingerprint='foreign',
+    (s:any)=>s.spec.execution_policy.max_provider_calls=33,
+    (s:any)=>s.current_binding.generation=2,(s:any)=>s.current_binding.session_id='foreign',
+    (s:any)=>s.current_binding.principal_id='foreign',(s:any)=>s.current_binding.document_fingerprint='foreign',
+    (s:any)=>s.spec.requested_effect='read',(s:any)=>s.execution_control={state:'paused'},
+    (s:any)=>delete s.provider_calls['call-0'].usage,
+    (s:any)=>s.provider_calls['call-0'].admitted_at='bad'
+  ]) { const s=productFixture();mutate(s);assert.throws(()=>allocateAuthenticatedFollowupV1(s,'bad',now,request)); }
+});
 test('settled user work allocation preserves every cumulative resource and frozen policy, with no idle accumulation',()=>{
   const s=fixture(), before=structuredClone(s), allocated=allocateAuthenticatedFollowupV1(s,'user-one',now);
   assert.equal(budget(s).max_provider_calls,64);assert.equal(budget(allocated).max_provider_calls,152);

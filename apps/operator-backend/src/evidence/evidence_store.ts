@@ -25,6 +25,7 @@ import {
 } from "./evidence_ref.js";
 import { extractDeterministicEvidenceFacts, projectEvidence } from "./evidence_projection.js";
 import { extractMcpStructuredPayload } from "./structured_payload.js";
+import { selectNativeExecutionAudit } from './native_execution_audit.js';
 
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,240}$/;
 const STRONG_SECRET_PATTERNS = [
@@ -500,7 +501,15 @@ export function retrieveEvidence(request: EvidenceRetrievalRequest): EvidenceRet
       complete = start === 0 && length >= bytes.length;
     }
   } else if (selector.kind === "item_range") {
-    const array = selectPath(selectable, selector.item_range.path);
+    // Page the same derived native audit already exposed by field selection.
+    // Never let a payload-supplied projection impersonate this reserved path.
+    const auditPath = selector.item_range.path === 'projection.native_execution_audit'
+      || selector.item_range.path.startsWith('projection.native_execution_audit.');
+    const semantic = selectable && typeof selectable === 'object' ? (selectable as Record<string, unknown>).payload : undefined;
+    const pageRoot = auditPath
+      ? { projection: { native_execution_audit: selectNativeExecutionAudit(ref, semantic) } }
+      : selectable;
+    const array = selectPath(pageRoot, selector.item_range.path);
     if (!Array.isArray(array)) throw new Error("item_range.path must select an array." + retainedShapeHints(selectable));
     let page;
     try {
@@ -512,10 +521,18 @@ export function retrieveEvidence(request: EvidenceRetrievalRequest): EvidenceRet
     }
     selection = page.selection;
     pagination = page.pagination;
-    complete = page.complete;
+    // Exhausting a projected historical array never exhausts the raw artifact
+    // or establishes current native completeness.
+    complete = auditPath ? false : page.complete;
+    if (auditPath) selectionOrigins = { [selector.item_range.path]: 'deterministic_projection' };
   } else if (selector.kind === "fields") {
     const derived = extractDeterministicEvidenceFacts(parsed);
-    const projection = { key_counts: derived.counts, key_facts: derived.facts };
+    const projection: Record<string, unknown> = { key_counts: derived.counts, key_facts: derived.facts };
+    if (selector.fields.some(field => field === 'projection.native_execution_audit' || field.startsWith('projection.native_execution_audit.'))) {
+      const semantic = selectable && typeof selectable === 'object' ? (selectable as Record<string, unknown>).payload : undefined;
+      const audit = selectNativeExecutionAudit(ref, semantic);
+      if (audit) projection.native_execution_audit = audit;
+    }
     missingFields = []; selectionOrigins = {};
     const missing = Symbol("missing evidence field");
     selection = Object.fromEntries(selector.fields.map(field => {
@@ -573,7 +590,8 @@ export function retrieveEvidence(request: EvidenceRetrievalRequest): EvidenceRet
   return { schema: EVIDENCE_RETRIEVAL_SCHEMA, evidence_ref: ref, selection, returned_bytes: selectedBytes, complete,
     ...(textPagination ? {text_pagination:textPagination} : {}),
     ...(image ? { image_byte_count: bytes.length, image_byte_limit: maxBytes } : {}),
-    ...(pagination ? { pagination } : {}), ...(missingFields ? { missing_fields: missingFields, selection_origins: selectionOrigins } : {}) };
+    ...(pagination ? { pagination } : {}), ...(missingFields ? { missing_fields: missingFields } : {}),
+    ...(selectionOrigins ? { selection_origins: selectionOrigins } : {}) };
 }
 
 export function readAuthoritativeEvidence(ref: EvidenceRefV1, scope: EvidenceRetrievalRequest["scope"]): Buffer {

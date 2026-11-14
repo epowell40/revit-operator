@@ -11,6 +11,7 @@ import {getGoal,__testOnlyResetGoalListCache} from '../src/goals/service.js';
 import {runWithRequestContext} from '../src/request_context.js';
 import {createOperatorBackendAuth} from '../src/operator_backend_auth.js';
 import {__closeForTests} from '../src/memory/sqlite_store.js';
+import {retainImageInputDelivery} from '../src/desktop_image_delivery.js';
 
 const fixture=JSON.parse(fs.readFileSync('test/fixtures/work-plan-dependencies-398.json','utf8').replace(/^\uFEFF/,''));
 test('retained independent inspection refusals reach HTTP with domain recovery guidance, without accepting scope',async()=>{
@@ -43,6 +44,15 @@ test('retained independent inspection refusals reach HTTP with domain recovery g
    {item_id:'review',kind:'inspection',depends_on:['correction','save'],description:'Inspect changed targets and saved output',source_basis:'Request'}];
   assert.equal((await request({...binding,action:'declare',declaration:{items,assumptions:[]}})).status,200);
   __testOnlyResetGoalListCache();assert.equal(getAssignmentKernelSnapshotV2(binding.assignment_id)!.work_plan!.items.length,3);
+  retainImageInputDelivery(binding,{id:'readback-diagnostic-delivery',status:'completed',model_call_receipt:{success:true,started_at_utc:new Date().toISOString()},
+    input_images:[{sha256:'a'.repeat(64),bytes:1,media_type:'image/png',position:'input.0'},{sha256:'b'.repeat(64),bytes:1,media_type:'image/png',position:'input.1'}]});
+  const checked=await request({...binding,action:'locate',item_id:'correction',location_hint:{status:'candidate',reason:'Visible drawing area',
+    source:{attachment_id:'drawing',filename:'drawing.pdf',sha256:'c'.repeat(64),page:1,page_count:1,region:{min_u:0,min_v:0,max_u:1,max_v:1}},
+    native:{document_fingerprint:binding.document_fingerprint,view_id:1,view_name:'Plan'},
+    drafting:{pass:'annotations',stage:'checked',element_ids:[42],read_operation_ids:['missing-read'],source_image_sha256:'a'.repeat(64),model_image_sha256:'b'.repeat(64),next_action:'Continue',remaining:'Other area'}}});
+  assert.equal(checked.status,409);assert.equal(checked.body.error,'drafting_check_readback_required');
+  assert.match(checked.body.guidance,/missing-read: unknown_operation/);assert.match(checked.body.guidance,/C# native read mode is supported/);
+  assert.equal(getAssignmentKernelSnapshotV2(binding.assignment_id)!.work_plan!.items[0]!.location_history,undefined,'failed check does not mark drafted work checked');
   const forged=await request({...binding,action:'complete',item_id:'review',operation_ids:['invented-native-read']});
   assert.equal(forged.status,409);assert.equal(forged.body.guidance,undefined,'unrelated rejection details are not broadly exposed');
   const cyclic=await request({...binding,action:'declare',declaration:{items:[{item_id:'cycle_a',depends_on:['cycle_b'],description:'A',source_basis:'Drawing'},{item_id:'cycle_b',depends_on:['cycle_a'],description:'B',source_basis:'Drawing'}],assumptions:[]}});

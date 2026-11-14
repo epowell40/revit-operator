@@ -24,6 +24,90 @@ function workspace(t: test.TestContext) {
 }
 const upload = (session = "owner", text = true) => storeAttachmentUpload({ session_id: session, filename: "checklist.pdf", data_base64: attachmentPdf(8, text).toString("base64") });
 
+function rasterUpload(format: "png" | "jpeg" = "png") {
+  const canvas = createCanvas(320, 160), ctx = canvas.getContext("2d");
+  ctx.fillStyle = "white"; ctx.fillRect(0, 0, 320, 160);
+  ctx.fillStyle = "red"; ctx.fillRect(160, 0, 160, 160);
+  const bytes = format === "png" ? canvas.toBuffer("image/png") : canvas.toBuffer("image/jpeg");
+  return storeAttachmentUpload({ session_id: "owner", filename: `reference.${format}`, data_base64: bytes.toString("base64") });
+}
+
+test("recovered registered PNG returns actual reference pixels through the model-visible adapter", async t => {
+  workspace(t); const attachment = rasterUpload();
+  const result = await readRegisteredPdfAttachment("owner", { attachment_id: attachment.id, pages: [1], mode: "detail" });
+  const adapted = adaptMcpToolCallResultToDynamicResponse(result);
+  const images = adapted.contentItems.filter(x => x.type === "inputImage");
+  assert.equal(images.length, 1);
+  const image = await loadImage(images[0]!.imageUrl);
+  assert.equal(image.width, 320); assert.equal(image.height, 160);
+  const canvas = createCanvas(320, 160), ctx = canvas.getContext("2d"); ctx.drawImage(image, 0, 0);
+  assert.deepEqual([...ctx.getImageData(240, 80, 1, 1).data], [255, 0, 0, 255]);
+  const meta = JSON.parse(result.content.find(x => x.type === "text")!.text);
+  assert.equal(meta.sha256, attachment.sha256); assert.equal(meta.attachment_id, attachment.id);
+  assert.equal(meta.source_kind, "raster_image"); assert.equal(meta.page_count, 1);
+  assert.equal(meta.coverage[0].text_scope, "not_extracted");
+  assert.deepEqual(meta.fully_rendered_pages, [1]);
+});
+
+test("registered JPEG region has bounded pixels and explicit full-source transform without claiming full review", async t => {
+  workspace(t); const attachment = rasterUpload("jpeg");
+  const result = await readRegisteredPdfAttachment("owner", { attachment_id: attachment.id, pages: [1], region: { min_u: .5, min_v: 0, max_u: 1, max_v: 1 } });
+  const meta = JSON.parse(result.content.find(x => x.type === "text")!.text);
+  assert.deepEqual(meta.fully_rendered_pages, []);
+  assert.equal(meta.coverage[0].visual_scope, "region");
+  assert.equal(meta.image_geometry.width_px, 160);
+  assert.equal(meta.image_geometry.pixel_to_normalized_page.u_offset, .5);
+  assert.equal(meta.image_geometry.pixel_to_normalized_page.u_per_pixel, 1 / 320);
+  const image = result.content.find(x => x.type === "image")!;
+  assert.equal((await loadImage(Buffer.from(image.data, "base64"))).width, 160);
+});
+
+test("raster recovery remains bound to current conversation, immutable bytes and authenticated turn", async t => {
+  const root = workspace(t); const attachment = rasterUpload();
+  const runtime = new CodexMcpToolRuntime({ backendCwd: process.cwd(), workspaceRoot: root, codexHome: root, spawnEnv: {} });
+  const args = { attachment_id: attachment.id, pages: [1] };
+  await assert.rejects(readRegisteredPdfAttachment("foreign", args), /not registered/);
+  await assert.rejects(readRegisteredPdfAttachment("owner", { ...args, file_path: "reference.png" }), /conversation is bound/);
+  const lease = runtime.beginBackendAuthLease("owner", createOperatorBackendAuth("shared_token", "test-only"));
+  runtime.bindBackendAuthLeaseTurn(lease, "recovered-turn");
+  await assert.rejects(runtime.readAttachmentForTurn(args, { turnId: "stale", sessionId: "owner" }), /not bound/);
+  const result = await runtime.readAttachmentForTurn(args, { turnId: "recovered-turn", sessionId: "owner" });
+  assert.equal(adaptMcpToolCallResultToDynamicResponse(result).contentItems.filter(x => x.type === "inputImage").length, 1);
+  runtime.endBackendAuthLease(lease);
+  await assert.rejects(runtime.readAttachmentForTurn(args, { turnId: "recovered-turn", sessionId: "owner" }), /not bound/);
+  fs.appendFileSync(path.join(root, attachment.relative_path!), "changed");
+  await assert.rejects(readRegisteredPdfAttachment("owner", args), /changed since upload/);
+});
+
+test("raster reader rejects wrong page, invalid region, unsupported bytes and oversized header before decoding", async t => {
+  workspace(t); const attachment = rasterUpload();
+  for (const pages of [[2], [1, 2]]) await assert.rejects(readRegisteredPdfAttachment("owner", { attachment_id: attachment.id, pages }), /one page/);
+  await assert.rejects(readRegisteredPdfAttachment("owner", { attachment_id: attachment.id, pages: [1], mode: "overview", region: { min_u: 0, min_v: 0, max_u: 1, max_v: 1 } }), /requires detail/);
+  await assert.rejects(readRegisteredPdfAttachment("owner", { attachment_id: attachment.id, pages: [1], region: { min_u: .7, min_v: 0, max_u: .2, max_v: 1 } }), /positive width/);
+  const oversized = Buffer.alloc(24); Buffer.from([137,80,78,71,13,10,26,10]).copy(oversized);
+  oversized.writeUInt32BE(20000, 16); oversized.writeUInt32BE(20000, 20);
+  const huge = storeAttachmentUpload({ session_id: "owner", filename: "large.png", data_base64: oversized.toString("base64") });
+  await assert.rejects(readRegisteredPdfAttachment("owner", { attachment_id: huge.id, pages: [1] }), /decoding budget/);
+  oversized.writeUInt32BE(10, 16); oversized.writeUInt32BE(10, 20);
+  const broken = storeAttachmentUpload({ session_id: "owner", filename: "broken.png", data_base64: oversized.toString("base64") });
+  await assert.rejects(readRegisteredPdfAttachment("owner", { attachment_id: broken.id, pages: [1] }));
+  const svg = storeAttachmentUpload({ session_id: "owner", filename: "unsupported.png", data_base64: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>').toString("base64") });
+  await assert.rejects(readRegisteredPdfAttachment("owner", { attachment_id: svg.id, pages: [1] }), /PNG and JPEG/);
+});
+
+test("raster overview is downscaled without text or review claims and detail remains bounded", async t => {
+  workspace(t); const canvas = createCanvas(4000, 1000);
+  const attachment = storeAttachmentUpload({ session_id: "owner", filename: "large.png", data_base64: canvas.toBuffer("image/png").toString("base64") });
+  for (const [mode, width] of [["overview", 1280], ["detail", 3072]] as const) {
+    const result = await readRegisteredPdfAttachment("owner", { attachment_id: attachment.id, pages: [1], mode });
+    const meta = JSON.parse(result.content.find(x => x.type === "text")!.text);
+    assert.equal(meta.image_geometry.width_px, width);
+    assert.equal(meta.image_geometry.pixel_to_normalized_page.u_per_pixel, 1 / width);
+    assert.equal(meta.small_text_review_not_established, mode === "overview");
+    assert.ok(JSON.stringify(meta).length < 3000);
+  }
+});
+
 test("registered PDF delivers bounded source circle centers alongside actual rotated cropped-page pixels", async t => {
   workspace(t);
   const attachment = storeAttachmentUpload({ session_id: "owner", filename: "source-landmarks.pdf", data_base64: circularLabelPdf(90, true).toString("base64") });
@@ -100,7 +184,7 @@ test("reader refuses another session, missing ownership, forged path, changed by
   fs.writeFileSync(path.join(root, "private.pdf"), attachmentPdf());
   await assert.rejects(readRegisteredPdfAttachment("owner", { attachment_id: "forged", pages: [1] }), /path is invalid/);
   const other = storeAttachmentUpload({ session_id: "owner", filename: "notes.txt", data_base64: Buffer.from("notes").toString("base64") });
-  await assert.rejects(readRegisteredPdfAttachment("owner", { attachment_id: other.id, pages: [1] }), /PDF attachments only/);
+  await assert.rejects(readRegisteredPdfAttachment("owner", { attachment_id: other.id, pages: [1] }), /PDF, PNG and JPEG attachments only/);
   fs.appendFileSync(path.join(root, attachment.relative_path!), "changed");
   await assert.rejects(readRegisteredPdfAttachment("owner", { attachment_id: attachment.id, pages: [1] }), /changed since upload/);
 });

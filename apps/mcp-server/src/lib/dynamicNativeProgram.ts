@@ -1,4 +1,4 @@
-import {normalizeNativeParameterChecks,type NativeParameterCheck} from "@revitoperator/assignment-kernel-v2-contracts";
+import {normalizeNativeParameterChecks,normalizeNativeResultTargets,type NativeResultTargets,type NativeParameterCheck} from "@revitoperator/assignment-kernel-v2-contracts";
 export {normalizeNativeParameterChecks} from "@revitoperator/assignment-kernel-v2-contracts";
 import { createHash } from "node:crypto";
 import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
@@ -16,6 +16,7 @@ export type NativeProgramInput = {
   max_affected_elements?: number;
   deadline_ms?: number;
   parameter_checks?: NativeParameterCheck[];
+  result_targets?: NativeResultTargets;
 };
 
 /** Requested bounds, never authority. Identity comes from the admitted task. */
@@ -34,10 +35,13 @@ export function normalizeNativeProgram(value: NativeProgramInput, mode: string, 
     throw new Error("Native C# requires a local General Agent, hosted workstation courier or development/laboratory, a supported Revit target and explicit read or apply mode.");
   const expectedDocumentFingerprint = fingerprint?.startsWith("sha256:") ? fingerprint : `sha256:${fingerprint}`;
   if (!hash(expectedDocumentFingerprint)) throw new Error("Native C# requires the admitted task's current document identity.");
-  if (Object.keys(input).some(key => !["entry_type", "effect_scope", "allowed_existing_unique_ids", "allow_create", "max_affected_elements", "deadline_ms", "parameter_checks"].includes(key))
+  if (Object.keys(input).some(key => !["entry_type", "effect_scope", "allowed_existing_unique_ids", "allow_create", "max_affected_elements", "deadline_ms", "parameter_checks", "result_targets"].includes(key))
       || typeof input.entry_type !== "string" || !input.entry_type.trim() || input.entry_type.length > 256 || /[\x00-\x1f\x7f]/.test(input.entry_type))
     throw new Error("Native C# entry type or request fields are invalid.");
   normalizeNativeParameterChecks(input.parameter_checks, mode);
+  normalizeNativeResultTargets(input.result_targets, mode);
+  if (Object.hasOwn(input,'parameter_checks') && Object.hasOwn(input,'result_targets'))
+    throw new Error('Use desired parameter_checks or result_targets, not two conflicting verification scopes.');
   const ids = input.allowed_existing_unique_ids ?? [];
   const effectScope = input.effect_scope === undefined ? "listed_elements" : input.effect_scope;
   if (!["listed_elements", "active_document"].includes(String(effectScope))
@@ -55,8 +59,13 @@ export function normalizeNativeProgram(value: NativeProgramInput, mode: string, 
     allowedExistingUniqueIds: ids as string[], allowCreate: create, maxAffectedElements: Number(maximum), deadlineMs: Number(deadline) } };
 }
 
+// The authenticated receipt and its authentication envelope are both inside
+// this existing transport budget. A smaller per-receipt cap could reject an
+// already committed native write whose complete evidence fits the transport.
+export const NATIVE_PROGRAM_EVIDENCE_MAX_BYTES = 8 * 1024 * 1024;
+
 function parseReceipt(value: unknown): RecordValue {
-  if (typeof value !== "string" || value.length === 0 || value.length > 2 * 1024 * 1024) throw new Error("Native C# receipt is missing or oversized.");
+  if (typeof value !== "string" || value.length === 0 || Buffer.byteLength(value, "utf8") > NATIVE_PROGRAM_EVIDENCE_MAX_BYTES) throw new Error("Native C# receipt is missing or oversized.");
   const parsed = object(JSON.parse(value));
   if (!Object.keys(parsed).length) throw new Error("Native C# receipt is not an object.");
   return parsed;
@@ -66,6 +75,8 @@ function parseReceipt(value: unknown): RecordValue {
  * launcher verifies the MAC with its ephemeral key; here we preserve the exact
  * authenticated body/source/document binding at the model-visible boundary. */
 export function readNativeProgramEvidence(evidence: RecordValue, sourceHash: string, mode: string, expectedDocument: string) {
+  if (Buffer.byteLength(JSON.stringify(evidence), "utf8") > NATIVE_PROGRAM_EVIDENCE_MAX_BYTES)
+    throw new Error("Native C# evidence exceeds its transport byte budget.");
   if (evidence.nativeExecutionReceipt == null || evidence.nativeExecutionReceipt === "") {
     if (evidence.ok === true) throw new Error("Native C# success has no native execution receipt.");
     return null; // Lost apply response remains unknown in the existing controller.

@@ -1,5 +1,5 @@
 import {nativeReadinessHealthDetail} from './native_readiness_diagnostic.mjs';
-import {CANONICAL_NATIVE_TASK_GUIDANCE} from './native_task_routing.mjs';
+import {CANONICAL_NATIVE_TASK_GUIDANCE,UNIFIED_NATIVE_COMPLETION_GUIDANCE} from './native_task_routing.mjs';
 // Claims are retained for review; this adapter never certifies a desktop effect.
 export const WORK_REPORT_TOOL = {
   type: "function", name: "report_work_for_review",
@@ -71,7 +71,7 @@ export function retainedRetrievalStallContinuation(assignment, retained) {
     'Keep checked partial work and save a useful verified milestone when applicable. Do not repeat mutations, invent missing values, mark work complete, or override Pause/unknown effects. Four failures without a successful read stop this loop.'}]};
 }
 
-export async function missingWorkReportContinuation(assignment, request, reminderCount = 0, progress = {}) {
+export async function missingWorkReportContinuation(assignment, request, reminderCount = 0, progress = {}, options = {}) {
   if (assignment?.kernel_version !== 2) return null;
   if (!assignment.session_id || !assignment.goal_id || !assignment.run_id
       || !Number.isSafeInteger(assignment.generation) || assignment.generation < 1)
@@ -113,7 +113,7 @@ export async function missingWorkReportContinuation(assignment, request, reminde
     if(reminderCount===2)throw Error('task_outcome_required: No canonical outcome or question was retained. Preserve completed work and evidence; do not replay actions.');
     return {kind:'continue',input:{role:'user',content:[{type:'input_text',text:
       'The saved task is still active; your plain-text answer did not retain an outcome. If required information is missing, call request_task_input to save the focused question. '
-      +CANONICAL_NATIVE_TASK_GUIDANCE+' Strict tasks cannot use report_work_for_review to bypass their evidence requirements. '
+      +(options.unifiedNative === true ? UNIFIED_NATIVE_COMPLETION_GUIDANCE : CANONICAL_NATIVE_TASK_GUIDANCE)+' Strict tasks cannot use report_work_for_review to bypass their evidence requirements. '
       +'Use retained results; do not repeat completed or uncertain model, save, print or external actions, change grants, clear unknown effects or override Pause.'}]}};
   }
   if (status.completion_proposal) {

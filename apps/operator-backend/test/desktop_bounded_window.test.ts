@@ -1,3 +1,4 @@
+import {assertCacheAnnotatedInputs} from './desktop_cache_wire.fixtures.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import http from 'node:http';
@@ -59,7 +60,7 @@ test(`production relay continues an accounted compacted ${name} batch after lega
   const send=(id:string,body:any)=>retainDesktopResponse(b,id,{...profile,...body},()=>relayBoundDesktopComputerResponse({...profile,...body,message_id:id},b),desktopComputerErrorResponse,true);
   await send('one',{input:[{role:'user',content:'Draft both areas'}]});retainDesktopContext(b,'one',raw);
   const second=await send('two',{previous_response_id:'response-1',input:raw});assert.equal(received.length,2);assert.equal(received[1].previous_response_id,undefined);
-  assert.deepEqual(received[1].input.filter((r:any)=>r.type==='function_call_output'),bounded(raw));assert.deepEqual(received[1].input[0],compact);assert.deepEqual(raw,original);
+  assertCacheAnnotatedInputs(received[1].input.filter((r:any)=>r.type==='function_call_output'),bounded(raw) as any[],3);assert.deepEqual(received[1].input[0],compact);assert.deepEqual(raw,original);
   const pixels=(rows:any[])=>rows.flatMap(r=>Array.isArray(r.output)?r.output.filter((b:any)=>b.type==='input_image'):[]);
   assert.deepEqual(pixels(received[1].input),pixels(original));
   assert.equal(second.model_context_package?.host_feedback_count,1,'Actual provider wire gets one current host snapshot');

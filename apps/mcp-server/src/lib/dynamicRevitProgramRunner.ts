@@ -5,7 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { getWorkspaceRoot } from "./workspace.js";
 import { resolveDynamicRuntimeInstallation } from "./dynamicRuntimeInstallation.js";
 import { currentAssignmentKernelV2Context, beginAssignmentKernelDynamicDispatchV2, recordAssignmentKernelDynamicResultV2 } from "./assignmentKernelV2.js";
-import { normalizeNativeProgram, readNativeProgramEvidence, type NativeProgramInput } from "./dynamicNativeProgram.js";
+import { normalizeNativeProgram, readNativeProgramEvidence, NATIVE_PROGRAM_EVIDENCE_MAX_BYTES, type NativeProgramInput } from "./dynamicNativeProgram.js";
 import { runNativeProgramViaCourier } from "./dynamicNativeCourier.js";
 
 export const DYNAMIC_REVIT_PROGRAM_RUN_V1 = "revit-operator.dynamic-revit-program-run.v1" as const;
@@ -156,7 +156,7 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
       })()
     : await execute(supervisor, ["--execute-task", configFile], Math.max(config.workerDeadlineMs + 90_000, 120_000));
   if (!fs.existsSync(evidenceFile)) throw new Error(`Dynamic supervisor returned ${execution.exitCode} without bounded evidence: ${execution.stderr.slice(0, 2000)}`);
-  const evidenceBytes = readAnchoredRegularFile(evidenceFile, runRoot, 8 * 1024 * 1024);
+  const evidenceBytes = readAnchoredRegularFile(evidenceFile, runRoot, NATIVE_PROGRAM_EVIDENCE_MAX_BYTES);
   const evidenceSha256 = sha256(evidenceBytes);
   const evidence = JSON.parse(evidenceBytes.toString("utf8")) as Record<string, unknown>;
   const nativeEvidence = native ? readNativeProgramEvidence(evidence, sourceHash, input.mode, native.expectedDocumentFingerprint) : null;
@@ -198,7 +198,8 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
       structuredDiagnostics.push({ code: warning ? "NATIVE_MODEL_WARNING" : "NATIVE_MODEL_FAILURE",
         message: message.slice(0, 1000), phase: "native", severity: warning ? "warning" : "error",
         repair_action: "inspect_native_outcome_before_correction", line: null, column: null,
-        end_line: null, end_column: null, step_id: null, assertion_id: null, retryable: false });
+        end_line: null, end_column: null, step_id: null, assertion_id: null, retryable: false,
+        native_failure: projectNativeFailureIdentity(failure) });
     }
     if (failures.length > 6) structuredDiagnostics.push({ code: "NATIVE_FAILURES_OMITTED",
       message: `${failures.length - 6} additional native failure details remain in the authenticated retained receipt.`,
@@ -351,7 +352,22 @@ type StructuredDiagnostic = {
   code: string; message: string; phase: string; severity: string; repair_action: string;
   line: number | null; column: number | null; end_line: number | null; end_column: number | null;
   step_id: string | null; assertion_id: string | null; retryable: boolean;
+  native_failure?: ReturnType<typeof projectNativeFailureIdentity>;
 };
+
+/** Diagnostic projection only. Callers must authenticate the containing native
+ * receipt first; these IDs cannot establish current existence or effects. */
+export function projectNativeFailureIdentity(failure: Record<string, unknown>) {
+  const reported = Array.isArray(failure.elementIds) ? failure.elementIds : null;
+  const ids = reported?.slice(0, 16).filter((id): id is number => Number.isSafeInteger(id) && id > 0) ?? [];
+  const definition = typeof failure.failureDefinitionId === "string"
+    && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(failure.failureDefinitionId)
+    ? failure.failureDefinitionId : null;
+  return { failure_definition_id: definition, element_ids: ids,
+    reported_element_count: reported?.length ?? null, returned_element_count: ids.length,
+    complete: reported !== null && ids.length === reported.length,
+    usage: "Native failure's attempt-time IDs, not verified current elements or committed effects. Rollback may remove new IDs. Reconcile existing IDs against the current model; earlier committed types can be reported during later work. This does not authorize edits or retries. Full diagnostics remain in the authenticated receipt." };
+}
 type IterationReceipt = {
   schema: "revit-operator.dynamic-code-iteration.v1";
   run_id: string; attempt: number; lane: ExecutionLane; resume_mode: "root" | "facts" | "repair" | "retry";

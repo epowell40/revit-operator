@@ -11,6 +11,9 @@ namespace RevitBridge.Logic.Handlers
 {
     public class GetElementSummaryHandler : IRequestHandler
     {
+        private readonly Func<string, OperatorDocumentChangeVersion>? _version;
+        public GetElementSummaryHandler() : this(null) { }
+        public GetElementSummaryHandler(Func<string, OperatorDocumentChangeVersion>? version) { _version = version; }
         public class Params
         {
             // Back-compat: earlier clients used { ids: [...] }.
@@ -26,6 +29,7 @@ namespace RevitBridge.Logic.Handlers
             public bool includeTagReferences { get; set; }
             public int? maxTagReferencesPerElement { get; set; }
             public List<long>? preservationScheduleIds { get; set; }
+            public bool includeNativeProgramEffectState { get; set; }
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
@@ -33,6 +37,10 @@ namespace RevitBridge.Logic.Handlers
             var p = JsonSerializer.Deserialize<Params>(jsonData);
             var ids = p?.elementIds ?? p?.ids;
             if (ids == null) throw new ArgumentException("Missing 'elementIds' (or legacy 'ids').");
+            if (p.includeNativeProgramEffectState && (ids.Count == 0 || ids.Count > OperatorNativeEffectState.MaxElements
+                || ids.Exists(id => id <= 0) || new HashSet<long>(ids).Count != ids.Count
+                || p.includeTagReferences || p.includeElectricalCircuitMembership || p.preservationScheduleIds != null))
+                throw new ArgumentException("Native effect-state read requires 1-4096 unique positive identities and a separate exact read scope.");
             var tagReferenceLimit = p.includeTagReferences ? TagReferenceReadPolicy.ValidateRequest(ids, p.maxTagReferencesPerElement) : 16;
             if (!p.includeTagReferences && p.maxTagReferencesPerElement.HasValue)
                 throw new ArgumentException("maxTagReferencesPerElement requires includeTagReferences:true.");
@@ -153,6 +161,8 @@ namespace RevitBridge.Logic.Handlers
             if (p?.includeElectricalCircuitMembership == true)
                 return Task.FromResult<object>(new { schema = "operator.electrical_membership_read.v1", complete = true,
                     requestedElementIds = ids, items = results, circuits = electricalCircuits.Values });
+            if (p.includeNativeProgramEffectState)
+                return Task.FromResult<object>(new { result = results, nativeProgramEffectState = NativeProgramEffectObservation.Read(doc, ids, _version) });
             if (p.preservationScheduleIds != null)
                 return Task.FromResult(AnnotationSchedulePreservation.AttachRead(doc, new { result = results }, p.preservationScheduleIds));
             return Task.FromResult<object>(results);

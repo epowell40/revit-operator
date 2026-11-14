@@ -6,7 +6,11 @@ import {projectDraftingPasses,type WorkPlanLocationRecordV2} from '../domain/ass
  * scheduler, completeness estimate, native observation or progress allowance.
  * Local corrections can be useful while whole-drawing coverage stands still. */
 export function projectDraftingFrontier(snapshot:AssignmentSnapshotV2) {
- if(snapshot.spec.requested_effect!=='apply'||snapshot.spec.execution_policy?.ready_work_handoff!=='continue_ready_work_v1'
+ // Strict tasks have no advisory execution policy. This is a projection of
+ // already-bound actor tracking, not permission to continue or a policy opt-in.
+ // Preserve explicitly selected policies that do not request this handoff.
+ if(snapshot.spec.requested_effect!=='apply'||(snapshot.spec.execution_policy!=null
+   &&snapshot.spec.execution_policy.ready_work_handoff!=='continue_ready_work_v1')
    ||!snapshot.current_binding?.document_fingerprint||!snapshot.work_plan?.items.length)return null;
  const valid=(r:WorkPlanLocationRecordV2)=>{
   const s=r.source,n=r.native,g=s?.region;
@@ -53,6 +57,14 @@ export function projectDraftingFrontier(snapshot:AssignmentSnapshotV2) {
  // The alternate pointers are deliberately oldest first. Recent-only recovery
  // otherwise keeps surfacing the same refinement even with older work open.
  const others=rows.filter(r=>r.item.item_id!==focus.item.item_id).reverse().slice(0,2).map(project);
+ // A partial spatial journal must not hide the rest of the declared scope.
+ // These are prose pointers only: no invented crop, element IDs or completion.
+ const unlocated=snapshot.work_plan.items.filter(item=>!latest.has(item.item_id)&&!item.completed_at
+  &&!item.deferrals?.some(d=>!d.resumed_at));
+ const declared=unlocated.slice(-3).map(item=>({item_id:item.item_id,
+  description:short(item.description,112),source_basis:short(item.source_basis,112),
+  text_truncated:Buffer.byteLength(item.description,'utf8')>112||Buffer.byteLength(item.source_basis,'utf8')>112,
+  tracking_state:'unlocated' as const,projection_only:true}));
  const hold=snapshot.terminal||snapshot.outcome!=='active'?'task_not_active':snapshot.execution_control?.state==='paused'?'paused'
   :snapshot.unresolved_unknown_operation_ids.length||snapshot.in_flight_operation_ids.length||!snapshot.quiescent?'unsettled_model_effect'
   :snapshot.provider_usage_hold||snapshot.in_flight_provider_call_ids.length?'pending_usage'
@@ -63,9 +75,12 @@ export function projectDraftingFrontier(snapshot:AssignmentSnapshotV2) {
   calls_since_new_checked_scope:calls,checked_scope_count:seenChecked.size,recorded_region_count:rows.length,
   recent_focus:project(focus),other_recorded_regions:others,
   omitted_region_count:Math.max(0,rows.length-1-others.length),
-  notice:'Actor tracking only; checked covers linked subset/pass, not an entire crop. Unmarked source remains undiscovered. Retained records are not fresh pixels or native proof. No allowance, permission or completion changes.'};
+  declared_items_without_region_count:unlocated.length,declared_items_without_region:declared,
+  omitted_declared_items_without_region_count:unlocated.length-declared.length,
+  notice:'Actor tracking only; checked covers linked subset/pass, not an entire crop. Unmarked source remains undiscovered. Unlocated declarations are not proof of missing model work; reconcile before editing. Retained records are not fresh pixels or native proof. No allowance, permission or completion changes.'};
  while(Buffer.byteLength(JSON.stringify(result),'utf8')>3072&&result.other_recorded_regions.length){result.other_recorded_regions.pop();result.omitted_region_count++;}
+ while(Buffer.byteLength(JSON.stringify(result),'utf8')>3072&&result.declared_items_without_region.length){result.declared_items_without_region.pop();result.omitted_declared_items_without_region_count++;}
  return result;
 }
 
-export const DRAFTING_COVERAGE_SWEEP_ADVICE='Your recent work has not added a new checked source-linked scope. Keep useful local work and its exact unresolved connection/label punch list; do not claim it complete. Compare whole-page context and readable source/model details, then choose another clear independent missing branch, recognizable device or annotation pass. Reuse admitted unchanged source/overview images; do not reread or recapture merely to answer this reminder. A coverage sweep identifies remaining work, not completed construction. A difficult local junction must not indefinitely block coverage elsewhere. Return to it with changed evidence or a concrete supported approach. This is coverage pacing advice, not a demand to abandon a nearly finished useful batch or permission to skip checks.';
+export const DRAFTING_COVERAGE_SWEEP_ADVICE='Your recent work has not added a new checked source-linked scope. Keep useful local work and its exact unresolved connection/label punch list; do not claim it complete. Compare whole-page context and readable source/model details, then choose another clear independent missing branch, recognizable device or annotation pass. If clear unbuilt physical routes remain, prioritize a coherent physical coverage batch over repeated cosmetic refinement of already drafted areas; retain annotation discrepancies for their own pass. Reconcile declared items without region tracking against existing model work before recording their source region and next action; do not reconstruct them merely because tracking is absent. Reuse admitted unchanged source/overview images; do not reread or recapture merely to answer this reminder. Use your own observe-mode comparison for routine backchecks and reserve independent visual review for coherent milestones or final handoff unless a required check or user instruction says otherwise. When saving is authorized, checkpoint useful settled progress before optional refinement; saving is preservation, not a request for complete engineering qualification of every area. Required native readback, currentness, final review and actual admission refusals still apply. A coverage sweep identifies remaining work, not completed construction. A difficult local junction must not indefinitely block coverage elsewhere. Return to it with changed evidence or a concrete supported approach. This is coverage pacing advice, not a demand to abandon a nearly finished useful batch or permission to skip checks.';

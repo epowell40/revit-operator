@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {buildNativeCodeReviewPacket,reviewExecutedCode,parseNativeCodeReview,NATIVE_CODE_REVIEW_INSTRUCTIONS,nativeCodeReviewModelOutput} from './native_code_review.mjs';
 import {normalizeVisualReviewRequest,VISUAL_WORK_REVIEW_TOOL} from './visual_work_review.mjs';
+import {captureNativeCodeReviewStart,bindNativeCodeReviewStart} from './native_code_review.mjs';
 const digest=s=>'sha256:'+createHash('sha256').update(s).digest('hex');
 function fixture(){
   const owner={assignment_id:'assignment',session_id:'session',run_id:'run',generation:1,principal_id:'principal',document_fingerprint:'a'.repeat(64)};
@@ -15,10 +16,10 @@ function fixture(){
   const row={call_id:'call_write',recorded_at:'2026-10-31T15:00:00Z',tool_name:'native__invoke',arguments:{tool:'operator_run_dynamic_revit_program',arguments:{source,mode:'apply',native_program:{effect_scope:'active_document'}}},
     result:{content:[{type:'inputText',text:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[ref]})}]}};
   const selection={'payload.schema':'revit-operator.dynamic-revit-program-run.v1','payload.execution_lane':'native','payload.requested_mode':'apply','payload.execution_status':'completed',
-    'payload.iteration.source_sha256':native.source_hash,'payload.evidence.nativeExecutionReceipt':JSON.stringify(native)};
-  const response=()=>({ok:true,result:{schema:'revit-operator.evidence-retrieval.v1',evidence_ref:ref,selection,complete:false,missing_fields:[],selection_origins:Object.fromEntries(Object.keys(selection).map(k=>[k,'payload'])),returned_bytes:Buffer.byteLength(JSON.stringify(selection))}});
+    'payload.iteration.source_sha256':native.source_hash,'projection.native_execution_audit':structuredClone(native)};
+  const response=()=>({ok:true,result:{schema:'revit-operator.evidence-retrieval.v1',evidence_ref:ref,selection,complete:false,missing_fields:[],selection_origins:Object.fromEntries(Object.keys(selection).map(k=>[k,k==='projection.native_execution_audit'?'deterministic_projection':'payload'])),returned_bytes:Buffer.byteLength(JSON.stringify(selection))}});
   const calls=[];const host={owner:()=>owner,assertControl:async()=>{},receipts:()=>[row],request:async(route,options)=>{calls.push({route,body:JSON.parse(options.body)});return response();}};
-  return {owner,source,ref,native,row,selection,response,host,calls,sync:()=>{selection['payload.evidence.nativeExecutionReceipt']=JSON.stringify(native);}};
+  return {owner,source,ref,native,row,selection,response,host,calls,sync:()=>{selection['projection.native_execution_audit']=structuredClone(native);}};
 }
 test('exact normalized source and native audit retained without predicting 120 dependents',async()=>{
   const f=fixture(),p=await buildNativeCodeReviewPacket(['ev1_'+'A'.repeat(32)],f.host);
@@ -80,6 +81,19 @@ test('unknown effects and malformed committed audit cannot acquire a settled cod
     const f=fixture();change(f.native);f.sync();await assert.rejects(buildNativeCodeReviewPacket(['ev1_'+'A'.repeat(32)],f.host));
   }
 });
+
+test('bounded audit must retain its deterministic origin and every required native field',async()=>{
+  for(const fault of ['origin','missing','serialized','source','verified','session']){
+    const f=fixture(),original=f.response;
+    if(fault==='origin')f.host.request=async()=>{const r=original();r.result.selection_origins['projection.native_execution_audit']='payload';return r;};
+    if(fault==='missing')delete f.selection['projection.native_execution_audit'];
+    if(fault==='serialized')f.selection['projection.native_execution_audit']=JSON.stringify(f.native);
+    if(fault==='source'){f.native.source_hash=digest('wrong');f.sync();}
+    if(fault==='verified'){f.native.verified=true;f.sync();}
+    if(fault==='session'){delete f.native.document_session_id;f.sync();}
+    await assert.rejects(buildNativeCodeReviewPacket([f.ref.evidence_id],f.host),undefined,fault);
+  }
+});
 test('rollback remains a failed attempt, read remains read-only observation',async()=>{
   const f=fixture();f.native.success=false;f.selection['payload.execution_status']='failed';f.native.error='failed';f.native.transaction={status:'rolled_back',committed:false,affected_element_ids:[1],modified_element_ids:[],added_element_ids:[],deleted_element_ids:[]};f.sync();
   assert.equal((await buildNativeCodeReviewPacket(['ev1_'+'A'.repeat(32)],f.host)).executions[0].execution_success,false);
@@ -116,4 +130,71 @@ test('review schema accepts only explicit assessment, never a native proof or an
 test('existing review tool exposes code-only and combined visual-code options',()=>{
   assert.deepEqual(normalizeVisualReviewRequest({view_id:41,checks:[{id:'c',expected:'Duct layout readable'}],code_evidence_ids:['ev1_'+'A'.repeat(32)]}).code_evidence_ids,['ev1_'+'A'.repeat(32)]);
   assert.match(VISUAL_WORK_REVIEW_TOOL.description,/code_execution/);
+});
+
+function reviewIdentity(f){
+  return {schema:'revit-operator.ui-context/v1',state:'available',authority:'ui_identity_only',revision:7,captured_at_utc:new Date().toISOString(),
+    context:{process_id:42,document:{title:'Detail model',sessionId:'native-session',projectIdentity:{fingerprint:f.owner.document_fingerprint},activeView:{id:975109,name:'Fan Installation Demo',type:'DraftingView'}},
+      nativeChangeObservations:{schema:'operator.native_document_changes.v1',authority:'observed_changes_only',processId:42,epoch:'epoch',documentSessionId:'native-session',throughSequence:4,retainedFromSequence:5,maxEvents:16,maxIdsPerEvent:64,events:[]}}};
+}
+
+test('exact execution packet carries captured request-start identity to independent review without current-view substitution',async()=>{
+ const f=fixture(),at=Date.parse(f.row.recorded_at)-1000;let delivered;
+ const c={revit:{schema:'revit-operator.context.v1',source:{live:true},observed_at_utc:new Date(at).toISOString(),process_id:42,
+  document:{title:'Original detail',sessionId:'native-session',projectIdentity:{fingerprint:f.owner.document_fingerprint},activeView:{id:975109,name:'Original view',type:'DraftingView'}}}};
+ const request='Draft the detail in the active view.';
+ const token=bindNativeCodeReviewStart(captureNativeCodeReviewStart(c,request,at),f.owner);
+ f.host.requestStart=()=>token;f.host.userRequest=()=>request;
+ const h={...f.host,codeReviewPacket:ids=>buildNativeCodeReviewPacket(ids,f.host),settings:()=>({model:'test',reasoning_effort:'medium'}),
+  requestResponse:async body=>{delivered=JSON.parse(body.input[0].content[0].text);return {status:'completed',output:[],output_text:JSON.stringify({code_review:{status:'uncertain',observed:'Stub does not assess code.',correction:'No live verdict claimed.'}})};}};
+ const result=await reviewExecutedCode({review_mode:'code_execution',code_evidence_ids:[f.ref.evidence_id]},h);
+ assert.equal(delivered.current_context,null);assert.equal(delivered.executed_code.request_start_context.view_id,975109);
+ assert.equal(result.raw_review_evidence.packet.request_start_context.document_title,'Original detail');
+ assert.equal(result.native_postcondition_verified,false);assert.equal(result.state,'uncertain');
+});
+test('standalone code reviewer receives same-session current view identity without pixels or another native action',async()=>{
+  const f=fixture(),snapshot=reviewIdentity(f);let sent,reads=0;
+  const h={...f.host,codeReviewPacket:ids=>buildNativeCodeReviewPacket(ids,f.host),readContext:async()=>{reads++;return snapshot;},
+    userRequest:()=> 'Recreate the detail in the active drafting view.',settings:()=>({model:'approved',reasoning_effort:'medium'}),
+    requestResponse:async body=>{sent=JSON.parse(body.input[0].content[0].text);return {status:'completed',output:[],output_text:JSON.stringify({code_review:{status:'uncertain',observed:'Current identity is context, not original target proof.',correction:'Assess selected actions with original intent.'}})};}};
+  const r=await reviewExecutedCode({review_mode:'code_execution',code_evidence_ids:[f.ref.evidence_id]},h);
+  assert.equal(reads,1);assert.equal(sent.current_context.view_id,975109);assert.equal(sent.current_context.document_session_id,'native-session');
+  assert.equal(sent.current_context.authority,'cached_ui_identity_only');assert.equal(sent.current_context.historical_target_verified,false);
+  assert.equal(r.raw_review_evidence.current_context.view_name,'Fan Installation Demo');assert.equal(r.state,'uncertain');
+  assert.equal(r.native_postcondition_verified,false);assert.equal(r.whole_task_verified,false);
+});
+test('missing stale foreign or unknown UI context cannot enter the independent code reviewer',async()=>{
+  for(const kind of ['missing','throw','stale','future','foreign-document','foreign-session','unknown','bad-observation','untrusted','invalid-view']){
+    const f=fixture(),s=reviewIdentity(f);let sent;
+    if(kind==='stale')s.captured_at_utc=new Date(Date.now()-300001).toISOString();if(kind==='future')s.captured_at_utc=new Date(Date.now()+60000).toISOString();
+    if(kind==='foreign-document')s.context.document.projectIdentity.fingerprint='b'.repeat(64);if(kind==='foreign-session')s.context.document.sessionId='other';
+    if(kind==='unknown')s.context.outcome_unknown=true;if(kind==='bad-observation')delete s.context.nativeChangeObservations;
+    if(kind==='untrusted')s.authority='caller';if(kind==='invalid-view')s.context.document.activeView.id=-1;
+    const h={...f.host,codeReviewPacket:ids=>buildNativeCodeReviewPacket(ids,f.host),readContext:async()=>{if(kind==='throw')throw Error('no connection');return kind==='missing'?null:s;},
+      userRequest:()=> 'Read model.',settings:()=>({model:'approved',reasoning_effort:'medium'}),requestResponse:async body=>{sent=JSON.parse(body.input[0].content[0].text);return {status:'completed',output:[],output_text:JSON.stringify({code_review:{status:'uncertain',observed:'Target context not supplied.',correction:'Identify target.'}})};}};
+    const r=await reviewExecutedCode({review_mode:'code_execution',code_evidence_ids:[f.ref.evidence_id]},h);
+    assert.equal(r.state,'uncertain',kind);assert.equal(sent.current_context,null,kind);
+  }
+});
+test('Pause or ownership change during optional identity read prevents reviewer dispatch',async()=>{
+  for(const kind of ['pause','owner']){
+    const f=fixture();let paused=false,calls=0;
+    const h={...f.host,assertControl:async()=>{if(paused)throw Error('paused');},codeReviewPacket:ids=>buildNativeCodeReviewPacket(ids,f.host),
+      readContext:async()=>{if(kind==='pause')paused=true;else f.owner.run_id='changed';return reviewIdentity(f);},userRequest:()=> 'Draft.',settings:()=>({model:'approved',reasoning_effort:'medium'}),requestResponse:async()=>{calls++;throw Error('must not dispatch');}};
+    const r=await reviewExecutedCode({review_mode:'code_execution',code_evidence_ids:[f.ref.evidence_id]},h);
+    assert.equal(r.state,'unavailable');assert.equal(calls,0,kind);
+  }
+});
+
+test('opaque review response is referenced for both accepted and unavailable code review without context mutation',async()=>{
+ for(const malformed of [false,true]){
+  const f=fixture(),opaque='gAAAA'+ 'a'.repeat(80)+'-sk-'+ 'b'.repeat(32)+'_tail';
+  const r={id:'resp_code',status:'completed',output:[{type:'reasoning',id:'rs_code',summary:[],encrypted_content:opaque}],output_text:malformed?'invalid json':JSON.stringify({code_review:{status:'uncertain',observed:'Code returns done but creates nothing.',correction:'Inspect requested duct creation.'}})};
+  const original=JSON.stringify(r),h={...f.host,codeReviewPacket:ids=>buildNativeCodeReviewPacket(ids,f.host),userRequest:()=> 'Draft the requested ducts.',settings:()=>({model:'approved-model',reasoning_effort:'medium'}),requestResponse:async()=>r};
+  const result=await reviewExecutedCode({review_mode:'code_execution',code_evidence_ids:[f.ref.evidence_id]},h);
+  assert.equal(result.state,malformed?'unavailable':'uncertain');assert.equal(JSON.stringify(r),original);
+  assert.equal(JSON.stringify(result.raw_review_evidence).includes(opaque),false);
+  assert.equal(result.raw_review_evidence.reviewer_response.output[0].encrypted_content_ref.response_id,r.id);
+  assert.equal(result.whole_task_verified,false);assert.equal(result.native_postcondition_verified,false);
+ }
 });

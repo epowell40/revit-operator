@@ -1,8 +1,10 @@
 import {nativeChangeObservationFromContext} from './native_change_observations.mjs';
 import {nativeViewActivationRequest} from './native_view_activation.mjs';
 import {createHash} from 'node:crypto';
-import {normalizeCodeEvidenceIds,parseNativeCodeReview,NATIVE_CODE_REVIEW_INSTRUCTIONS} from './native_code_review.mjs';
+import {normalizeCodeEvidenceIds,parseNativeCodeReview,NATIVE_CODE_REVIEW_INSTRUCTIONS,NATIVE_CODE_REVIEW_SCOPE,nativeCodeReviewSessionDiagnostic,NATIVE_CODE_SESSION_RECOVERY} from './native_code_review.mjs';
 import {nativeSheetArtifactState,sameNativeSheetRendering} from './native_sheet_render_state.mjs';
+import {buildDraftingCorrectionIndex} from './drafting_correction_index.mjs';
+import {reviewResponseEvidence} from './review_response_evidence.mjs';
 
 const object=v=>v&&typeof v==='object'&&!Array.isArray(v);
 const bounded=(v,max)=>typeof v==='string'&&v.trim().length>0&&v.length<=max&&!/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(v);
@@ -16,6 +18,38 @@ const primaryObservationImages=new WeakMap();
 export function normalizeAttachmentReviewRead(value){
   if(!object(value)||Object.keys(value).some(k=>!['call_id','page'].includes(k))||!safeId(value.call_id)||!positive(value.page))throw Error('visual_review_attachment_read_invalid');
   return {call_id:value.call_id,page:value.page};
+}
+
+/** Filename convenience for the same owned reference journal. Recovery may
+ * reuse a delivered full raster, never guess a path or substitute a crop. */
+export function resolveNamedReferenceImage(filename,context){
+  if(!bounded(filename,240)||/[\\/:]/.test(filename))throw Error('visual_review_reference_filename_invalid');
+  const matches=(context.attachments??[]).filter(a=>a?.filename===filename);
+  if(matches.length){
+    const images=matches.map(a=>{
+      if(!a.isImage||!['image/png','image/jpeg'].includes(a.mime)||typeof a.dataBase64!=='string'
+        ||!a.dataBase64.length||a.dataBase64.length>20_000_000||!/^[A-Za-z0-9+/=\r\n]+$/.test(a.dataBase64))throw Error('visual_review_reference_ambiguous_or_empty');
+      return Buffer.from(a.dataBase64,'base64');
+    });
+    if(!images[0].length||images.some((b,i)=>!b.equals(images[0])||matches[i].mime!==matches[0].mime))throw Error('visual_review_reference_ambiguous_or_empty');
+    return {filename,image_url:`data:${matches[0].mime};base64,${images[0].toString('base64')}`};
+  }
+  const candidates=[];
+  for(const receipt of context.receipts??[]){
+    if(receipt.tool_name!=='native__operator_read_attachment'||receipt.status!=='success'||receipt.arguments?.region)continue;
+    const summaries=(receipt.result?.content??[]).filter(c=>c.type==='inputText'&&typeof c.text==='string'&&c.text.length<=32768)
+      .map(c=>{try{return JSON.parse(c.text);}catch{return null;}})
+      .filter(s=>s?.source===filename&&s.source_kind==='raster_image');
+    if(!summaries.length)continue;
+    // Existing resolver validates native-delivered source identity, pixels,
+    // registered scope and clean-image selection including overlay exclusion.
+    const rendered=resolveAttachmentReviewImage({call_id:receipt.call_id,page:1},context);
+    if(rendered.source_render.visual_scope!=='full_page')continue;
+    candidates.push(rendered);
+  }
+  if(!candidates.length)throw Error('visual_review_reference_not_attached');
+  if(new Set(candidates.map(c=>c.source_render.source_sha256)).size!==1)throw Error('visual_review_reference_ambiguous_or_empty');
+  return candidates.at(-1);
 }
 
 // The attachment producer can deliver a highlighted tracking copy beside each
@@ -65,6 +99,9 @@ export function resolveAttachmentReviewImage(selection,{receipts,attachments,reg
     .filter(v=>object(v)&&Array.isArray(v.pages_returned)&&Array.isArray(v.coverage));
   if(summaryCandidates.length!==1)throw Error('visual_review_attachment_source_invalid');
   const s=summaryCandidates[0],images=cleanAttachmentReviewImages(content,s);
+  const legacyPng=s.source_kind===undefined&&s.source_media_type==='image/png';
+  const raster=s.source_kind==='raster_image'||legacyPng;
+  if((s.source_kind!==undefined&&!raster)||raster&&!legacyPng&&(!['png','jpeg'].includes(s.source_format)||s.page_count!==1||s.pages_returned.length!==1||s.pages_returned[0]!==1))throw Error('visual_review_attachment_source_invalid');
   if(s.attachment_id!==args.attachment_id||s.mode!==(args.mode??'detail')||!/^([a-f0-9]{64})$/.test(s.sha256??'')
     ||!s.pages_returned.every(positive)||new Set(s.pages_returned).size!==s.pages_returned.length
     ||s.pages_returned.some(p=>!args.pages.includes(p))||images.length!==s.pages_returned.length)throw Error('visual_review_attachment_source_invalid');
@@ -80,7 +117,7 @@ export function resolveAttachmentReviewImage(selection,{receipts,attachments,reg
   if(!bounded(a.filename,240)||/[\\/:]/.test(a.filename))throw Error('visual_review_attachment_source_not_current');
   let sourceIdentityBasis='current_uploaded_bytes';
   if(candidates.length===1){
-    if(a.mime!=='application/pdf'||a.filename!==s.source
+    if(a.mime!==(raster?(legacyPng||s.source_format==='png'?'image/png':'image/jpeg'):'application/pdf')||a.filename!==s.source
       ||typeof a.dataBase64!=='string'||a.dataBase64.length>72_000_000||!/^[A-Za-z0-9+/=\r\n]+$/.test(a.dataBase64)
       ||createHash('sha256').update(Buffer.from(a.dataBase64,'base64')).digest('hex')!==s.sha256)throw Error('visual_review_attachment_source_not_current');
   }else{
@@ -102,9 +139,9 @@ export function resolveAttachmentReviewImage(selection,{receipts,attachments,reg
   const width=bytes.readUInt32BE(16),height=bytes.readUInt32BE(20);
   if(!width||!height||width>20000||height>20000||width*height>40_000_000)throw Error('visual_review_attachment_pixels_invalid');
   return {filename:a.filename,image_url:url,source_render:{source_read_call_id:r.call_id,attachment_id:a.id,source_sha256:s.sha256,source_identity_basis:sourceIdentityBasis,
-    page:selected.page,mode:s.mode,visual_scope:coverage[0].visual_scope,requested_region:region?{...region}:null,
+    source_media_type:s.source_media_type??(raster?(s.source_format==='png'?'image/png':'image/jpeg'):'application/pdf'),page:selected.page,mode:s.mode,visual_scope:coverage[0].visual_scope,requested_region:region?{...region}:null,
     width_px:width,height_px:height,image_sha256:createHash('sha256').update(bytes).digest('hex'),
-    limitation:'Only this delivered PDF page/region at this resolution. Not model evidence, a placement transform, or proof of source completeness.'}};
+    limitation:'Only this delivered source page/image region at this resolution. Not model evidence, a placement transform, or proof of source completeness.'}};
 }
 
 // Native render inventories are host guard evidence, not reviewer instructions.
@@ -186,8 +223,9 @@ export function visualReviewOwner(binding){
 export function sameVisualReviewOwner(a,b){try{const x=visualReviewOwner(a),y=visualReviewOwner(b);return bindingKeys.every(k=>x[k]===y[k]);}catch{return false;}}
 
 export const VISUAL_WORK_REVIEW_TOOL={type:'function',name:'review_current_work',description:
-  'Routine drafting backchecks belong to the primary actor: use review_mode:observe with the already read reference crop to receive fresh current model and source images directly. Compare the actual differences, correct them, then record the checked area/pass in the existing work plan with native read IDs and delivered image hashes; drafted is not checked. Choose the next unfinished area/pass. This mode makes no reviewer call or completion claim. Camera activation alone delivers no pixels. Use the same native focus/capture modes below. Reserve independent assessment for a coherent milestone or final handoff; omit review_mode for that request. '+
-  'For agent-written native C#, use review_mode:code_execution with code_evidence_ids from actual native__invoke or directly exposed native__operator_run_dynamic_revit_program output after a useful batch; no view or screenshot is required. This checks exact executed code against user intent, not predicted Revit dependents. Include follow-up read evidence IDs when they supply result facts. For combined milestone appearance and code review, omit review_mode and add code_evidence_ids to a fresh ordinary visual request: one reviewer call checks both. Do not add code_evidence_ids to a historical recheck; use a separate code_execution request. Code review does not certify native postconditions, saved persistence or whole-task completion. '+
+  'For an existing-object redline, bind the native identity to the marked symbol using surrounding landmarks and which side of its host it occupies in BOTH images. Repeated circuit labels, names or nearest coordinates are candidate filters, not unique identity. focus_element_ids are caller-selected framing hints, not confirmation that those objects match the markup. A left edge in a cropped image is not necessarily the west wall in the model. If a supposedly same-host move appears to require deleting/recreating or rehosting the object, recheck that target association first; preserve identity with an ordinary move when supported. This is target grounding within the normal working observation, not a separate preview or mandatory reviewer call. '+
+  'For a closer source look, use native__operator_read_attachment with the registered PDF/PNG attachment, pages and normalized region; a PNG uses page1. Then use reference_attachment_read here with that delivered call_id/page. Keep surrounding landmarks; no shell crop is needed. Routine drafting backchecks belong to the primary actor: use review_mode:observe with the already read reference crop to receive fresh current model and source images directly. Compare the actual differences, correct them, then record the checked area/pass in the existing work plan with native read IDs and delivered image hashes; drafted is not checked. Choose the next unfinished area/pass. For native drafting-view observations, a compact drafting_correction_index accompanies the pixels: use its current IDs and native endpoints/bounds to locate repair targets before writing discovery code. When that prefix omits the repair area, use spatial_selection and the existing typed itemRange filters on the retained read to get nearby candidate IDs and exact curves in one request; do not write another inventory program or scroll character ranges through creation logs. Counts describe bounding-box candidates only. Retrieve exact rows when needed for precision or full curve geometry; these are native coordinates, not image pixels. This mode makes no reviewer call or completion claim. Camera activation alone delivers no pixels. Use the same native focus/capture modes below. Reserve independent assessment for a coherent milestone or final handoff; omit review_mode for that request. '+
+  'For a drawing that also needs appearance review, combine code and visual assessment at the coherent milestone or final handoff: omit review_mode and add code_evidence_ids from actual native__invoke or directly exposed native__operator_run_dynamic_revit_program output. One reviewer call checks both; do not request a separate code review after every construction or correction batch. Use direct observation and native readback for routine repair. For code-only or hidden-property work, review_mode:code_execution needs no view or screenshot. It checks selected executed actions against user intent, not predicted Revit dependents or later-stage task completion. Include follow-up read evidence IDs only when those executed C# reads supply relevant facts and share the construction document session. Do not mix pre-SaveAs construction and post-SaveAs read receipts in one code review; review separate session groups if both are needed. A visual recheck can include code_evidence_ids: original visual checks and before pixels are restored, while the selected code is validated and assessed anew in the same call. Never reuse a prior code verdict. Automatic native get-element-summary readback IDs are not C# executions; use the returned code-review selector. Code review does not certify native postconditions, saved persistence or whole-task completion. '+
   'Ask a separate, tool-free reviewer to examine fresh actual work pixels against up to eight explicit visual checks. '+
   'For ordinary inspection, focus_element_ids can compose navigation and review without a checklist item; this cannot prepare, complete or verify checklist work. Use explicit visible_work or native_visible_region. Supply complete_inspection_item_id only when requesting the existing final checklist closeout, with its unchanged readiness and native verification requirements. If the current view already has suitable contextual framing, omit focus_element_ids so the host preserves it. To compose navigation and review, supply focus_element_ids for actual observed targets and needed neighbors. With an explicit completion request, include at least one native inspection target relevant to this region. Native readback still covers every dependency; hidden parameters and other sheets do not have to fit in this image; on a sheet a schedule definition resolves only to its unique actual placed instance. Host physical model elements resolve only through a unique native placed view and supported projection to the sheet. Missing or ambiguous projection remains unconfirmed; no guessed coordinates or visibility claim. The host confirms those elements are shown without changing verification targets. Element-only focus may exclude nearby borders or plans. When those are needed, optionally supply paired context_bbox_min_xyz/context_bbox_max_xyz from fresh native geometry in the TARGET view coordinate space (model feet for model views, sheet feet with z=0 for sheets). On sheets prefer physical target and neighbor IDs without bounds so the native projection supplies the framing; never use model coordinates as sheet coordinates. With valid bounds: the host settles element focus before a separate contextual zoom within this single tool call, then confirms actual sheet viewport coverage. Include neighboring elements needed by the checks; unseen areas remain unverified. Navigation and bounds never prove visibility, legibility or clearance. No pixel coordinates, automatic edits, or full-sheet proof from a focused region. '+
   'For sheet-wide border/layout checks use visible_work with the actual sheet and its border visible; for text legibility/local clearance use an adequate close-up. Native sheet exports can be reviewed as one immutable artifact when current document revision and complete sheet/placed-view render-state observations agree. Printed dynamic labels belong to capture time, not the current live screen. Without those observations the existing pixel/currentness checks remain. Do not mask labels, repeat edits, or keep exporting an unstable sheet. An explicit visible_work recheck of an accepted native sheet review retains original checks and close-up pixels. When fresh native state checks establish the same unchanged sheet model, both images can supply complementary visual evidence; otherwise the earlier image remains historical context. Neither case imports earlier verdicts or establishes pixel alignment. No automatic capture fallback; screenshot stability and model currentness are still required. '+
@@ -202,7 +240,7 @@ export const VISUAL_WORK_REVIEW_TOOL={type:'function',name:'review_current_work'
   'Read each discrepancy, make an authorized targeted correction, then inspect/review again. Uncertain or unavailable is not a mismatch and never justifies replaying an uncertain write. '+
   'For the final visual review, optionally supply complete_inspection_item_id for the sole remaining declared native inspection item. After a matched current review, the host tries its existing retained native read candidates through normal checklist validation. It cannot finish other work or certify missing native coverage; inspect the returned closeout status before delegating again. '+
   'This uses the same model/settings and remaining task budget, not a new allowance. It is supporting visual assessment, not native transaction, engineering or whole-task completion proof.',
-  parameters:{type:'object',additionalProperties:false,properties:{review_mode:{type:'string',enum:['code_execution','observe'],description:'observe delivers fresh model/reference images directly to the primary actor without another model call or verification. Code-only review uses code_execution; omit visual fields for that mode.'},code_evidence_ids:{type:'array',minItems:1,maxItems:8,uniqueItems:true,items:{type:'string',minLength:1,maxLength:240},description:'Exact retained evidence IDs from native__invoke output for native C# execution and relevant native C# readback. Host resolves the source and native outcome; never submit code, outcomes or scope here.'},include_sheet_context:{type:'boolean',description:'Optional true only with native_visible_region and fresh checks: retain a current native full-sheet overview alongside the focused detail and review both in one call. Use only when local detail plus sheet-wide border/layout context are both required. Requires complete unchanged native sheet render observations; no fallback, prior verdict or extra reviewer call.'},context_bbox_min_xyz:{type:'array',minItems:3,maxItems:3,items:{type:'number'},description:'Optional contextual region minimum [x,y,z] in target-view coordinates: model feet for model views, sheet feet (z=0) for sheets. Paired with context_bbox_max_xyz and focus_element_ids. Prefer target and neighbor IDs without bounds on sheets. Derive from fresh native geometry, not pixels. Restores this framing after element focus; no visibility or correctness proof.'},context_bbox_max_xyz:{type:'array',minItems:3,maxItems:3,items:{type:'number'},description:'Contextual region maximum [x,y,z] in target-view coordinates: model feet for model views, sheet feet (z=0) for sheets. Never use model bounds on a sheet. Include relevant neighbors/borders at readable scale. Requires paired minimum and focus_element_ids; not for historical rechecks.'},focus_element_ids:{type:'array',minItems:1,maxItems:200,uniqueItems:true,items:{type:'integer',minimum:1},description:'Optional existing native elements to focus before review. Requires visible_work or native_visible_region; not for historical rechecks. No checklist item is needed for ordinary inspection; omitting complete_inspection_item_id cannot prepare or complete checklist work. Include neighboring content required by checks; the host confirms all elements are shown. No model edit or whole-sheet proof.'},complete_inspection_item_id:{type:'string',description:'Optional existing final inspection checklist item to complete after all review checks match and existing native reads pass. Never an edit item or permission to skip other work.'},view_id:{type:'integer',description:'Exact work view/sheet id. Must be active for visible_work and native_visible_region; target_view exports the requested view without activation.'},recheck_evidence_id:{type:'string',description:'Exact recheck_evidence_id from a previous accepted review in this assignment. Omit checks and reference_filename; the host restores original check identities and bound before-image. No local path or actor-supplied image.'},capture_mode:{type:'string',enum:['visible_work','target_view','native_visible_region'],description:'Default visible_work captures the actual editor/dialog. native_visible_region renders a zoomed relevant area of the exact active sheet/drawing; target_view renders the whole target, which need not be active. No screen fallback.'},image_size:{type:'integer',minimum:1024,maximum:6000,description:'Optional native export width for target_view/native_visible_region, default 4000 pixels; one read-only reduction may be needed for the pixel-area limit. Ignored for visible_work. Not a pixel-to-model mapping.'},reference_attachment_read:{type:'object',additionalProperties:false,required:['call_id','page'],properties:{call_id:{type:'string',description:'Exact call_id of a successful native__operator_read_attachment call in this owner session.'},page:{type:'integer',minimum:1,description:'One page actually delivered by that call.'}},description:'Reuse the exact delivered PDF image, crop and source hash for comparison. No new render, file path or supplied pixels. Use a detail read that includes the relevant routes and context; cannot prove anything outside its crop. Exclusive with reference_filename and recheck_evidence_id.'},reference_filename:{type:['string','null'],description:'Optional exact filename of a user-attached PNG/JPEG image for visual comparison. Omit or use null/empty string when no reference image is needed; review the current view against the written checks. Never invent a filename. No local path or URL. For a PDF, use reference_attachment_read to select the call_id and page of an appropriate detail image already delivered through native__operator_read_attachment.'},checks:{type:'array',minItems:1,maxItems:8,items:{type:'object',additionalProperties:false,properties:{id:{type:'string'},expected:{type:'string',description:'One concrete intended visible outcome, not a claim that it is already correct.'}},required:['id','expected']}}},anyOf:[{required:['view_id','checks']},{required:['view_id','recheck_evidence_id']},{required:['review_mode','code_evidence_ids'],properties:{review_mode:{const:'code_execution'}}}]}};
+  parameters:{type:'object',additionalProperties:false,properties:{review_mode:{type:'string',enum:['code_execution','observe'],description:'observe delivers fresh model/reference images directly to the primary actor without another model call or verification. Code-only review uses code_execution; omit visual fields for that mode.'},code_evidence_ids:{type:'array',minItems:1,maxItems:8,uniqueItems:true,items:{type:'string',minLength:1,maxLength:240},description:'Exact retained evidence IDs from native__invoke output for native C# execution and relevant native C# readback. Host resolves the source and native outcome; never submit code, outcomes or scope here.'},include_sheet_context:{type:'boolean',description:'Optional true only with native_visible_region and fresh checks: retain a current native full-sheet overview alongside the focused detail and review both in one call. Use only when local detail plus sheet-wide border/layout context are both required. Requires complete unchanged native sheet render observations; no fallback, prior verdict or extra reviewer call.'},context_bbox_min_xyz:{type:'array',minItems:3,maxItems:3,items:{type:'number'},description:'Optional contextual region minimum [x,y,z] in target-view coordinates: model feet for model views, sheet feet (z=0) for sheets. Paired with context_bbox_max_xyz and focus_element_ids. Prefer target and neighbor IDs without bounds on sheets. Derive from fresh native geometry, not pixels. Restores this framing after element focus; no visibility or correctness proof.'},context_bbox_max_xyz:{type:'array',minItems:3,maxItems:3,items:{type:'number'},description:'Contextual region maximum [x,y,z] in target-view coordinates: model feet for model views, sheet feet (z=0) for sheets. Never use model bounds on a sheet. Include relevant neighbors/borders at readable scale. Requires paired minimum and focus_element_ids; not for historical rechecks.'},focus_element_ids:{type:'array',minItems:1,maxItems:200,uniqueItems:true,items:{type:'integer',minimum:1},description:'Optional existing native elements to focus before review. Requires visible_work or native_visible_region; not for historical rechecks. No checklist item is needed for ordinary inspection; omitting complete_inspection_item_id cannot prepare or complete checklist work. Include neighboring content required by checks; the host confirms all elements are shown. No model edit or whole-sheet proof.'},complete_inspection_item_id:{type:'string',description:'Optional existing final inspection checklist item to complete after all review checks match and existing native reads pass. Never an edit item or permission to skip other work.'},view_id:{type:'integer',description:'Exact work view/sheet id. Must be active for visible_work and native_visible_region; target_view exports the requested view without activation.'},recheck_evidence_id:{type:'string',description:'Exact recheck_evidence_id from a previous accepted review in this assignment. Omit checks and reference_filename; the host restores original check identities and bound before-image. No local path or actor-supplied image.'},capture_mode:{type:'string',enum:['visible_work','target_view','native_visible_region'],description:'Default visible_work captures the actual editor/dialog. native_visible_region renders a zoomed relevant area of the exact active sheet/drawing; target_view renders the whole target, which need not be active. No screen fallback.'},image_size:{type:'integer',minimum:1024,maximum:6000,description:'Optional native export width for target_view/native_visible_region, default 4000 pixels; one read-only reduction may be needed for the pixel-area limit. Ignored for visible_work. Not a pixel-to-model mapping.'},reference_attachment_read:{type:'object',additionalProperties:false,required:['call_id','page'],properties:{call_id:{type:'string',description:'Exact call_id of a successful native__operator_read_attachment call in this owner session.'},page:{type:'integer',minimum:1,description:'One page actually delivered by that call.'}},description:'Reuse the exact delivered PDF or PNG image, crop and source hash for comparison. No new render, file path or supplied pixels. Use a detail read that includes the relevant routes and context; cannot prove anything outside its crop. Exclusive with reference_filename and recheck_evidence_id.'},reference_filename:{type:['string','null'],description:'Optional exact filename of a user-attached PNG/JPEG image for visual comparison. Omit or use null/empty string when no reference image is needed; review the current view against the written checks. Never invent a filename. No local path or URL. For a PDF or a focused PNG crop, use reference_attachment_read to select the call_id and page of an appropriate detail image already delivered through native__operator_read_attachment.'},checks:{type:'array',minItems:1,maxItems:8,items:{type:'object',additionalProperties:false,properties:{id:{type:'string'},expected:{type:'string',description:'One concrete intended visible outcome, not a claim that it is already correct.'}},required:['id','expected']}}},anyOf:[{required:['view_id','checks']},{required:['view_id','recheck_evidence_id']},{required:['review_mode','code_evidence_ids'],properties:{review_mode:{const:'code_execution'}}}]}};
 
 export function normalizeVisualReviewRequest(input){
   if(!object(input)||Object.keys(input).some(k=>!['review_mode','view_id','checks','reference_filename','reference_attachment_read','capture_mode','image_size','recheck_evidence_id','complete_inspection_item_id','focus_element_ids','context_bbox_min_xyz','context_bbox_max_xyz','include_sheet_context','code_evidence_ids'].includes(k))||!positive(input.view_id))throw Error('visual_review_request_invalid');
@@ -218,7 +256,9 @@ export function normalizeVisualReviewRequest(input){
   }
   const recheck=input.recheck_evidence_id!==undefined;
   const codeIds=input.code_evidence_ids===undefined?null:normalizeCodeEvidenceIds(input.code_evidence_ids);
-  if(codeIds&&recheck)throw Error('visual_review_code_recheck_requires_fresh_request');
+  // A recheck restores original visual checks/pixels, never an old verdict.
+  // Selected code still takes the same fresh canonical packet-validation path
+  // as a first visual review; combine both assessments in one reviewer call.
   if(input.include_sheet_context!==undefined&&(typeof input.include_sheet_context!=='boolean'
     ||input.include_sheet_context&&(input.capture_mode!=='native_visible_region'||recheck)))throw Error('visual_review_sheet_context_invalid');
   const observation=input.review_mode==='observe';
@@ -476,11 +516,14 @@ export async function reviewCurrentWork(input,host){
   };
   const retained=result=>{Object.defineProperty(result,'raw_review_evidence',{value:raw,enumerable:false});return result;};
   const control=async()=>{await host.assertControl();if(!sameVisualReviewOwner(owner,host.owner()))throw Error('visual_review_owner_changed');};
-  let reference=null;
+  let reference=null,codePacket=null;
   try{
     // Resolve immutable owned reference pixels before navigation or native capture.
     // Existing source/hash/receipt validation and subsequent current-scene guards remain.
     await control();
+    // Reject unusable code selection before spending native reads, navigation,
+    // exports or image context on a combined review that cannot run.
+    if(request.code_evidence_ids){codePacket=await host.codeReviewPacket(request.code_evidence_ids);raw.executed_code=codePacket;await control();}
     if(request.reference_attachment_read){reference=await host.referenceAttachmentRead(request.reference_attachment_read);if(reference?.source_render?.source_read_call_id!==request.reference_attachment_read.call_id||reference?.source_render?.page!==request.reference_attachment_read.page||!safeId(reference?.evidence_ref?.evidence_id)||reference.evidence_ref.content_hash!=='sha256:'+reference.source_render.image_sha256||!/^data:image\/png;base64,[A-Za-z0-9+/=\r\n]+$/.test(reference.image_url)||reference.image_url.length>8_000_000)throw Error('visual_review_attachment_reference_unavailable');}
     if(request.reference_filename){reference=await host.referenceImage(request.reference_filename);if(reference?.filename!==request.reference_filename||!safeId(reference?.evidence_ref?.evidence_id)||!/^sha256:[a-f0-9]{64}$/.test(reference.evidence_ref.content_hash)||!/^data:image\/(?:png|jpeg);base64,[A-Za-z0-9+/=\r\n]+$/.test(reference.image_url)||reference.image_url.length>20_000_000)throw Error('visual_review_reference_unavailable');}
     await control();
@@ -568,9 +611,19 @@ export async function reviewCurrentWork(input,host){
     const {sheet_render_state:frameGuard,...reviewFrame}=frame;
     const contextPresentation=sheetContext?{...base.sheet_context,frame:Object.fromEntries(Object.entries(sheetContext.frame).filter(([key])=>key!=='sheet_render_state'))}:null;
     if(request.review_mode==='observe'){
+      // Reuse the existing read-only owner-view collector once, beside the
+      // actual image. No generated C# discovery or additional model is needed.
+      // The following unchanged-scene bracket binds both observations to the
+      // same document revision; never deliver a stale index after a write.
+      let draftingIndex=null;
+      if(target&&initial.view_type==='DraftingView'&&typeof host.readDraftingDetail==='function'){
+        await control();raw.drafting_native_read=await host.readDraftingDetail(initial);
+        draftingIndex=buildDraftingCorrectionIndex(raw.drafting_native_read,initial,captureRef);
+      }
       await control();const current=makeScene(await observed());
       if(!same(initial,current)||artifactState&&!sameNativeSheetRendering(artifactState,nativeSheetArtifactState(current,frame),frame.export_mode))throw Error('visual_review_scene_changed_before_observation');
       const result=retained({...base,ok:true,state:'observed',request_dispatched:false,checks:[],location:initial,
+        ...(draftingIndex?{drafting_correction_index:draftingIndex}:{}),
         capture:{evidence_id:captureRef.evidence_id,content_hash:captureRef.content_hash,byte_count:captureRef.byte_count,frame},
         reference:reference?{filename:reference.filename,evidence_id:reference.evidence_ref.evidence_id,content_hash:reference.evidence_ref.content_hash,...(reference.source_render?{source_render:reference.source_render}:{})}:null,
         guidance:'These are fresh model pixels and the selected reference, delivered to you for drafting. Compare remaining differences and perform the next useful bounded action. No independent assessment, checked work, native postcondition or task completion is established.'});
@@ -579,14 +632,12 @@ export async function reviewCurrentWork(input,host){
         ...(reference?[{type:'input_image',image_url:reference.image_url,detail:'original'}]:[])]);
       return result;
     }
-    const codePacket=request.code_evidence_ids?await host.codeReviewPacket(request.code_evidence_ids):null;
-    if(codePacket)raw.executed_code=codePacket;
     const reviewInstructions=VISUAL_WORK_REVIEW_INSTRUCTIONS+(codePacket?' '+NATIVE_CODE_REVIEW_INSTRUCTIONS+' For this combined review, return exactly checks and code_review as top-level JSON keys. Code findings are distinct from visible checks.':'');
     raw.reviewer_instructions=reviewInstructions;
     await control();const response=await host.requestResponse({context_role:'independent_review',model:settings.model,reasoning_effort:settings.reasoning_effort,instructions:reviewInstructions,tools:[],
-      input:[{role:'user',content:[{type:'input_text',text:JSON.stringify({user_request_excerpt:userRequest,...(codePacket?{executed_code:codePacket}:{}),location:reviewLocation,checks:request.checks,capture:{evidence_id:captureRef.evidence_id,content_hash:captureRef.content_hash,frame:reviewFrame,review_basis:base.capture_review_basis??'current_pixels'},sheet_context:contextPresentation,baseline:visualBaselinePresentation(baseline?.summary),reference:reference?{filename:reference.filename,evidence_id:reference.evidence_ref.evidence_id,content_hash:reference.evidence_ref.content_hash,...(reference.source_render?{source_render:reference.source_render}:{})}:null,limits:(target?(nativeExportMode()==='visible_region'?'The first image is a native export of the observed visible region of the exact active target. It is not the whole sheet. Parent sheet/view identity and native display-plane zoom corners locate the region, not a 3D placement mapping. ':'The first image is a native full-view export of the exact requested target, which need not be active. It does not show dialogs or provide a pixel-to-model mapping. '):'The first image contains only the host-selected current Revit view or owned modal dialog, not the worker conversation or surrounding desktop. Occlusion screening is a bounded grid, not exhaustive; ')+ (sheetContext?'The second image is a current native full-sheet overview paired with the first detail of the same unchanged native sheet state. Assess both images together for every check: detail may establish legibility and the overview border/layout context. They are not pixel-aligned and neither certifies unseen content. If the pair is still insufficient, remain uncertain. ':complementaryScene?'Judge coverage across both images for each check; if together they still lack sufficient detail, context or reference, remain uncertain. ':'Any visible occlusion, missing reference or insufficient zoom must remain uncertain. ')+(baseline?(complementaryScene?'The second image is a bound native sheet observation of the same model state, with different framing. Reassess both actual images for each check; detail can establish readability and the current overview placement. They are not pixel-aligned. Do not import old verdicts, infer hidden data or current transient display state; conflicts remain uncertain. ':'The second image is the historical before-image from the bound prior review, not a desired-result example. Compare visible preservation without assuming hidden data. '):'')+(reference?(baseline||sheetContext?'The third image':'The second image')+(reference.source_render?' is the selected rendered page/region of the original user PDF; use its source_render metadata and do not infer unseen content or pixel alignment. ':' is the original named user reference. '):'')+'No prior reviewer verdict, drafting history or claimed result is provided.'})},{type:'input_image',image_url:'data:'+mime+';base64,'+image,detail:'original'},...(sheetContext?[{type:'input_image',image_url:'data:'+sheetContext.mime+';base64,'+sheetContext.image,detail:'original'}]:[]),...(baseline?[{type:'input_image',image_url:baseline.capture.image_url,detail:'original'}]:[]),...(reference?[{type:'input_image',image_url:reference.image_url,detail:'original'}]:[])]}],
+      input:[{role:'user',content:[{type:'input_text',text:JSON.stringify({user_request_excerpt:userRequest,...(codePacket?{code_review_scope:NATIVE_CODE_REVIEW_SCOPE,executed_code:codePacket}:{}),location:reviewLocation,checks:request.checks,capture:{evidence_id:captureRef.evidence_id,content_hash:captureRef.content_hash,frame:reviewFrame,review_basis:base.capture_review_basis??'current_pixels'},sheet_context:contextPresentation,baseline:visualBaselinePresentation(baseline?.summary),reference:reference?{filename:reference.filename,evidence_id:reference.evidence_ref.evidence_id,content_hash:reference.evidence_ref.content_hash,...(reference.source_render?{source_render:reference.source_render}:{})}:null,limits:(target?(nativeExportMode()==='visible_region'?'The first image is a native export of the observed visible region of the exact active target. It is not the whole sheet. Parent sheet/view identity and native display-plane zoom corners locate the region, not a 3D placement mapping. ':'The first image is a native full-view export of the exact requested target, which need not be active. It does not show dialogs or provide a pixel-to-model mapping. '):'The first image contains only the host-selected current Revit view or owned modal dialog, not the worker conversation or surrounding desktop. Occlusion screening is a bounded grid, not exhaustive; ')+ (sheetContext?'The second image is a current native full-sheet overview paired with the first detail of the same unchanged native sheet state. Assess both images together for every check: detail may establish legibility and the overview border/layout context. They are not pixel-aligned and neither certifies unseen content. If the pair is still insufficient, remain uncertain. ':complementaryScene?'Judge coverage across both images for each check; if together they still lack sufficient detail, context or reference, remain uncertain. ':'Any visible occlusion, missing reference or insufficient zoom must remain uncertain. ')+(baseline?(complementaryScene?'The second image is a bound native sheet observation of the same model state, with different framing. Reassess both actual images for each check; detail can establish readability and the current overview placement. They are not pixel-aligned. Do not import old verdicts, infer hidden data or current transient display state; conflicts remain uncertain. ':'The second image is the historical before-image from the bound prior review, not a desired-result example. Compare visible preservation without assuming hidden data. '):'')+(reference?(baseline||sheetContext?'The third image':'The second image')+(reference.source_render?' is the selected rendered page/region of the original user PDF; use its source_render metadata and do not infer unseen content or pixel alignment. ':' is the original named user reference. '):'')+'No prior reviewer verdict, drafting history or claimed result is provided.'})},{type:'input_image',image_url:'data:'+mime+';base64,'+image,detail:'original'},...(sheetContext?[{type:'input_image',image_url:'data:'+sheetContext.mime+';base64,'+sheetContext.image,detail:'original'}]:[]),...(baseline?[{type:'input_image',image_url:baseline.capture.image_url,detail:'original'}]:[]),...(reference?[{type:'input_image',image_url:reference.image_url,detail:'original'}]:[])]}],
       ...(host.evidenceScope?{evidence_scope:host.evidenceScope()}:{} )});
-    raw.reviewer_response=response;responseId=response?.id??null;await control();const after=makeScene(await observed());if(!same(initial,after))throw Error('visual_review_scene_changed_during_review');
+    raw.reviewer_response=reviewResponseEvidence(response);responseId=response?.id??null;await control();const after=makeScene(await observed());if(!same(initial,after))throw Error('visual_review_scene_changed_during_review');
     if(host.userRequest()!==userRequest)throw Error('visual_review_user_direction_changed');
     if(artifactState){
       await control();
@@ -617,8 +668,22 @@ export async function reviewCurrentWork(input,host){
       if(!sameTargetScene(complementaryScene,finalScene)||finalScene.active_view_id!==request.view_id)throw Error('visual_review_complementary_state_changed');
     }
     const result=parseVisualWorkReview(response,request);
-    const reviewed=retained({...base,ok:true,request_dispatched:true,...result,location:initial,capture:{evidence_id:captureRef.evidence_id,content_hash:captureRef.content_hash,byte_count:captureRef.byte_count,frame},reference:reference?{filename:reference.filename,evidence_id:reference.evidence_ref.evidence_id,content_hash:reference.evidence_ref.content_hash,...(reference.source_render?{source_render:reference.source_render}:{})}:null,reviewer_response_id:responseId,reviewer_model:response.model??settings.model,
-      guidance:result.state==='mismatch'?'Inspect each discrepancy, correct only the confirmed in-scope mismatch, then obtain fresh native readback and another visual review. Do not replay an uncertain write.':result.state==='uncertain'?'Obtain a closer view, relevant source or native attributes for the uncertain checks; do not treat missing evidence as an instruction to repeat edits.':'These visible checks match at this observation. Preserve native/readback and scope requirements; this is not whole-task completion.'});
+    // A repair request needs current native locators, just as a primary visual
+    // observation does. Reuse the existing collector once after the assessment;
+    // do not ask another model, reuse a pre-correction index, or infer absence
+    // from a visual claim. Optional read failure cannot erase the visual result.
+    let correctionIndex=null;
+    if(['mismatch','uncertain'].includes(result.state)&&target&&initial.view_type==='DraftingView'&&typeof host.readDraftingDetail==='function'){
+      await control();
+      try{raw.drafting_native_read=await host.readDraftingDetail(initial);}
+      catch{raw.drafting_native_read={error:'native_locator_read_failed'};}
+      correctionIndex=buildDraftingCorrectionIndex(raw.drafting_native_read,initial,captureRef);
+      await control();if(!same(initial,makeScene(await observed())))throw Error('visual_review_scene_changed_before_correction_feedback');
+    }
+    const reviewed=retained({...base,ok:true,request_dispatched:true,...result,location:initial,
+      ...(correctionIndex?{drafting_correction_index:correctionIndex}:{}),
+      capture:{evidence_id:captureRef.evidence_id,content_hash:captureRef.content_hash,byte_count:captureRef.byte_count,frame},reference:reference?{filename:reference.filename,evidence_id:reference.evidence_ref.evidence_id,content_hash:reference.evidence_ref.content_hash,...(reference.source_render?{source_render:reference.source_render}:{})}:null,reviewer_response_id:responseId,reviewer_model:response.model??settings.model,
+      guidance:result.state==='mismatch'?'Use the delivered current image and native correction index to inspect each discrepancy. A reported missing stroke may already exist: corroborate appearance before adding geometry. If native geometry conflicts with the visual finding, use one focused observation with neighboring context instead of repeating inventories or duplicating the stroke. Inspect and correct only confirmed in-scope mismatches, then read back and recheck. Do not replay an uncertain write.':result.state==='uncertain'?'Use current correction locators and a closer view with source/model context for uncertain checks; do not treat missing evidence as native absence or an instruction to repeat edits.':'These visible checks match at this observation. Reuse this review for these unchanged checks; another zoom, screenshot or review is unnecessary unless relevant edits, stale evidence or an uncovered UI requirement require it. Preserve native/readback and scope requirements; this is not whole-task completion. If the requested native checks and required code/save/file checks are also satisfied, proceed to the existing final report or closeout, preserving unresolved limits.'});
     // The primary must see the actual work that was judged, especially when a
     // correction is requested. Reuse the same guarded captures; no second
     // screenshot, reviewer request, or imported verdict is needed.
@@ -626,7 +691,7 @@ export async function reviewCurrentWork(input,host){
       ...(sheetContext?[{type:'input_image',image_url:`data:${sheetContext.mime};base64,${sheetContext.image}`,detail:'original'}]:[]),
       ...(reference?[{type:'input_image',image_url:reference.image_url,detail:'original'}]:[])]);
     return reviewed;
-  }catch(error){const identityDiagnostic=visualReviewIdentityFailureV1(error);if(identityDiagnostic)raw.native_identity_failure=identityDiagnostic;
+  }catch(error){const sessionDiagnostic=nativeCodeReviewSessionDiagnostic(error);const identityDiagnostic=visualReviewIdentityFailureV1(error);if(identityDiagnostic)raw.native_identity_failure=identityDiagnostic;
     const preparationDiagnostic=error?.message==='visual_review_final_inspection_not_ready'
       &&raw.inspection_preparation?.state==='not_submitted'&&raw.inspection_preparation.reason==='focus_excludes_inspection_targets'
       ?{state:'not_submitted',reason:'focus_excludes_inspection_targets',native_postcondition_verified:false,whole_task_verified:false,
@@ -635,17 +700,30 @@ export async function reviewCurrentWork(input,host){
     return retained({...base,ok:false,request_dispatched:raw.native_identity_observations.length>0,state:'unavailable',checks:[],reason:error instanceof Error?error.message:'visual_review_failed',
     ...(preparationDiagnostic?{inspection_preparation:preparationDiagnostic}:{}),
     ...(identityDiagnostic?{identity_read_failure:identityDiagnostic}:{}),location:initial,capture:captureRef?{evidence_id:captureRef.evidence_id,content_hash:captureRef.content_hash,byte_count:captureRef.byte_count,frame:raw.capture_frame}:null,changed_capture:changedCapture,reviewer_response_id:responseId,
-    guidance:'Review unavailable; do not infer a mismatch or repeat any model change. Re-establish current control, identity and suitable evidence before checking again.'+(error?.message==='visual_review_visible_frame_changed_during_review'?' Inspect both retained capture images through operator_retrieve_evidence before deciding what changed. Native sheet exports can update a plot timestamp; do not assume that is the only difference. For sheet-wide checks activate the actual sheet and use visible_work with its border visible. For local checks focus the actual note/viewport elements using showElementIds or native sheet-coordinate bboxMinXyz/bboxMaxXyz. An explicit visible_work recheck can reuse an earlier accepted native sheet review and its unchanged checks; this unavailable review itself is not an accepted baseline. Review relevant titleblock areas separately. A focused region cannot prove anything outside it. Keep native identity and pixel/viewport recheck guards; never mask differences or change the model just to stabilize a capture.':'')});}
+    ...(sessionDiagnostic?{code_session_diagnostic:sessionDiagnostic}:{}),
+    guidance:(sessionDiagnostic?NATIVE_CODE_SESSION_RECOVERY+' ':'')+'Review unavailable; do not infer a mismatch or repeat any model change. Re-establish current control, identity and suitable evidence before checking again.'+(error?.message==='visual_review_visible_frame_changed_during_review'?' Inspect both retained capture images through operator_retrieve_evidence before deciding what changed. Native sheet exports can update a plot timestamp; do not assume that is the only difference. For sheet-wide checks activate the actual sheet and use visible_work with its border visible. For local checks focus the actual note/viewport elements using showElementIds or native sheet-coordinate bboxMinXyz/bboxMaxXyz. An explicit visible_work recheck can reuse an earlier accepted native sheet review and its unchanged checks; this unavailable review itself is not an accepted baseline. Review relevant titleblock areas separately. A focused region cannot prove anything outside it. Keep native identity and pixel/viewport recheck guards; never mask differences or change the model just to stabilize a capture.':'')});}
 }
 
 export function visualWorkReviewModelOutput(modelOutput,result,evidenceId,inspectionCloseout=null){
-  if(!result||result.schema!=='operator.visual_work_review.v1'||!safeId(evidenceId)||typeof modelOutput?.output!=='string')throw Error('visual_review_projection_invalid');
-  const envelope=JSON.parse(modelOutput.output),matches=envelope.evidence_projections?.filter(p=>p.evidence_id===evidenceId);
+  if(!result||result.schema!=='operator.visual_work_review.v1'||!safeId(evidenceId))throw Error('visual_review_projection_invalid');
+  // The first presentation delivers actual pixels. The existing host then adds
+  // its inspection-closeout result to that SAME output. Accept only the exact
+  // host-owned image blocks, keeping their order/bytes and a single text envelope.
+  const images=primaryObservationImages.get(result);let text=modelOutput?.output,deliveredImages=[];
+  if(Array.isArray(text)){
+    if(!images?.length||text.length!==images.length+1||text[0]?.type!=='input_text'||typeof text[0].text!=='string'
+      ||!images.every((image,index)=>JSON.stringify(image)===JSON.stringify(text[index+1])))throw Error('visual_review_projection_invalid');
+    deliveredImages=text.slice(1);text=text[0].text;
+  }
+  if(typeof text!=='string')throw Error('visual_review_projection_invalid');
+  const envelope=JSON.parse(text),matches=envelope.evidence_projections?.filter(p=>p.evidence_id===evidenceId);
   if(envelope.schema!=='revit-operator.model-evidence-envelope.v1'||matches?.length!==1)throw Error('visual_review_artifact_binding_missing');
   const original=matches[0],checks=Array.isArray(result.checks)?result.checks:[];
   const location=result.location?Object.fromEntries(['process_id','document_session_id','epoch','through_sequence','view_id','view_name','view_unique_id','view_type','sheet_number','document_title','identity_authority'].map(k=>[k,result.location[k]])):null;
   const identityDiagnostic=visualReviewIdentityFailureV1({visual_review_identity_failure:result.identity_read_failure});
   const feedback={schema:'operator.visual_work_review_feedback.v1',source_evidence_id:evidenceId,
+    ...(['observed','mismatch','uncertain'].includes(result.state)&&result.drafting_correction_index?{drafting_correction_index:{...structuredClone(result.drafting_correction_index),
+      ...(result.drafting_correction_index.retrieval?{retrieval:{...structuredClone(result.drafting_correction_index.retrieval),evidence_id:evidenceId}}:{})}}:{}),
     ...(inspectionCloseout?{inspection_closeout:{state:inspectionCloseout.state,reason:inspectionCloseout.reason??null,
       item_id:inspectionCloseout.item_id??null,outcome:inspectionCloseout.outcome??null,native_postcondition_verified:false,whole_task_verified:false}}:{}),
     authority:'supporting_visual_assessment',native_postcondition_verified:false,whole_task_verified:false,
@@ -655,6 +733,7 @@ export function visualWorkReviewModelOutput(modelOutput,result,evidenceId,inspec
         ...(Array.isArray(result.inspection_preparation.required_focus_element_ids)&&result.inspection_preparation.required_focus_element_ids.length<=128
           &&result.inspection_preparation.required_focus_element_ids.every(positive)?{required_focus_element_ids:[...result.inspection_preparation.required_focus_element_ids]}:{}),
         guidance:'Include at least one native inspection target relevant to this visual region in focus_element_ids, plus needed neighbors; the returned list is the full native scope, not one required image. All dependency reads remain required. For a schedule definition on a sheet, native navigation resolves only its unique actual placement there; it does not substitute verification IDs. Do not drop targets, repeat edits or treat this as a visual mismatch.'}}:{}),
+    ...(result.code_session_diagnostic?{code_session_diagnostic:result.code_session_diagnostic}:{}),
     ...(identityDiagnostic?{identity_read_failure:identityDiagnostic}:{}),
     state:result.state,ok:result.ok,location,...(result.code_review?{code_review:result.code_review,code_review_evidence_ids:result.request.code_evidence_ids}:{}),
     capture_review_basis:result.capture_review_basis==='immutable_native_sheet_artifact_with_current_native_revision_and_render_state'
@@ -679,18 +758,98 @@ export function visualWorkReviewModelOutput(modelOutput,result,evidenceId,inspec
   const projection={...original,key_counts:{'checks.length':checks.length},key_facts:{},diagnostics:[],
     effect_state:null,before_hash:null,after_hash:null,truncated:true,visual_work_review:feedback};
   for(const key of ['inline_payload','tool_documentation','connector_graph','helper_findings'])delete projection[key];
-  const wire=()=>JSON.stringify({...envelope,evidence_projections:envelope.evidence_projections.map(p=>p===original?projection:p)});
-  if(Buffer.byteLength(wire(),'utf8')>8192)throw Error('visual_review_projection_budget_exceeded');
+  // The typed feedback already supplies exact review/check/native selectors.
+  // Duplicating the generic retrieval catalogue can hide the very discrepancy
+  // the caller needs to repair. Full immutable evidence stays addressable.
+  delete projection.retrieval;
+  if(['mismatch','uncertain'].includes(result.state)&&feedback.drafting_correction_index){
+    // Prior camera identity is already bound by the retained review. Keep the
+    // binding and revision in the repair packet, not a second copy of viewport
+    // names, hashes and frame identity. Full context remains explicitly linked.
+    if(feedback.baseline){const b=feedback.baseline;
+      feedback.baseline={evidence_id:b.evidence_id,capture:b.capture,
+        location:b.location?Object.fromEntries(['process_id','document_session_id','epoch','through_sequence','view_id','view_unique_id'].map(k=>[k,b.location[k]])):null,
+        historical_context:true,presentation_complete:false,full_path:'baseline'};
+      feedback.retrieval.baseline_path='baseline';
+    }
+    if(feedback.code_review?.status==='matched'){
+      feedback.code_review={status:'matched',details_complete:false,full_path:'code_review'};
+      feedback.retrieval.code_review_path='code_review';
+    }
+  }
+  // In a single-review envelope, the typed feedback already carries coverage,
+  // exact retrieval selectors and authority limits. Do not spend its finding
+  // budget repeating the generic native/helper selector catalogue. Keep that
+  // catalogue when another projection or omitted artifact still needs it.
+  const presentationEnvelope={...envelope};
+  // The evidence envelope consumer requires this field for byte accounting.
+  // Shorten duplicate navigation, but do not turn typed evidence into uncounted text.
+  if(envelope.evidence_projections.length===1&&(envelope.omitted??0)===0)presentationEnvelope.retrieval='Use the typed review retrieval selectors for retained evidence.';
+  const wire=()=>JSON.stringify({...presentationEnvelope,evidence_projections:envelope.evidence_projections.map(p=>p===original?projection:p)});
+  // The actor's downstream evidence-item limit also applies to the locator
+  // index. Keep a whole-row prefix and the exact first omitted native row;
+  // the complete index/read stays in evidence. Pixels use separate image blocks.
+  const indexBytes=feedback.drafting_correction_index?Buffer.byteLength(JSON.stringify(feedback.drafting_correction_index),'utf8'):0;
+  if(indexBytes>16896)throw Error('visual_review_projection_budget_exceeded');
+  const outputBudget=8192,index=feedback.drafting_correction_index;
+  const sharedIndexLocation=index?.location&&feedback.location&&Object.entries(index.location).every(([k,v])=>JSON.stringify(v)===JSON.stringify(feedback.location[k]));
+  const sharedIndexCapture=index?.capture&&feedback.capture&&Object.entries(index.capture).every(([k,v])=>JSON.stringify(v)===JSON.stringify(feedback.capture[k]));
+  const retainedIndex=()=>({schema:index.schema,state:'retained_only',
+    source_sha256:index.source_sha256,
+    ...(sharedIndexLocation?{location_path:'location'}:{location:index.location}),
+    ...(sharedIndexCapture?{capture_path:'capture'}:{capture:index.capture}),
+    coverage:{...index.coverage,returned_rows:0,source_rows_exhausted:false},
+    retrieval:{evidence_id:evidenceId,index_path:'drafting_correction_index',path:index.retrieval.path,fields:index.retrieval.fields,next_start:0},
+    native_postcondition_verified:false,whole_task_verified:false,pixel_to_model_mapping:false,
+    guidance:'Native locators are retained, not absent. Retrieve the index or select exact raw rows by evidence ID. Inspect the delivered pixels; no correctness or completion is established.'});
+  // Reserve complete finding entries before optional locator rows, retaining
+  // the established original-order prefix and exact next_start semantics.
+  if(index?.state==='available')feedback.drafting_correction_index=retainedIndex();
+  if(Buffer.byteLength(wire(),'utf8')>outputBudget)throw Error('visual_review_projection_budget_exceeded');
   for(const check of checks){
     feedback.checks.push(check);const count=feedback.checks.length;
     feedback.coverage={total:checks.length,returned:count,complete:count===checks.length,next_start:count===checks.length?null:count};
-    if(Buffer.byteLength(wire(),'utf8')>8192){feedback.checks.pop();const returned=feedback.checks.length;
+    if(Buffer.byteLength(wire(),'utf8')>outputBudget){feedback.checks.pop();const returned=feedback.checks.length;
       feedback.coverage={total:checks.length,returned,complete:false,next_start:returned};break;}
   }
   if(checks.length&&!feedback.checks.length)throw Error('visual_review_projection_budget_exceeded');
-  const output=wire();if(Buffer.byteLength(output,'utf8')>8192)throw Error('visual_review_projection_budget_exceeded');
-  const images=primaryObservationImages.get(result);
+  if(index?.state==='available')feedback.drafting_correction_index=index;
+  if(index?.state==='available'){
+    // The typed feedback already carries the exact evidence ID, native row
+    // selector, fields and full-review selectors. Do not spend its repair budget
+    // repeating the generic selector catalogue and the longer stored guidance.
+    delete projection.retrieval;
+    index.guidance='Current native IDs; rounded line endpoints or bounds for other shapes. Retrieve exact rows for precision, curves and UniqueIds. Bounds are candidates, not pixel mapping, visual correctness or write permission.';
+    if(['mismatch','uncertain'].includes(result.state)&&index.spatial_selection){
+      index.spatial_selection.guidance='Select nearby candidates via itemRange AND filters: boundingBox.min.a lte region max, boundingBox.max.a gte region min for each axis; count:20. Native feet, not pixels; follow selected-rank pagination. Full guidance: drafting_correction_index.spatial_selection.';
+    }
+    while(Buffer.byteLength(wire(),'utf8')>outputBudget&&index.rows.length){
+      index.rows.pop();const next=index.retrieval.source_row_indices.pop();
+      index.coverage.returned_rows=index.rows.length;index.coverage.source_rows_exhausted=false;
+      index.retrieval.next_start=next;
+    }
+    // The annotation lane and spatial directory share this SAME wire budget.
+    // Native counts, document identity and the image must never be mistaken for
+    // omitted locators. Keep whole annotation rows and explicit partial coverage;
+    // the unchanged retained index remains addressable by its evidence ID.
+    if(Buffer.byteLength(wire(),'utf8')>outputBudget){
+      index.presentation={complete:false,full_index_path:'drafting_correction_index'};
+      const notes=index.annotations;
+      while(Buffer.byteLength(wire(),'utf8')>outputBudget&&notes?.rows.length){
+        notes.rows.pop();notes.returned_text_notes=notes.rows.length;
+        notes.all_observed_notes_returned=false;
+      }
+    }
+    if(Buffer.byteLength(wire(),'utf8')>outputBudget){
+      // Optional discovery data must not abort valid image delivery. This is a
+      // reference to available evidence, not an unavailable read or zero items.
+      feedback.drafting_correction_index=retainedIndex();
+    }
+  }
+  if(Buffer.byteLength(wire(),'utf8')>outputBudget)throw Error('visual_review_projection_budget_exceeded');
+  const output=wire();if(Buffer.byteLength(output,'utf8')>outputBudget)throw Error('visual_review_projection_budget_exceeded');
   if(result.state==='observed'&&(result.ok!==true||result.request?.review_mode!=='observe'||!images?.length||inspectionCloseout))throw Error('visual_review_observation_pixels_unavailable');
+  if(deliveredImages.length)return {...modelOutput,output:[{type:'input_text',text:output},...deliveredImages]};
   if(result.ok===true&&images?.length&&!inspectionCloseout&&['observed','matched','mismatch','uncertain'].includes(result.state)){
     return {...modelOutput,output:[{type:'input_text',text:output},...images]};
   }
