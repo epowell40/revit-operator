@@ -1,8 +1,34 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { runNativeProgramViaCourier } from "./dynamicNativeCourier.js";
+import { runNativeProgramViaCourier, decodeNativeCourierEvidence } from "./dynamicNativeCourier.js";
+import { gzipSync } from "node:zlib";
+import { createHash } from "node:crypto";
 import { runWithRevitToolAlias } from "./toolExposurePolicy.js";
 import { isSupportedNativeTransport, isSupportedStandaloneExecutorTool } from "./supportedToolInventory.js";
+
+const packed = (bytes: Buffer) => ({ schema:"operator.native-program-workstation-result.v1",exitCode:0,
+  evidenceTransport:{encoding:"gzip+base64",uncompressedBytes:bytes.length,
+    sha256:`sha256:${createHash('sha256').update(bytes).digest('hex')}`,data:gzipSync(bytes).toString('base64')} });
+
+test('compressed courier preserves exact nested receipt strings and does not assert native success',()=>{
+  const evidence={ok:false,nativeExecutionReceipt:JSON.stringify({text:'Ω界'.repeat(180000),verified:false}),snapshotReceipt:' { "x": 1 } '};
+  const wire=packed(Buffer.from(JSON.stringify(evidence)));
+  assert.ok(Buffer.byteLength(JSON.stringify(wire))<600000);
+  assert.deepEqual(decodeNativeCourierEvidence(wire),evidence);
+  assert.equal(decodeNativeCourierEvidence(wire).nativeExecutionReceipt,evidence.nativeExecutionReceipt);
+});
+
+test('compressed courier rejects corruption, ambiguity, oversized expansion and malformed encoding',()=>{
+  const wire=packed(Buffer.from(JSON.stringify({ok:true,padding:'x'.repeat(900000)})));
+  const bad=(overrides:Record<string,unknown>)=>({...wire,evidenceTransport:{...wire.evidenceTransport,...overrides}});
+  for(const value of [
+    {...wire,evidence:{}}, bad({encoding:'br'}),bad({sha256:'sha256:'+'0'.repeat(64)}),
+    bad({uncompressedBytes:8*1024*1024+1}),bad({uncompressedBytes:100}),bad({uncompressedBytes:wire.evidenceTransport.uncompressedBytes+1}),
+    bad({data:wire.evidenceTransport.data+'\n'}),bad({data:Buffer.from('not gzip').toString('base64')}),
+    bad({extra:true}),packed(Buffer.from('[]')),packed(Buffer.from('{bad json')),
+    packed(Buffer.from([0xff,0xfe]))
+  ]) assert.throws(()=>decodeNativeCourierEvidence(value));
+});
 
 test("hosted native C# ships source and native scope to the existing target courier, not cloud filesystem commands", () => runWithRevitToolAlias("operator_run_dynamic_revit_program", async () => {
   const prior = { ...process.env };
@@ -30,6 +56,11 @@ test("hosted native C# ships source and native scope to the existing target cour
       schema:"operator.native-program-workstation-result.v1",exitCode:0,evidence:large
     })) as any);
     assert.equal(transported.evidence,large,"Transport accepts bounded large evidence; runner authentication is still required.");
+    const compressed = await runNativeProgramViaCourier(body,"apply","compressed-operation",(async(_path: string,_method: string,_body: unknown,options: any)=>{
+      assert.equal(options.canonicalOperationId,"compressed-operation");
+      return packed(Buffer.from(JSON.stringify(large)));
+    }) as any);
+    assert.deepEqual(compressed.evidence,large,"The active courier consumer decodes losslessly before existing native validation.");
     await assert.rejects(runNativeProgramViaCourier(body,"apply",undefined,(async()=>({
       schema:"operator.native-program-workstation-result.v1",exitCode:0,evidence:{padding:"界".repeat(3*1024*1024)}
     })) as any),/invalid/);

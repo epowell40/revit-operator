@@ -79,13 +79,12 @@ namespace RevitBridge.Operator
                 if (process.ExitCode != 0 && process.ExitCode != 1 || !File.Exists(evidence) || new FileInfo(evidence).Length > 8 * 1024 * 1024)
                     throw new InvalidOperationException("Native C# launcher has no bounded evidence (exit " + process.ExitCode +
                         "); exact run retained at " + run + ". Reconcile before retrying.");
-                using var result = JsonDocument.Parse(File.ReadAllText(evidence));
-                var output = new { schema = "operator.native-program-workstation-result.v1", exitCode = process.ExitCode, evidence = result.RootElement.Clone() };
-                if (JsonSerializer.SerializeToUtf8Bytes(output).Length > OperatorCourierResultCompactor.MaxTransportResultBytes)
-                {
-                    throw new InvalidOperationException("Native C# evidence exceeds courier transport capacity; exact evidence retained at " + evidence + ". Reconcile before retrying.");
-                }
-                return output;
+                // The receipt frequently contains nested serialized observations.
+                // Preserve all bytes without inflating them through another JSON
+                // escaping layer. Cleanup still waits for durable outbox handoff.
+                try { return OperatorNativeProgramEvidenceTransport.Prepare(File.ReadAllBytes(evidence), process.ExitCode); }
+                catch (InvalidOperationException error)
+                { throw new InvalidOperationException(error.Message + " Exact evidence retained at " + evidence, error); }
             }
             finally
             {
