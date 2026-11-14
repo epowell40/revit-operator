@@ -291,6 +291,7 @@
     "read_attachment_modes.test.ts",
     "raster_png_metadata.test.ts",
     "model_evidence_correction_batch.test.ts",
+    "native_correction_projection.test.ts",
     "raster_attachment_read.test.ts",
     "schedule_cell_kernel_v2.test.ts",
     "schedule_cell_postcondition_v2.test.ts",
