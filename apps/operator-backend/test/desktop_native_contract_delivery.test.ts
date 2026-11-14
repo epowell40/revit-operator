@@ -89,3 +89,16 @@ test('tight budgets explicitly omit a whole request schema and never truncate it
  assert.equal(doc.tools[0]!.request_schema,undefined);assert(doc.omitted_paths.includes('payload.tool.inputSchema'));
  assert.equal(doc.complete,false);assert.equal(doc.completion_eligible,false);
 }));
+
+test('documentation supplies exact single-field retrieval sizes to avoid repeated undersized schema requests',()=>isolated(()=>{
+ const plan=JSON.parse(fs.readFileSync(path.join(path.dirname(fixture!),'desktop-owner-supplemental-tools298.json'),'utf8')).tools.find((t:any)=>t.name==='operator_manage_work_plan');
+ const raw={...contract,tool:plan,invocation:{tool:'native__invoke',name:plan.name}};
+ const stored=storeEvidence({scope,source:'assignment_kernel_v2:desktop_native_tool_contract',trust_level:'host_observed',raw},8000);
+ const doc=stored.projection.tool_documentation!;assert(doc.retrieval_hints?.length);
+ for(const hint of doc.retrieval_hints){
+  assert(hint.max_bytes<=4096,'Hints must fit the actual owner reader, not only the backend endpoint');
+  assert(hint.fields.length===1);assert(hint.fields[0].startsWith('tool.'));
+  const read=retrieveEvidence({scope,evidence_id:stored.projection.evidence_id,fields:hint.fields,purpose:'Read this missing contract field',max_bytes:hint.max_bytes});
+  assert.equal(Buffer.byteLength(JSON.stringify(read.selection)),hint.selection_bytes);
+ }
+}));

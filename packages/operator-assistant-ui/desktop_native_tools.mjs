@@ -29,11 +29,24 @@ export function installDesktopNativeTools(existing,catalog) {
   }
   // No second execution agent or supporting native shortcut in this mode.
   const removed=new Set(['delegate_revit_task','inspect_revit_context','run_dynamic_revit_program','export_revit_sheets_pdf','queue_revit_batch_job']);
-  return [...existing.filter(tool=>!removed.has(tool.name)),...catalog.tools];
+  return [...existing.filter(tool=>!removed.has(tool.name)).map(tool=>{
+    // Advisory work-plan claims have no strict inspection item to close. Hide only
+    // that optional legacy argument; the host validator and review stay unchanged.
+    if(catalog.execution_mode!=='single_actor_review_v1'||tool.name!=='review_current_work'
+      ||!tool.parameters?.properties?.complete_inspection_item_id)return tool;
+    if(tool.parameters.required?.includes('complete_inspection_item_id'))throw Error('advisory_review_contract_invalid');
+    const {complete_inspection_item_id,...properties}=tool.parameters.properties;
+    return {...tool,parameters:{...tool.parameters,properties}};
+  }),...catalog.tools];
 }
 /** Keep the legacy UI lane intact while removing its executor handoff directions
  * from the unified lane. Tests inspect the actual assembled owner instructions. */
-export function singleExecutionInstructions(instructions,guidance) {
+export function singleExecutionInstructions(instructions,guidance,executionMode) {
+  if(executionMode==='single_actor_review_v1') {
+    instructions=instructions.replaceAll('Keep the final native inspection checklist item pending while a backend helper performs the edits and attribute checks; ask it to return a scoped handoff before completing that item. ','')
+      .replaceAll('For the final review, pass complete_inspection_item_id naming the sole remaining declared inspection item; the host can submit its existing retained native reads through normal checklist validation after a current matched review.','');
+    guidance+='\nThis assignment uses the advisory work plan: work-plan item IDs are not native inspection IDs. Do not pass complete_inspection_item_id to visual review. Keep native readbacks, required independent visual/code review and save/file evidence; then record scoped work-plan claims and report_work_for_review once. Claims remain advisory, not host-verified completion. A failed review or unknown effect remains unresolved.';
+  }
   guidance+='\nFor a bounded edit to existing text, labels or parameters, choose one scoped inspection strategy. Reuse a known typed contract; when required preservation fields need C#, use the directly exposed executor for one bounded read instead of first discovering and calling several overlapping readers. Typed inspection is not a prerequisite to custom code. If searching is needed, use a focused capability name such as find text notes, not a compound list of every requested property; includeSchemas=true returns the contract with the match. Reuse the chosen inspection for independent post-edit readback. Gather the requested values and preservation fields together, apply the known related edits in one supported batch, then compare those fields. Do not enumerate every view element, tessellate unrelated curves or duplicate a sufficient typed read with C# solely for reassurance. Explicit preservation requirements still need relevant before/after evidence; use a scoped C# read when the typed contract lacks those fields. In custom reads use supported Revit classes and null-safe category/location access, not GetType/reflection. TextNote orientation is TextElement.BaseDirection and UpDirection, not a Rotation property; preserve Coord, type and alignment as applicable. Check Curve.IsBound before GetEndPoint or normalized Evaluate: a full circle is an unbounded Arc, so read its Center, Radius and axes instead. Keep native values/units; do not silently skip unsupported preservation fields. Keep write receipts and independent actual result reads; a returned success or code review is not native verification. For drawing-content checks prefer capture_mode:native_visible_region; use visible_work for an actual application UI/display requirement. For displayed text, combine readability/overlap checks and any required executed-code review into one final review_current_work call. A current matched review covers only its checked region and conditions: reuse it when unchanged instead of another zoom, screenshot or reviewer call merely to confirm the same pixels. Obtain missing evidence or recheck after relevant edits, uncertain results, or an uncovered UI requirement. Then issue one concise report_work_for_review with actual findings and remaining limits; do not add an interim report or reopen completed inspection just for bookkeeping.';
   const changes=[
     ['Complete requested Revit work through delegate_revit_task using the current user objective, including simple model/view questions and PDF exports. That executor records native operations, verification and the saved outcome. inspect_revit_context is useful for orientation and progress, but its local result alone cannot finish a saved task. ','Complete requested Revit work directly through native__ tools using the full current user objective. The existing backend records native operations, verification and the saved outcome. A supporting context read alone cannot finish a saved task. '],

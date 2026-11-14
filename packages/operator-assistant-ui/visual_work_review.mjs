@@ -18,6 +18,38 @@ export function normalizeAttachmentReviewRead(value){
   return {call_id:value.call_id,page:value.page};
 }
 
+/** Filename convenience for the same owned reference journal. Recovery may
+ * reuse a delivered full raster, never guess a path or substitute a crop. */
+export function resolveNamedReferenceImage(filename,context){
+  if(!bounded(filename,240)||/[\\/:]/.test(filename))throw Error('visual_review_reference_filename_invalid');
+  const matches=(context.attachments??[]).filter(a=>a?.filename===filename);
+  if(matches.length){
+    const images=matches.map(a=>{
+      if(!a.isImage||!['image/png','image/jpeg'].includes(a.mime)||typeof a.dataBase64!=='string'
+        ||!a.dataBase64.length||a.dataBase64.length>20_000_000||!/^[A-Za-z0-9+/=\r\n]+$/.test(a.dataBase64))throw Error('visual_review_reference_ambiguous_or_empty');
+      return Buffer.from(a.dataBase64,'base64');
+    });
+    if(!images[0].length||images.some((b,i)=>!b.equals(images[0])||matches[i].mime!==matches[0].mime))throw Error('visual_review_reference_ambiguous_or_empty');
+    return {filename,image_url:`data:${matches[0].mime};base64,${images[0].toString('base64')}`};
+  }
+  const candidates=[];
+  for(const receipt of context.receipts??[]){
+    if(receipt.tool_name!=='native__operator_read_attachment'||receipt.status!=='success'||receipt.arguments?.region)continue;
+    const summaries=(receipt.result?.content??[]).filter(c=>c.type==='inputText'&&typeof c.text==='string'&&c.text.length<=32768)
+      .map(c=>{try{return JSON.parse(c.text);}catch{return null;}})
+      .filter(s=>s?.source===filename&&s.source_kind==='raster_image');
+    if(!summaries.length)continue;
+    // Existing resolver validates native-delivered source identity, pixels,
+    // registered scope and clean-image selection including overlay exclusion.
+    const rendered=resolveAttachmentReviewImage({call_id:receipt.call_id,page:1},context);
+    if(rendered.source_render.visual_scope!=='full_page')continue;
+    candidates.push(rendered);
+  }
+  if(!candidates.length)throw Error('visual_review_reference_not_attached');
+  if(new Set(candidates.map(c=>c.source_render.source_sha256)).size!==1)throw Error('visual_review_reference_ambiguous_or_empty');
+  return candidates.at(-1);
+}
+
 // The attachment producer can deliver a highlighted tracking copy beside each
 // clean PDF image. Review the clean source, never the actor's status overlay.
 // Only remove a copy explicitly paired in this same owned receipt, with both

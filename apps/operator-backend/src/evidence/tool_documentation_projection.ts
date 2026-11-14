@@ -9,6 +9,7 @@ export type ToolDocumentationProjection = {
   total_tools: number;
   omitted_paths: string[];
   complete: boolean;
+  retrieval_hints?: Array<{fields:string[];selection_bytes:number;max_bytes:number}>;
 };
 
 const record = (value: unknown): Record<string, unknown> | null => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -59,6 +60,18 @@ function projectMcpContract(ref:EvidenceRefV1,raw:unknown,budget:number):ToolDoc
   const result:ToolDocumentationProjection={kind:'tool',completion_eligible:false,tools:[selected],returned_tools:1,total_tools:1,
     omitted_paths:['payload.tool.description',...annotations.map(a=>a.path),
       ...Object.keys(tool).filter(k=>!['name','inputSchema','description'].includes(k)).map(k=>'payload.tool.'+k)],complete:false};
+  // Use the retained raw root, not the prose omission prefix. Exact byte counts
+  // let the owner request a sufficient *existing* budget once. No automatic
+  // retry, output-limit increase or substitution of a partial schema.
+  const retrievalFields: Array<[string,unknown]>=[['tool.description',tool.description],['tool.inputSchema',schema],
+    ['tool.inputSchema.required',schema.required],...Object.entries(record(schema.properties)??{})
+      .map(([key,value]):[string,unknown]=>[`tool.inputSchema.properties.${key}`,value])];
+  const retrievalHints=retrievalFields.flatMap(([field,value])=>{
+    const size=bytes({[field]:value});
+    // The current owner's focused reader caps text selections at 4096 bytes.
+    // Do not recommend the larger backend-only retrieval budget to the actor.
+    return value!==undefined&&size<=4096?[{fields:[field],selection_bytes:size,max_bytes:Math.max(64,size)}]:[];
+  }).slice(0,2);
   if(bytes(result)>budget) {
     // Never present half a schema as a whole contract. Identity and explicit
     // missing paths remain useful under tighter caller budgets.
@@ -67,15 +80,21 @@ function projectMcpContract(ref:EvidenceRefV1,raw:unknown,budget:number):ToolDoc
     result.omitted_paths.push('payload.tool.inputSchema');
   }
   if(bytes(result)>budget)return null;
-  // Prefer small entry objects before multi-field recovery protocols, then
-  // concise instructions before verbose SDK examples.
+  // Preserve essential object/entry instructions ahead of navigation hints.
   // Every excerpt is a complete original annotation, never generated guidance.
-  for(const annotation of annotations.filter(a=>a.text&&a.path.endsWith('.description'))
-    .sort((a,b)=>Number(b.objectSchema)-Number(a.objectSchema)||a.requiredCount-b.requiredCount||a.text!.length-b.text!.length)) {
+  const ordered=annotations.filter(a=>a.text&&a.path.endsWith('.description'))
+    .sort((a,b)=>Number(b.objectSchema)-Number(a.objectSchema)||a.requiredCount-b.requiredCount||a.text!.length-b.text!.length);
+  const addAnnotation=(annotation:typeof ordered[number])=>{
     const candidate={...result,tools:[{...selected,parameter_guidance:[...(selected.parameter_guidance as unknown[]),
       {path:annotation.path,text:annotation.text}]}],omitted_paths:result.omitted_paths.filter(p=>p!==annotation.path)};
     if(bytes(candidate)<=budget){selected.parameter_guidance=(candidate.tools[0] as any).parameter_guidance;result.omitted_paths=candidate.omitted_paths;}
+  };
+  for(const annotation of ordered.filter(a=>a.objectSchema))addAnnotation(annotation);
+  for (const hint of retrievalHints) {
+    const candidate={...result,retrieval_hints:[...(result.retrieval_hints??[]),hint]};
+    if(bytes(candidate)<=budget)result.retrieval_hints=candidate.retrieval_hints;
   }
+  for(const annotation of ordered.filter(a=>!a.objectSchema))addAnnotation(annotation);
   return result;
 }
 

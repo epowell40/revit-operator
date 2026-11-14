@@ -69,3 +69,20 @@ test('active unified edit instructions prefer one scoped inspection strategy and
  assert.match(text,/one concise report_work_for_review/);
 });
 
+
+test('advisory final review cannot confuse work-plan IDs with strict inspection closure',()=>{
+ const legacy='Keep the final native inspection checklist item pending while a backend helper performs the edits and attribute checks; ask it to return a scoped handoff before completing that item. For the final review, pass complete_inspection_item_id naming the sole remaining declared inspection item; the host can submit its existing retained native reads through normal checklist validation after a current matched review.';
+ const advisory=singleExecutionInstructions(legacy,'bound catalog','single_actor_review_v1');
+ assert.doesNotMatch(advisory,/For the final review, pass complete_inspection_item_id/);
+ assert.match(advisory,/work-plan item IDs are not native inspection IDs/);
+ assert.match(singleExecutionInstructions(legacy,'bound catalog'),/pass complete_inspection_item_id/);
+ const review={type:'function',name:'review_current_work',parameters:{type:'object',properties:{complete_inspection_item_id:{type:'string'},code_evidence_ids:{type:'array'},review_mode:{type:'string'}},required:['review_mode']}};
+ const catalog={schema:'operator.desktop-native-tools.v1',execution_mode:'single_actor_review_v1',guidance:'bound',tools:[{type:'function',name:'native__read',parameters:{type:'object'}}]};
+ const projected=installDesktopNativeTools([review],catalog)[0];
+ assert.equal(projected.parameters.properties.complete_inspection_item_id,undefined);
+ assert.equal(projected.parameters.properties.code_evidence_ids,review.parameters.properties.code_evidence_ids);
+ assert.deepEqual(projected.parameters.required,['review_mode']);
+ assert(review.parameters.properties.complete_inspection_item_id,'Original schema remains unchanged');
+ assert.equal(installDesktopNativeTools([review],{...catalog,execution_mode:'strict'})[0],review);
+ assert.equal(installDesktopNativeTools([review],{...catalog,execution_mode:undefined})[0],review);
+});

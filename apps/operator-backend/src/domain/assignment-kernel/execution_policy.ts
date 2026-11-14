@@ -80,8 +80,8 @@ export function validLocalAdvisoryPolicyV1(spec: AssignmentSpecV2): boolean {
   const product = policy.mode === 'single_actor_review_v1';
   const selectionValid = product
     ? policy.selected_by === 'trusted_runtime_host' && Boolean(policy.principal_id)
-      && policy.principal_id === spec.binding.principal_id && spec.requested_effect === 'apply'
-      && policy.ready_work_handoff === 'continue_ready_work_v1'
+      && policy.principal_id === spec.binding.principal_id && ['read','apply'].includes(spec.requested_effect)
+      && (spec.requested_effect === 'apply' ? policy.ready_work_handoff === 'continue_ready_work_v1' : policy.ready_work_handoff === undefined)
       && policy.source_work_allowance === undefined && policy.native_scope_planning === undefined
       && policy.progress_allowance === undefined && policy.max_turns <= 8
       && policy.max_provider_calls <= DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2.max_provider_calls

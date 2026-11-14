@@ -375,7 +375,9 @@
     "evidence_field_text_range.test.ts",
     "focused_desktop_evidence.test.ts",
     "topology_routing_scope.test.ts",
-    "aec_task_intent.test.ts"
+    "aec_task_intent.test.ts",
+    "desktop_native_tool_exposure.test.ts",
+    "desktop_native_contract_delivery.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -5489,6 +5491,20 @@
         "backend:topology_routing_scope.test.ts",
         "backend:aec_task_intent.test.ts"
       ]
+    },
+    {
+      "id": "advisory_work_plan_id_confused_with_strict_visual_inspection_20261114",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/desktop_native_tools.test.mjs",
+        "backend:desktop_native_tool_exposure.test.ts"
+      ]
+    },
+    {
+      "id": "retained_full_image_filename_lost_after_native_read_20261114",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/retained_reference_image.test.mjs",
+        "javascript:package/operator-assistant-ui/visual_work_review.test.mjs"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
@@ -5546,6 +5562,10 @@
     "package/operator-assistant-ui/task_activity.test.mjs",
     "package/operator-assistant-ui/computer_completion_presentation.test.mjs",
     "app/revit-bridge-addin/RevitBridge.Common.Tests/native-program-view-refresh.test.mjs",
-    "package/operator-assistant-ui/immutable_evidence_retry.test.mjs"
+    "package/operator-assistant-ui/immutable_evidence_retry.test.mjs",
+    "package/operator-assistant-ui/retained_reference_image.test.mjs",
+    "package/operator-assistant-ui/advisory_progress.test.mjs",
+    "package/operator-assistant-ui/work_visibility.test.mjs",
+    "package/operator-assistant-ui/desktop_native_tools.test.mjs"
   ]
 }

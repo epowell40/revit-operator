@@ -23,14 +23,14 @@ import {DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2} from '../src/domain/assignment-ke
 import {buildAssignmentKernelPublicationV2} from '../src/assignments/assignment_kernel_v2_publication.js';
 
 const principal:RequestPrincipal={sub:'test-sub',user_id:'test-user',tenant_id:'test-tenant',license_id:'test-tenant',roles:['operator'],tier:null,claims:{}};
-async function fixture(enabled:boolean,fn:(value:{snapshot:NonNullable<ReturnType<typeof getAssignmentKernelSnapshotV2>>;binding:ReturnType<typeof createAssignmentKernelForGoalV2>;context:RequestContext;state:()=>NonNullable<ReturnType<typeof getAssignmentKernelSnapshotV2>>})=>unknown|Promise<unknown>){
+async function fixture(enabled:boolean,fn:(value:{snapshot:NonNullable<ReturnType<typeof getAssignmentKernelSnapshotV2>>;binding:ReturnType<typeof createAssignmentKernelForGoalV2>;context:RequestContext;state:()=>NonNullable<ReturnType<typeof getAssignmentKernelSnapshotV2>>})=>unknown|Promise<unknown>,effect:'read'|'preview'|'apply'='apply'){
  // Leave room for tenant/user hashes and SQLite WAL suffixes on Windows.
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'otr-'));
  const env={OPERATOR_WORKSPACE_ROOT:root,REVIT_OPERATOR_MODE:'hosted',OPERATOR_HOSTED_ENABLED:'1',OPERATOR_AUTH_MODE:'principal_jwt',OPERATOR_REVIT_TRANSPORT:'courier',OPERATOR_ASSIGNMENT_KERNEL_V2:'1',OPERATOR_BRAIN:'codex',OPERATOR_TOOL_EXPOSURE_PROFILE:'general',OPERATOR_OPENAI_API_KEY:'test-provider-not-used',OPERATOR_TASK_EXECUTION_PROFILE:enabled?'single_actor_review_v1':'',OPERATOR_LOCAL_EXECUTOR_PROFILE:''};
  const old=Object.fromEntries(Object.keys(env).map(k=>[k,process.env[k]]));Object.assign(process.env,env);__testOnlyResetGoalListCache();
  const context={principal,operator_backend_auth:createOperatorBackendAuth('principal_jwt','test-credential',{OPERATOR_API_BASE_URL:'https://backend.example.invalid'})};
  try{await runWithRequestContext(context,async()=>{
-  const session=createPrincipalBoundSessionId(principal),goal=createGoal({title:'Reconstruct drawing',objective:'Reconstruct the visible lighting fixtures, controls and annotations from the supplied PDF; inspect and save the model.',acceptance_criteria:['The requested drawing is reconstructed and reviewed.'],status:'active',related_session_id:session,created_by:'test-user',work_budget:{requested_effect:'apply',document_fingerprint:'disposable-document',mode:'sidecar_computer',source:'operator_desktop',execution_substrate:'operator_desktop_outer_agent'}});
+  const session=createPrincipalBoundSessionId(principal),goal=createGoal({title:'Reconstruct drawing',objective:'Reconstruct the visible lighting fixtures, controls and annotations from the supplied PDF; inspect and save the model.',acceptance_criteria:['The requested drawing is reconstructed and reviewed.'],status:'active',related_session_id:session,created_by:'test-user',work_budget:{requested_effect:effect,document_fingerprint:'disposable-document',mode:'sidecar_computer',source:'operator_desktop',execution_substrate:'operator_desktop_outer_agent'}});
   const binding=createAssignmentKernelForGoalV2({goal,run_id:'test-run'});await fn({binding,snapshot:getAssignmentKernelSnapshotV2(goal.id)!,context,state:()=>getAssignmentKernelSnapshotV2(goal.id)!});
  });}finally{__testOnlyResetGoalListCache();__closeForTests();for(const[k,v]of Object.entries(old)){if(v===undefined)delete process.env[k];else process.env[k]=v;}fs.rmSync(root,{recursive:true,force:true});}
 }
@@ -96,15 +96,37 @@ test('product policy survives reload and enrollment disable without granting a f
  assert.equal(selectLocalAdvisoryPolicy(binding,process.env,context,'apply'),undefined,'Product profile cannot enable the legacy local experiment');
 }));
 
-test('selection requires exact server configuration, authorized native host, binding and apply intent',()=>fixture(true,({binding,context})=>{
+test('selection requires exact server configuration, authorized native host, binding and read or apply intent',()=>fixture(true,({binding,context})=>{
  assert(selectTaskReviewPolicy(binding,'apply'));
  for(const change of [{OPERATOR_TASK_EXECUTION_PROFILE:''},{OPERATOR_TASK_EXECUTION_PROFILE:'other'},{OPERATOR_REVIT_TRANSPORT:'direct'},{OPERATOR_ASSIGNMENT_KERNEL_V2:'0'},{OPERATOR_BRAIN:'other'},{OPERATOR_AUTH_MODE:'shared_token'}])
   assert.equal(selectTaskReviewPolicy(binding,'apply',{...process.env,...change},context),undefined);
- for(const effect of ['read','preview'])assert.equal(selectTaskReviewPolicy(binding,effect),undefined);
+ assert(selectTaskReviewPolicy(binding,'read'));
+ for(const effect of ['preview','other'])assert.equal(selectTaskReviewPolicy(binding,effect),undefined);
  for(const change of [{principal_id:'foreign'},{document_fingerprint:''},{session_id:'foreign-session'}])
   assert.equal(selectTaskReviewPolicy({...binding,...change},'apply'),undefined);
  assert.equal(selectTaskReviewPolicy(binding,'apply',process.env,{operator_backend_auth:context.operator_backend_auth}),undefined);
 }));
+
+test('fresh read-only answers use the authenticated review handoff without inventing native verification or write rights',()=>fixture(true,({snapshot,binding,state})=>{
+ assert.equal(snapshot.spec.requested_effect,'read');
+ assert.equal(snapshot.spec.execution_policy?.mode,'single_actor_review_v1');
+ assert.equal(snapshot.spec.execution_policy?.ready_work_handoff,undefined);
+ assert(validLocalAdvisoryPolicyV1(snapshot.spec));
+ assert.throws(()=>openAssignmentKernelOperationV2({snapshot:state(),provider_turn_id:'turn',controller_request_id:'forbidden-edit',
+  capability_id:'revit_call_tool',classified_effect:'apply',target_tokens:['id:11'],arguments:{method:'POST',path:'/revit/delete-elements',body:{elementIds:[11]}}}),{message:'assignment_kernel_v2_work_unit_not_admitted'});
+ const before=structuredClone(state());
+ manageAssignmentWorkPlan({binding,action:'propose_completion',completion_proposal:{claimed_completed:['Inspected the requested visible building.'],
+  remaining_work:[],uncertainties:['Exact dimensions were not independently verified.'],user_facing_text:'The visible building has two storeys; exact dimensions remain unchecked.'}});
+ const after=state();assert.equal(after.outcome,'awaiting_user_review');assert.equal(after.terminal,false);
+ assert.equal(after.completion_proposal?.verified,false);assert.deepEqual(after.operations,before.operations);
+ assert.deepEqual(after.criteria,before.criteria);assert.deepEqual(after.observations,before.observations);
+ __testOnlyResetGoalListCache();assert.deepEqual(state(),after);
+},'read'));
+
+test('unselected read tasks and explicit previews retain strict historical policy',async()=>{
+ await fixture(false,({snapshot})=>assert.equal(snapshot.spec.execution_policy,undefined),'read');
+ await fixture(true,({snapshot})=>assert.equal(snapshot.spec.execution_policy,undefined),'preview');
+});
 
 test('stored policy rejects forged provenance, mismatched owner and expanded resource caps',()=>fixture(true,({snapshot})=>{
  assert(validLocalAdvisoryPolicyV1(snapshot.spec));
@@ -114,6 +136,8 @@ test('stored policy rejects forged provenance, mismatched owner and expanded res
 
 test('model-visible product policy keeps lightweight progress and an unverified review checkpoint',()=>fixture(true,({snapshot,binding,state})=>{
  const instructions=desktopNativeInitialContext(snapshot);assert.match(instructions,/single_actor_review_v1/);assert.match(instructions,/report_work_for_review/);assert.match(instructions,/not completion/);assert.doesNotMatch(instructions,/Declare the compact requested scope once/);
+ assert.match(instructions,/not an additional handoff gate/);assert.match(instructions,/Do not undo, delete or reconstruct a successful committed edit/);
+ assert.match(instructions,/unknown effects must be reconciled/);
  manageAssignmentWorkPlan({binding,action:'declare',declaration:{items:[{item_id:'area',description:'Draft visible area',source_basis:'User PDF'}],assumptions:[]}});
  const report={claimed_completed:['Drafted the area'],remaining_work:[],uncertainties:[],user_facing_text:'Review the reconstructed area.'};
  assert.throws(()=>manageAssignmentWorkPlan({binding,action:'propose_completion',completion_proposal:report}),/ready_work_remaining/);
@@ -145,3 +169,4 @@ test('pending usage, terminal state and changed binding still prevent a primary 
   assert.throws(()=>startCodexProviderTurnWhenActive({binding,readSnapshot:()=>value as any},dispatch),reason);
  assert.equal(calls,0);
 }));
+
