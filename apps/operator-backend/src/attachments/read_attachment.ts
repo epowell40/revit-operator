@@ -113,7 +113,10 @@ async function renderRegisteredRaster(bytes: Buffer, source: { filename: string;
   // Check before decoding, not after allocating a potentially enormous bitmap.
   if (header.widthPx > 16384 || header.heightPx > 16384 || header.widthPx * header.heightPx > 32_000_000)
     throw new Error("Raster source exceeds the 32 million pixel / 16384 edge decoding budget.");
+  let decoderBytes = bytes;
+  const omittedMetadataChunks: string[] = [];
   if (header.kind === "png") {
+    const decoderChunks: Buffer[] = [bytes.subarray(0, 8)];
     let offset = 8, hasData = false, ended = false;
     while (offset + 12 <= bytes.length) {
       const length = bytes.readUInt32BE(offset), end = offset + 12 + length;
@@ -122,16 +125,24 @@ async function renderRegisteredRaster(bytes: Buffer, source: { filename: string;
       if (offset === 8 && (kind !== "IHDR" || length !== 13)) break;
       if (offset !== 8 && kind === "IHDR") break;
       if (crc32(bytes.subarray(offset + 4, end - 4)) !== bytes.readUInt32BE(end - 4)) break;
+      // Canvas's format sniffing can mistake SVG inside C2PA/text metadata for
+      // the enclosing PNG. Validate every original chunk first, but omit only
+      // these non-pixel chunks from the temporary decoder input. Keep colour,
+      // transparency, orientation and all other chunks byte-for-byte. The
+      // registered source and the identity/hash below always use original bytes.
+      if (["caBX", "tEXt", "zTXt", "iTXt"].includes(kind)) omittedMetadataChunks.push(kind);
+      else decoderChunks.push(bytes.subarray(offset, end));
       if (kind === "IDAT" && length > 0) hasData = true;
       if (kind === "IEND") { ended = length === 0 && end === bytes.length; break; }
       offset = end;
     }
     if (!hasData || !ended) throw new Error("Malformed or truncated PNG source; no image was decoded.");
+    if (omittedMetadataChunks.length) decoderBytes = Buffer.concat(decoderChunks);
   } else if (bytes.length < 4 || bytes[bytes.length - 2] !== 0xff || bytes[bytes.length - 1] !== 0xd9) {
     throw new Error("Malformed or truncated JPEG source; no image was decoded.");
   }
   const { loadImage, createCanvas } = await import("@napi-rs/canvas");
-  const decoded = await loadImage(bytes);
+  const decoded = await loadImage(decoderBytes);
   // The decoder applies JPEG orientation. Mapping is to the displayed source,
   // not encoded scan order, PDF points or a native Revit coordinate system.
   const width = decoded.width, height = decoded.height;
@@ -149,6 +160,11 @@ async function renderRegisteredRaster(bytes: Buffer, source: { filename: string;
   const metadata = {
     source: source.filename, ...source.identity, sha256: createHash("sha256").update(bytes).digest("hex"),
     source_kind: "raster_image", source_format: header.kind, page: 1, page_count: 1,
+    ...(omittedMetadataChunks.length ? { raster_decode: {
+      omitted_non_pixel_metadata_chunks: omittedMetadataChunks,
+      original_source_preserved: true,
+      note: "Only temporary decoder input omits non-pixel metadata. Source hash covers the complete original file; no provenance authenticity claim is made."
+    } } : {}),
     pages_returned: [1], pages_not_returned_count: 0, fully_rendered_pages: args.region ? [] : [1],
     mode: args.mode ?? "detail", small_text_review_not_established: args.mode === "overview",
     source_image_geometry: { displayed_width_px: width, displayed_height_px: height, orientation: "decoder_display_orientation" },

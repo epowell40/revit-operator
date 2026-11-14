@@ -289,6 +289,8 @@
     "pdf_source_overview.test.ts",
     "provider_token_cost.test.ts",
     "read_attachment_modes.test.ts",
+    "raster_png_metadata.test.ts",
+    "raster_attachment_read.test.ts",
     "schedule_cell_kernel_v2.test.ts",
     "schedule_cell_postcondition_v2.test.ts",
     "tag_property_readback_v2.test.ts",
@@ -5524,6 +5526,14 @@
         "dotnet:OperatorNativeProgramCourierConsumerTests",
         "dotnet:OperatorNativeProgramEvidenceTransportTests",
         "mcp:lib/dynamicNativeCourier.test.ts"
+      ]
+    },
+    {
+      "id": "png_provenance_metadata_misclassified_as_svg_20261114",
+      "coverage": [
+        "backend:raster_png_metadata.test.ts",
+        "backend:raster_attachment_read.test.ts",
+        "javascript:package/operator-assistant-ui/visual_work_review.test.mjs"
       ]
     },
     {
