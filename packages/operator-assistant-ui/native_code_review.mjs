@@ -313,7 +313,13 @@ export async function buildNativeCodeReviewPacket(callIds,host){
   }
   let documentTransitions=[];
   if(new Set(executions.map(e=>e.document_session_id)).size!==1){
-    documentTransitions=nativeCodeReviewSaveAsTransitions(host.canonicalSnapshot?.(),binding,executions,host.validateCheckpoint);
+    try { documentTransitions=nativeCodeReviewSaveAsTransitions(host.canonicalSnapshot?.(),binding,executions,host.validateCheckpoint); }
+    catch(error) {
+      const groups=[...new Set(executions.map(e=>e.document_session_id))].map(session=>({document_session_id:session,executions:executions.filter(e=>e.document_session_id===session).map(e=>({evidence_id:e.evidence_id,mode:e.mode,execution_success:e.execution_success,transaction_status:e.transaction.status}))}));
+      const diagnostic={scope:'selected_historical_execution_sessions',groups,native_postcondition_verified:false,whole_task_verified:false};
+      if(bytes(diagnostic)<=4096)sessionDiagnostics.set(error,diagnostic);
+      throw error;
+    }
     await host.assertControl();if(!sameOwner(localOwner,host.owner()))fail('owner_changed');
   }
   const journal=host.receipts(),available=journal.filter(r=>object(nativeProgramArguments(r)?.native_program));

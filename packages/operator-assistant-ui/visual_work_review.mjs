@@ -101,7 +101,7 @@ export function resolveAttachmentReviewImage(selection,{receipts,attachments,reg
   const s=summaryCandidates[0],images=cleanAttachmentReviewImages(content,s);
   const legacyPng=s.source_kind===undefined&&s.source_media_type==='image/png';
   const raster=s.source_kind==='raster_image'||legacyPng;
-  if((s.source_kind!==undefined&&!raster)||raster&&(!legacyPng&&!['png','jpeg'].includes(s.source_format)||s.page_count!==1||s.pages_returned.length!==1||s.pages_returned[0]!==1))throw Error('visual_review_attachment_source_invalid');
+  if((s.source_kind!==undefined&&!raster)||raster&&!legacyPng&&(!['png','jpeg'].includes(s.source_format)||s.page_count!==1||s.pages_returned.length!==1||s.pages_returned[0]!==1))throw Error('visual_review_attachment_source_invalid');
   if(s.attachment_id!==args.attachment_id||s.mode!==(args.mode??'detail')||!/^([a-f0-9]{64})$/.test(s.sha256??'')
     ||!s.pages_returned.every(positive)||new Set(s.pages_returned).size!==s.pages_returned.length
     ||s.pages_returned.some(p=>!args.pages.includes(p))||images.length!==s.pages_returned.length)throw Error('visual_review_attachment_source_invalid');

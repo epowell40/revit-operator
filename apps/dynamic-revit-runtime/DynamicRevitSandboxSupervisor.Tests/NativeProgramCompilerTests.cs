@@ -229,8 +229,8 @@ public sealed class NativeProgramCompilerTests
             var result=Compile(source);
             Assert.Null(result.Artifact);
             var diagnostic=Assert.Single(result.Diagnostics.Where(d=>d.Code=="NATIVE_SOURCE_LIFECYCLE"));
-            Assert.Contains("static fields",diagnostic.Message);
-            Assert.Contains("without initializers",diagnostic.Message);
+            Assert.Contains("Static field",diagnostic.Message);
+            Assert.Contains("without an initializer",diagnostic.Message);
             Assert.Equal(3,diagnostic.Line);Assert.Equal(3,diagnostic.Column);
         }
     }
