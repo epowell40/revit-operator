@@ -4,13 +4,15 @@ New-Item -ItemType Directory $testRoot | Out-Null
 $checks=0
 try {
     $keyFile=Join-Path $testRoot 'settings.txt'
-    foreach($invalid in @('OPENAI_API_KEY=PASTE_YOUR_KEY_HERE',"OPENAI_API_KEY=short",'Write-Host hacked',"OPENAI_API_KEY=synthetic-test-key-1234567890`nOTHER=bad")) {
+    # Generated parser fixture, never a provider credential.
+    $fixtureKey='fixture-'+[Guid]::NewGuid().ToString('N')
+    foreach($invalid in @('OPENAI_API_KEY=PASTE_YOUR_KEY_HERE',"OPENAI_API_KEY=short",'Write-Host hacked',"OPENAI_API_KEY=$fixtureKey`nOTHER=bad")) {
         Set-Content -LiteralPath $keyFile $invalid
         $rejected=$false;try{Read-OpenCoreKey $keyFile | Out-Null}catch{$rejected=$true}
         if(!$rejected){throw 'Invalid settings accepted'};$checks++
     }
-    Set-Content -LiteralPath $keyFile 'OPENAI_API_KEY=synthetic-test-key-1234567890'
-    if((Read-OpenCoreKey $keyFile) -ne 'synthetic-test-key-1234567890'){throw 'Key parser changed value'};$checks++
+    Set-Content -LiteralPath $keyFile "OPENAI_API_KEY=$fixtureKey"
+    if((Read-OpenCoreKey $keyFile) -ne $fixtureKey){throw 'Key parser changed value'};$checks++
     [xml]$xml=Get-ManifestText 'C:\A & B\RevitBridge.dll'
     if($xml.RevitAddIns.AddIn.Assembly -ne 'C:\A & B\RevitBridge.dll'){throw 'Manifest path escaping failed'};$checks++
     $file=Join-Path $testRoot 'atomic.txt'
