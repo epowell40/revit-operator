@@ -45,7 +45,7 @@ try {
     $revit=$null
     if(!$NoRevit){$revit=Start-Process -FilePath $install.revitExe -PassThru}
     @{pid=$backend.Id;started=$backend.StartTime.ToUniversalTime().ToString('o');node=$install.node;entry=$entry;revitPid=if($revit){$revit.Id}else{$null}} | ConvertTo-Json | Set-Content (Join-Path $OpenCoreState 'runtime.json') -Encoding UTF8
-    Write-Host 'Local Operator is ready. In Revit, open Add-Ins > Operator. API usage is billed to your key.'
+    Write-Host 'Local Operator is ready. In Revit, open RevitOperator > Operator. API usage is billed to your key.'
 } catch {
     if($backend -and !$backend.HasExited){Stop-Process -Id $backend.Id}
     throw
