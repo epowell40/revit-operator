@@ -6,6 +6,7 @@ import { appendDailyMemory, appendLongtermMemory } from "../memory/jsonl_memory_
 import { queueRunBundleForUpload } from "./upload_queue.js";
 import { buildDevHandoff, type DevHandoff } from "./dev_handoff.js";
 import type {FeedbackRuntimeDiagnostic} from './runtime_diagnostic.js';
+import {validateFeedbackTaskBinding, type FeedbackTaskBinding} from './task_binding.js';
 
 export type FeedbackRating = "worked" | "partial" | "failed";
 
@@ -19,6 +20,9 @@ export type FeedbackEvent = {
   created_at: string;
   dev_handoff?: DevHandoff;
   runtime_diagnostic?: FeedbackRuntimeDiagnostic;
+  assignment_id?: string;
+  run_id?: string;
+  generation?: number;
 };
 
 export type FeedbackPersistResult = {
@@ -49,11 +53,13 @@ export function appendFeedbackAndMaybePromote(args: {
   queue_upload?: boolean;
   created_at?: string;
   runtime_diagnostic?: unknown;
+  task_binding?: FeedbackTaskBinding | unknown;
 }): FeedbackPersistResult {
   const layout = ensureWorkspaceLayout();
 
   const session_id = (args.session_id ?? "").toString().trim();
   if (!session_id) throw new Error("Missing session_id");
+  const taskBinding=validateFeedbackTaskBinding(session_id,args.task_binding);
 
   const ratingRaw = (args.rating ?? "").toString().trim().toLowerCase();
   if (!isRating(ratingRaw)) throw new Error("rating must be one of: worked|partial|failed");
@@ -72,6 +78,7 @@ export function appendFeedbackAndMaybePromote(args: {
   });
 
   const evt: FeedbackEvent = {
+    ...(taskBinding??{}),
     session_id,
     chat_id: chat_id || null,
     rating: ratingRaw,

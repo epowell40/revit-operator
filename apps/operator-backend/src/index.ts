@@ -3273,11 +3273,12 @@ const server = http.createServer(async (req, res) => {
           remember_preference,
           queue_upload,
           created_at,
-          runtime_diagnostic:parsed.runtime_diagnostic
+          runtime_diagnostic:parsed.runtime_diagnostic,
+          task_binding:parsed.task_binding
         });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        return writeJson(res, 500, { error: `Failed to persist feedback: ${msg}` });
+        return writeJson(res, (e as any)?.code==='feedback_binding_conflict'?409:500, { error: `Failed to persist feedback: ${msg}` });
       }
 
       let improvementJob: any = null;

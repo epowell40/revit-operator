@@ -15578,7 +15578,8 @@ app.post("/api/feedback", async (req, res) => {
       remember_preference: !!req.body?.remember_preference,
       queue_upload: !!req.body?.queue_upload,
       dev_apply_repo_changes: !!req.body?.dev_apply_repo_changes,
-      runtime_diagnostic:sidecarFeedbackDiagnostic(sessionId,computerState)
+      runtime_diagnostic:sidecarFeedbackDiagnostic(sessionId,computerState),
+      task_binding:req.body?.task_binding
     };
     const data = await readBackendJson("/feedback", {
       method: "POST",
