@@ -1,0 +1,24 @@
+{
+  "name": "revit-operator-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "^22.23.4 || ^24.22.1 || ^26.12.1"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/*.test.js test/*.test.mjs"
+  },
+  "dependencies": {
+    "@revitoperator/assignment-kernel-v2-contracts": "file:../../packages/assignment-kernel-v2-contracts",
+    "dotenv": "^16.6.1",
+    "express": "5.2.1",
+    "openai": "6.32.0"
+  },
+  "overrides": {
+    "body-parser": "2.4.0",
+    "qs": "6.16.1"
+  },
+  "license": "AGPL-3.0-or-later"
+}

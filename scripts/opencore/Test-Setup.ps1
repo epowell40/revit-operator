@@ -18,6 +18,15 @@ try {
     $file=Join-Path $testRoot 'atomic.txt'
     Write-OpenCoreText $file 'first';Write-OpenCoreText $file 'second'
     if([IO.File]::ReadAllText($file) -ne 'second' -or @(Get-ChildItem $testRoot -Filter '*.tmp').Count){throw 'Atomic replacement failed'};$checks++
+    $runtime=Join-Path $testRoot 'runtime'
+    New-Item -ItemType Directory -Force "$runtime/supervisor","$runtime/worker" | Out-Null
+    [IO.File]::WriteAllText("$runtime/supervisor/DynamicRevitSandboxSupervisor.exe",'synthetic-not-executable')
+    [IO.File]::WriteAllText("$runtime/worker/DynamicRevitWorker.exe",'synthetic-not-executable')
+    $receipt=@{root=$runtime;files=@(Get-ChildItem $runtime -Recurse -File | ForEach-Object {@{relative=$_.FullName.Substring($runtime.Length+1);sha256=(Get-FileHash $_.FullName).Hash}})}
+    Assert-OpenCoreRuntime $receipt $runtime;$checks++
+    [IO.File]::AppendAllText("$runtime/worker/DynamicRevitWorker.exe",'changed')
+    $rejected=$false;try{Assert-OpenCoreRuntime $receipt $runtime}catch{$rejected=$true};if(!$rejected){throw 'Changed runtime accepted'};$checks++
+    $rejected=$false;try{Assert-OpenCoreRuntime $receipt (Join-Path $testRoot 'foreign')}catch{$rejected=$true};if(!$rejected){throw 'Foreign runtime accepted'};$checks++
     Write-Host "$checks Open Core setup checks passed. No add-in registration or runtime changed."
 } finally {
     $resolved=[IO.Path]::GetFullPath($testRoot)

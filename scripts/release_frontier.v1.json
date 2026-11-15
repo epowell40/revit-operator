@@ -457,7 +457,10 @@
     "test/native_change_feedback.test.js",
     "test/visual_work_review.test.js",
     "test/scoped_helper_projection.test.js",
-    "test/work_report.test.js"
+    "test/work_report.test.js",
+    "test/standalone.test.mjs",
+    "test/standalone-server.test.mjs",
+    "test/standalone-launcher.test.mjs"
   ],
   "dotnet_test_classes": [
     "FamilyLabelBindingObservationTests",
@@ -5568,6 +5571,28 @@
         "backend:codex_explicit_auth.test.ts",
         "backend:codex_config.test.ts",
         "javascript:app/revit-bridge-addin/RevitBridge.Common.Tests/OperatorUnifiedAgentSettingsUi.test.mjs"
+      ]
+    },
+    {
+      "id": "standalone_revit_child_inherited_powershell_modules_20261115",
+      "coverage": [
+        "desktop:test/standalone-launcher.test.mjs",
+        "desktop:test/sidecar_revit_listener_identity.test.js"
+      ]
+    },
+    {
+      "id": "standalone_account_boundary_and_shared_ui_20261115",
+      "coverage": [
+        "desktop:test/standalone.test.mjs",
+        "desktop:test/standalone-server.test.mjs"
+      ]
+    },
+    {
+      "id": "standalone_csharp_runtime_missing_or_foreign_20261115",
+      "coverage": [
+        "desktop:test/standalone-launcher.test.mjs",
+        "mcp:lib/dynamicRuntimeInstallation.test.ts",
+        "mcp:lib/dynamicRevitProgramRunner.test.ts"
       ]
     }
   ],
