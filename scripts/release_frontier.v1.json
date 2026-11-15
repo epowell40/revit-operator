@@ -5538,6 +5538,14 @@
       ]
     },
     {
+      "id": "reviewer_budget_refusal_owner_closeout_20261114",
+      "coverage": [
+        "backend:desktop_computer_telemetry.test.ts",
+        "javascript:package/operator-assistant-ui/review_budget_stop.test.mjs",
+        "javascript:package/assignment-kernel-v2-contracts/provider-response-usage.test.mjs"
+      ]
+    },
+    {
       "id": "png_provenance_metadata_misclassified_as_svg_20261114",
       "coverage": [
         "backend:raster_png_metadata.test.ts",
@@ -5599,6 +5607,8 @@
     "package/operator-assistant-ui/mixed_followup_scope_guidance.test.mjs",
     "package/operator-assistant-ui/visual_work_review_preparation.test.mjs",
     "package/operator-assistant-ui/reviewed_inspection_closeout.test.mjs",
+    "package/operator-assistant-ui/review_budget_stop.test.mjs",
+    "package/assignment-kernel-v2-contracts/provider-response-usage.test.mjs",
     "package/operator-assistant-ui/native_view_activation.test.mjs",
     "package/operator-assistant-ui/native_code_review.test.mjs",
     "package/operator-assistant-ui/native_code_review_recovery.test.mjs",

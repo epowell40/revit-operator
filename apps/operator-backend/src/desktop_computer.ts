@@ -78,6 +78,9 @@ type ProviderFailureDiagnostic = {
   parameter: string | null; request_id: string | null;
 };
 
+// Only this bound relay can attest that its provider callback was never entered.
+// Error text, foreign objects and failures after invocation cannot acquire it.
+const unstartedProviderRequests = new WeakMap<ExternalProviderAdmissionError, ProviderResponseUsageV1>();
 /** Content-free troubleshooting only. Neither a retry grant nor task/effect proof. */
 function providerFailureDiagnostic(cause: unknown): ProviderFailureDiagnostic {
   const value = cause && typeof cause === 'object' ? cause as Record<string, unknown> : {};
@@ -103,7 +106,8 @@ function providerFailureDiagnostic(cause: unknown): ProviderFailureDiagnostic {
 }
 
 export function desktopComputerErrorResponse(error: unknown): { error: string; admission?: {decision:string;reason:string}; model_call_receipts?: ModelCallReceipt[]; provider_response_usage?: ProviderResponseUsageV1; provider_diagnostic?: ProviderFailureDiagnostic; model_context_package?: ReturnType<typeof desktopModelInputPackage> } {
-  if(error instanceof ExternalProviderAdmissionError)return {error:error.message,admission:{decision:error.decision,reason:error.reason}};
+  if(error instanceof ExternalProviderAdmissionError)return {error:error.message,admission:{decision:error.decision,reason:error.reason},
+    ...(unstartedProviderRequests.has(error)?{provider_response_usage:unstartedProviderRequests.get(error)}:{})};
   const receipt = getDesktopComputerProviderErrorReceipt(error);
   const diagnostic = error instanceof DesktopComputerProviderError ? providerFailureDiagnostic(error.cause) : undefined;
   return receipt
@@ -322,7 +326,9 @@ export async function relayBoundDesktopComputerResponse(rawBody: unknown,
     schema: "revit-operator.provider-response-usage/v1", session_id: binding.session_id, message_id: messageId,
     disposition: receipt.success ? "completed" : "failed", raw_response_ids: [receipt.call_id]
   });
+  let providerInvocationEntered = false;
   const invoke = async () => {
+    providerInvocationEntered = true;
     try {
       const result = await relayDesktopComputerResponse(providerBody,retainedTurnUsage,cacheContext);
       const observed = usage(result.model_call_receipt);
@@ -343,7 +349,7 @@ export async function relayBoundDesktopComputerResponse(rawBody: unknown,
   // The HTTP caller may leave while its upstream request is still settling.
   // Serialize only this outer relay; the canonical admission guard remains
   // authoritative for other in-flight work, pause, unknown effects and budget.
-  return withSerializedProviderTurn({namespace:'desktop-outer',workspace:getWorkspaceRoot(),
+  try { return await withSerializedProviderTurn({namespace:'desktop-outer',workspace:getWorkspaceRoot(),
     sessionId:JSON.stringify([binding.session_id,binding.assignment_id]),signal:options.signal},()=>withDesktopNativeProviderReadiness(binding,async()=>{
     // Re-resolve scoped ownership/generation and feedback after predecessor usage.
     const resolved=assignmentKernelV2ForBinding(binding);
@@ -377,4 +383,11 @@ export async function relayBoundDesktopComputerResponse(rawBody: unknown,
     }
     return response;
   },options.signal));
+  } catch (error) {
+    if (error instanceof ExternalProviderAdmissionError && !providerInvocationEntered && typeof messageId === 'string') {
+      unstartedProviderRequests.set(error, parseProviderResponseUsageV1({schema:'revit-operator.provider-response-usage/v1',
+        session_id:binding.session_id,message_id:messageId,disposition:'not_started',raw_response_ids:[]}));
+    }
+    throw error;
+  }
 }
