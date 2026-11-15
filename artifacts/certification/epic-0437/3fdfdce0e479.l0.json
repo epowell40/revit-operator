@@ -3785,7 +3785,7 @@
     },
     {
       "path": "apps/operator-backend/src/feedback/feedback_store.ts",
-      "sha256": "sha256:8a7f84be0a2ba9c57165e52ace88a6ab71848b1d36a769f660d1108ff5df94eb"
+      "sha256": "sha256:fb10c85b86b60b472fd4851778e7d671a93fa1b689496e9e6289ece9332da206"
     },
     {
       "path": "apps/operator-backend/src/feedback/github_issue.ts",
@@ -3798,6 +3798,10 @@
     {
       "path": "apps/operator-backend/src/feedback/setup_diagnostic.ts",
       "sha256": "sha256:96d40549371a1572c8c8fbe231b35dce76058c28927392189648b6455db59610"
+    },
+    {
+      "path": "apps/operator-backend/src/feedback/task_binding.ts",
+      "sha256": "sha256:a90334ce9fe89b7f12741ee822cb82948c134144c0367030d137e125aad81762"
     },
     {
       "path": "apps/operator-backend/src/feedback/upload_queue.ts",
@@ -3905,7 +3909,7 @@
     },
     {
       "path": "apps/operator-backend/src/index.ts",
-      "sha256": "sha256:2fc19afa5fb6f3793f42bd4ded591b4205d74ae9aded42603dc152d555713c43"
+      "sha256": "sha256:9001b95e28efe27f93112fbe7c9f1b84d61b7438c8091d441b0f6385a41e230a"
     },
     {
       "path": "apps/operator-backend/src/knowledge_base/config.ts",
@@ -6290,6 +6294,10 @@
     {
       "path": "apps/operator-backend/test/feedback_store.test.ts",
       "sha256": "sha256:aa28602df3d97e62dd5f351a5ffe369ca82245ed98bf02336ab449d29f520fa8"
+    },
+    {
+      "path": "apps/operator-backend/test/feedback_task_binding.test.ts",
+      "sha256": "sha256:43a07a8e0574b39c570411de180737f913618f32040203486f417346109d19be"
     },
     {
       "path": "apps/operator-backend/test/fixtures/air-device-parameter-apply.json",
@@ -12645,7 +12653,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:ae9213e1b1be9aecd981c8f3a5ba56ff68511a7ae60a7c14bf73e2cf3d51f3d0",
+  "inputs_hash": "sha256:a40f26d023d8363c763cafeac47d5ef5524ab3770ff31203174f1f270c2636ac",
   "result": {
     "passed": true,
     "checks": [
