@@ -26,7 +26,7 @@ usage separately from any ChatGPT subscription.
 5. Double-click **Start-OpenCore.cmd**. It starts the authenticated loopback-only
    backend and launches Revit with the matching local configuration. If Revit asks
    about the locally built RevitOperator add-in, review it and choose **Always Load**.
-6. Open a disposable model, then choose **Add-Ins → Operator**. Start with a read-only
+6. Open a disposable model, then choose **RevitOperator → Operator** on the ribbon. Start with a read-only
    request such as “What model and view are open?” before trying model changes.
 
 Keep the extracted folder: the add-in runs from its build output. Do not move or
