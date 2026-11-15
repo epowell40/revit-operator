@@ -1,0 +1,5 @@
+/** Presentation preference only. It grants no view/model mutation authority. */
+export function workVisibilityInstructions(settings){
+ if(settings?.show_work_as_it_runs!==true)return '';
+ return '\nShow work as it runs is enabled. For authorized drafting, use a useful Revit work view and keep its framing stable so the user can watch. Build in coherent visible phases (for example shell, openings, then details), using manageable native C# apply calls rather than one entire-project program or one call per element. The native executor refreshes the active Revit view after each committed apply; rely on that existing refresh. Do not add sleeps, screenshots, reviews, UI clicks or extra model calls merely to animate progress. Give a short progress update at useful milestones. Inspect and correct at meaningful batch boundaries under the existing verification policy. A refresh request is presentation, not proof that pixels are visible or the task is complete. Read-only tasks remain read-only; do not alter a view when the user requires it unchanged. If a phase cannot be safely separated, keep it atomic and explain the limitation.';
+}

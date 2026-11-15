@@ -1,5 +1,9 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+# Revit can inherit a PowerShell 7 module path. Its ribbon launches Windows
+# PowerShell; resolve that host's built-in modules before inherited modules.
+$nativeModules = Join-Path $PSHOME 'Modules'
+$env:PSModulePath = $nativeModules + [IO.Path]::PathSeparator + $env:PSModulePath
 $OpenCoreRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $OpenCoreState = Join-Path $OpenCoreRoot '.opencore'
 $OpenCoreSettings = Join-Path $OpenCoreRoot 'OpenCore.settings.txt'
@@ -17,6 +21,16 @@ function Read-OpenCoreKey([string]$Path = $OpenCoreSettings) {
 
 function Assert-ClosedRevit {
     if (Get-Process -Name Revit -ErrorAction SilentlyContinue) { throw 'Close Revit first so the add-in and local connection can be selected safely. Your open model has not been changed.' }
+}
+
+function Assert-OpenCoreProcess($Runtime) {
+    $process=Get-CimInstance Win32_Process -Filter "ProcessId=$($Runtime.pid)"
+    if(!$process -or [IO.Path]::GetFullPath($process.ExecutablePath) -ne [IO.Path]::GetFullPath($Runtime.node) -or
+      ([DateTimeOffset]$process.CreationDate.ToUniversalTime()).ToUnixTimeMilliseconds() -ne ([DateTimeOffset]$Runtime.started).ToUnixTimeMilliseconds() -or
+      !$process.CommandLine.Contains($Runtime.entry)) {
+        throw 'The process does not match this installation. Nothing was started or stopped.'
+    }
+    return $process
 }
 
 function Invoke-Checked([string]$File, [string[]]$Arguments) {
@@ -38,7 +52,7 @@ function Get-OpenCoreNode {
 function Write-PrivateSettings {
     if (Test-Path -LiteralPath $OpenCoreSettings) { return }
     @('# Keep this file private. API usage is billed to your OpenAI account.', '# Paste the key after the equals sign; do not add quotes.', 'OPENAI_API_KEY=PASTE_YOUR_KEY_HERE') | Set-Content -LiteralPath $OpenCoreSettings -Encoding UTF8
-    $acl = Get-Acl -LiteralPath $OpenCoreSettings
+    $acl = New-Object Security.AccessControl.FileSecurity
     $acl.SetAccessRuleProtection($true, $false)
     $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
     $acl.SetAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl','Allow')))
@@ -60,4 +74,21 @@ function Write-OpenCoreText([string]$Path, [string]$Text) {
         if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($temporary,$Path,[NullString]::Value) }
         else { [IO.File]::Move($temporary,$Path) }
     } finally { if(Test-Path -LiteralPath $temporary){Remove-Item -LiteralPath $temporary} }
+}
+
+function Assert-OpenCoreRuntime($Receipt,[string]$ExpectedRoot) {
+    $root=[IO.Path]::GetFullPath($ExpectedRoot).TrimEnd([char[]]@('\','/'))
+    if([IO.Path]::GetFullPath($Receipt.root) -ne $root){throw 'Runtime receipt belongs to another installation.'}
+    $files=@(Get-ChildItem -LiteralPath $root -Recurse -File)
+    if(!$Receipt.files.Count -or $files.Count -ne $Receipt.files.Count){throw 'Runtime file inventory changed. Run setup again.'}
+    $seen=@{}
+    foreach($entry in $Receipt.files){
+        $path=[IO.Path]::GetFullPath((Join-Path $root $entry.relative))
+        if(!$path.StartsWith($root+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase) -or $seen.ContainsKey($path)){throw 'Runtime receipt contains an invalid path.'}
+        $seen[$path]=$true
+        if((Get-FileHash -LiteralPath $path).Hash -ne $entry.sha256){throw 'Runtime content changed. Run setup again.'}
+    }
+    foreach($relative in @('supervisor/DynamicRevitSandboxSupervisor.exe','worker/DynamicRevitWorker.exe')){
+        if(!(Test-Path -LiteralPath (Join-Path $root $relative))){throw 'Generated-code runtime is incomplete. Run setup again.'}
+    }
 }

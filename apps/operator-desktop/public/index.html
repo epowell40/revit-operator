@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Operator Desktop</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/conversation.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <dialog id="taskDrawer" class="taskDrawer" aria-labelledby="taskDrawerHeading">
+        <div class="taskDrawerHeader"><h2 id="taskDrawerHeading">Task history</h2><button id="closeTasksButton" type="button" aria-label="Close tasks">×</button></div>
+        <button id="taskNewChatButton" type="button">＋ New chat</button>
+        <label class="taskSearchLabel" for="taskSearch">Search tasks</label>
+        <input id="taskSearch" type="search" placeholder="Find previous work…" autocomplete="off" maxlength="180" />
+        <div id="taskList"></div>
+      </dialog>
+      <header class="top">
+        <div class="bar">
+          <div class="title">
+            <div class="brandMark" aria-hidden="true"></div>
+            <div class="titleCopy">
+              <h1 class="titleName">Operator</h1>
+              <p class="titleMeta">BIMTools</p>
+            </div>
+          </div>
+
+          <div class="controls">
+            <div class="controlRow controlRowPrimary productControls">
+              <div id="statusPill" class="statusPill tone-neutral" role="status" aria-live="polite" aria-atomic="true">
+                <span id="statusText">Connecting...</span>
+                <span class="statusDots" aria-hidden="true"><span></span><span></span><span></span></span>
+              </div>
+              <button id="tasksButton" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="taskDrawer" title="Show or hide task history">Tasks</button>
+              <button id="newSessionButton" type="button">New Chat</button>
+              <button id="workDetailsButton" type="button" aria-controls="workDetails" aria-expanded="false">Details</button>
+              <button id="stopButton" class="stopButton" type="button">Stop</button>
+              <details id="advancedPanel" class="advancedPanel">
+                <summary>Settings</summary>
+                <div class="advancedPanelBody">
+                  <div class="settingsAccount">
+                    <button id="authSignInButton" type="button">Account</button>
+                    <span id="runtimeProfileBadge" class="badge capabilityBadge tone-neutral">Checking connection</span>
+                  </div>
+                  <div class="controlRow controlRowPolicies speedControls">
+                    <label class="speedControl" title="The model requested for your next message. Running tasks keep their existing model.">
+                      <span>Model</span>
+                      <select id="agentModel">
+                        <option value="gpt-5.6-sol" selected>GPT-5.6 Sol</option>
+                        <option value="gpt-6.1-sol">GPT-6.1 Sol</option>
+                        <option value="gpt-6.1-terra">GPT-6.1 Terra</option>
+                        <option value="gpt-6-luna">GPT-6 Luna</option>
+                        <option value="gpt-6-astra">GPT-6 Astra</option>
+                        <option value="gpt-5.6-terra">GPT-5.6 Terra</option>
+                        <option value="gpt-5.6-luna">GPT-5.6 Luna</option>
+                      </select>
+                    </label>
+                    <label class="speedControl" title="Higher effort allows more thinking and can take longer.">
+                      <span>Thinking effort</span>
+                      <select id="agentReasoning">
+                        <option value="none">None</option>
+                        <option value="low">Low</option>
+                        <option value="medium" selected>Balanced</option>
+                        <option value="high">High</option>
+                        <option value="xhigh">Very high</option>
+                        <option value="max">Maximum</option>
+                      </select>
+                    </label>
+                  </div>
+                  <p class="settingsHint">Model settings apply to your next request.</p>
+                  <label class="settingsToggle" title="Show intermediate construction in Revit. This may take a little longer.">
+                    <input id="showWork" type="checkbox" />
+                    <span>Show work in Revit</span>
+                  </label>
+                  <label class="speedControl microphoneSetting">
+                    <span>Microphone</span>
+                    <select id="micDeviceSelect" aria-label="Microphone input"><option value="">Default microphone</option></select>
+                  </label>
+                  <span id="micLevelText" class="micLevelText"></span>
+                  <details id="troubleshootingPanel" class="troubleshootingPanel">
+                    <summary>Advanced &amp; troubleshooting</summary>
+                    <p id="runtimeProfileSummary" class="advancedSummary">Checking service connection.</p>
+                    <span id="backendText" class="backendText"></span>
+                    <div class="controlRow controlRowPolicies diagnosticsRow">
+                      <span id="sessionBadge" class="badge tone-neutral">No session</span>
+                      <span id="authBadge" class="badge tone-neutral">Checking sign-in</span>
+                      <span id="environmentBadge" class="badge tone-neutral">Environment unknown</span>
+                      <span id="writeGrantBadge" class="badge tone-neutral">Checking model access</span>
+                      <span id="computerBadge" class="badge tone-warning">Screen control unavailable</span>
+                      <span id="shellBadge" class="badge tone-warning">Shell off</span>
+                      <span id="inputBadge" class="badge tone-warning">Input off</span>
+                    </div>
+                    <label class="speedControl writeGrantControl" title="Limit model changes for this session. This does not change your account permissions.">
+                      <span>Model changes</span>
+                      <select id="writeGrantMode" aria-label="Model changes">
+                        <option value="off">Read only</option>
+                        <option value="once">Allow one change</option>
+                        <option value="session" selected>Allow for this session</option>
+                        <option value="yolo">Unrestricted (testing)</option>
+                      </select>
+                    </label>
+                    <button id="refreshScreenButton" type="button">Refresh screenshot</button>
+                  <section class="environmentPane" aria-labelledby="environmentHeading">
+                    <div class="environmentPaneHeader">
+                      <h2 id="environmentHeading" class="paneTitle paneTitleSmall">Environment diagnostics</h2>
+                      <div class="environmentActions">
+                        <button id="environmentRefreshButton" type="button">Refresh</button>
+                        <button id="demoReadinessButton" type="button">Check</button>
+                        <button id="environmentDetailsToggle" type="button" aria-expanded="false">Details</button>
+                      </div>
+                    </div>
+                    <p id="environmentSummary" class="advancedSummary"></p>
+                    <div id="environmentDetailsBody" class="environmentDetailsBody" hidden></div>
+                    <div class="environmentActions environmentActionsBottom" hidden>
+                      <button id="copyDiagnosticsButton" type="button">Copy diagnostics</button>
+                      <button id="clearEnvironmentButton" type="button">Rebuild environment</button>
+                    </div>
+                  </section>
+                  </details>
+                  <div id="feedbackBar" class="feedbackBar">
+                    <label class="fbTitle" for="fbNote">How did that task go?</label>
+                    <div class="fbBtns"><button id="fbWorked" type="button">Worked</button><button id="fbPartial" type="button">Partial</button><button id="fbFailed" type="button">Failed</button></div>
+                    <input id="fbNote" type="text" placeholder="Optional feedback" />
+                  </div>
+                </div>
+              </details>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main class="main">
+        <section class="left">
+          <div class="chatPane">
+            <section id="assignmentCompact" class="assignmentCompact" aria-label="Active assignment" hidden>
+              <div class="assignmentCompactCopy">
+                <span id="assignmentCompactStatus" class="assignmentStatus tone-neutral">Active</span>
+                <strong id="assignmentCompactTitle">Assignment</strong>
+                <span id="assignmentCompactStep"></span>
+              </div>
+              <button id="taskPauseButton" type="button" hidden>Pause</button>
+              <button id="taskResumeButton" type="button" hidden>Resume</button>
+              <button id="assignmentCompactToggle" type="button" aria-controls="workDetails" aria-expanded="false">Details</button>
+            </section>
+            <div id="chatScroll" class="paneScroll">
+              <div class="paneIntro">
+                <p class="paneKicker">Conversation</p>
+              </div>
+
+              <section id="sessionStart" class="sessionStart" aria-label="New chat and saved work"></section>
+              <div id="messages" class="messages"></div>
+              <section id="taskActivity" class="taskActivity" aria-label="Live task activity" hidden></section>
+            </div>
+
+            <section id="assignmentInputs" class="taskQuestions" aria-label="Task questions" hidden></section>
+            <form id="chatForm" class="composer">
+              <div id="attachStrip" class="attachStrip"></div>
+              <input id="attachInput" class="attachInput" type="file" multiple />
+              <textarea
+                id="promptInput"
+                rows="2"
+                aria-label="Message Operator"
+                placeholder="Ask a question or attach a redline…"
+              ></textarea>
+              <div class="composerFooter">
+                <div class="composerBtns">
+                  <button id="recStartButton" class="iconButton" type="button" title="Start dictation" aria-label="Start dictation">
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                      <path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3Z" />
+                      <path d="M19 11a7 7 0 0 1-14 0" />
+                      <path d="M12 18v4" />
+                      <path d="M8 22h8" />
+                    </svg>
+                  </button>
+                  <button id="recStopButton" class="iconButton" type="button" title="Stop dictation" aria-label="Stop dictation" disabled>
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                      <rect x="7" y="7" width="10" height="10" rx="1.5" />
+                    </svg>
+                  </button>
+                  <button id="attachButton" type="button">Attach</button>
+                  <button id="sendButton" type="submit">Send</button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </section>
+
+        <aside id="workDetails" class="right" aria-label="Work details" hidden>
+          <div class="detailsHeader"><h2>Work details</h2><button id="closeWorkDetails" type="button" aria-label="Close work details">Close</button></div>
+          <section id="assignmentPane" class="assignmentPane" aria-labelledby="assignmentHeading">
+            <div class="paneHeader">
+              <div>
+                <p id="assignmentKicker" class="paneKicker">Active assignment</p>
+                <h2 id="assignmentHeading" class="paneTitle paneTitleSmall" tabindex="-1">Ready for work</h2>
+              </div>
+              <span id="assignmentStatus" class="assignmentStatus tone-neutral">Idle</span>
+            </div>
+            <div id="goalSummary" class="goalSummary" role="status" aria-live="polite" aria-atomic="true">
+              No active assignment. Ask Operator to do something in Revit.
+            </div>
+            <div id="assignmentContext" class="assignmentContext" role="status" aria-live="polite"></div>
+            <div class="assignmentProgress">
+              <div class="assignmentProgressHeader">
+                <span>Progress</span>
+                <span id="assignmentProgressText">No plan yet</span>
+              </div>
+              <div id="assignmentProgressBar" class="runProgressBar" role="progressbar" aria-label="Assignment progress" aria-valuemin="0" aria-valuemax="100" aria-valuetext="No plan yet">
+                <div id="assignmentProgressFill" class="runProgressFill"></div>
+              </div>
+            </div>
+            <div id="assignmentBlocker" class="assignmentBlocker" role="alert" hidden></div>
+            <section id="workReturn" class="workReturn" aria-label="Work return" aria-live="polite" hidden>
+              <div id="workReturnContent"></div>
+            </section>
+            <section id="verifiedWorkPacket" class="verifiedWorkPacket" aria-label="Verified work packet" aria-live="polite" hidden>
+              <div id="verifiedWorkPacketContent"></div>
+            </section>
+            <section id="assignmentPlan" class="assignmentPlan" aria-labelledby="assignmentPlanHeading" hidden>
+              <h3 id="assignmentPlanHeading">Plan</h3>
+              <ol id="assignmentPlanList" class="assignmentPlanList"></ol>
+            </section>
+            <details id="assignmentAssumptions" class="assignmentDetails" hidden>
+              <summary>Assumptions and decisions</summary>
+              <ul id="assignmentAssumptionList"></ul>
+            </details>
+            <div class="goalControls" aria-label="Assignment controls">
+              <button id="goalPauseButton" type="button">Pause</button>
+              <button id="goalResumeButton" type="button">Resume</button>
+              <button id="goalRecoverButton" type="button" hidden>Recover results</button>
+              <button id="goalAuditButton" type="button">Verify</button>
+              <button id="goalCancelButton" type="button">Cancel</button>
+            </div>
+            <details class="assignmentDetails assignmentHistoryDetails">
+              <summary>Assignment history</summary>
+              <button id="goalReturnCurrentButton" class="visuallySecondary" type="button" hidden>Return to current assignment</button>
+              <button id="goalOpenSavedTaskButton" class="visuallySecondary" type="button" hidden>Open this saved task</button>
+              <div id="goalList" class="goalList" aria-label="Recent assignments"></div>
+              <div id="goalLog" class="goalLog" aria-label="Assignment evidence and activity"></div>
+            </details>
+            <details class="assignmentDetails newAssignmentDetails">
+              <summary>Create a structured assignment</summary>
+              <button id="goalNewButton" class="visuallySecondary" type="button">Start form</button>
+              <form id="goalForm" class="goalForm">
+                <label>Title<input id="goalTitleInput" required /></label>
+                <label>Objective<textarea id="goalObjectiveInput" rows="3" required></textarea></label>
+                <label>Acceptance criteria<textarea id="goalCriteriaInput" rows="3" placeholder="One criterion per line" required></textarea></label>
+                <label>Out of scope<textarea id="goalNonGoalsInput" rows="2" placeholder="Optional, one item per line"></textarea></label>
+                <button id="goalCreateButton" type="submit">Create assignment</button>
+              </form>
+            </details>
+            <section class="approvalPane" aria-labelledby="approvalHeading">
+              <div class="sectionHeader">
+                <h3 id="approvalHeading">Changes and approvals</h3>
+                <span>Actions remain Revit-authorized</span>
+              </div>
+              <div id="batchJobs" class="batchJobs" role="status" aria-live="polite" aria-atomic="false"></div>
+            </section>
+          </section>
+
+          <section class="progressPane" aria-labelledby="activityHeading">
+            <div class="paneHeader">
+              <p class="paneKicker">Current step</p>
+              <h2 id="activityHeading" class="paneTitle paneTitleSmall">Activity</h2>
+            </div>
+            <div id="runSummary" class="runSummary" role="status" aria-live="polite" aria-atomic="true"></div>
+            <div id="runProgressBar" class="runProgressBar" role="progressbar" aria-label="Current operation progress" aria-valuemin="0" aria-valuemax="100" aria-valuetext="Idle">
+              <div id="runProgressFill" class="runProgressFill"></div>
+            </div>
+            <div id="runProgressMeta" class="runProgressMeta"></div>
+          </section>
+
+          <details id="evidenceDetails" class="evidencePane">
+            <summary>
+              <span>
+                <span class="paneKicker">Evidence</span>
+                <strong>What Operator did and observed</strong>
+              </span>
+              <span class="evidenceHint">Screenshots, receipts, and activity</span>
+            </summary>
+            <div class="evidenceBody">
+              <section class="capabilityEvidence" aria-labelledby="capabilityEvidenceHeading">
+                <h3 id="capabilityEvidenceHeading">Capability state</h3>
+                <div id="certifiedReadPanel" class="certifiedReadPanel tone-neutral" role="region" aria-labelledby="certifiedReadStatusLabel">
+                  <div id="certifiedReadAvailability" class="certifiedReadAvailability" role="status" aria-live="polite" aria-atomic="true">
+                    <div class="certifiedReadHeader">
+                      <strong id="certifiedReadStatusLabel">Certified reads unknown</strong>
+                      <span id="certifiedReadWritesCopy" class="certifiedReadWritesCopy" hidden></span>
+                    </div>
+                    <p id="certifiedReadStatusSummary" class="certifiedReadSummary">Certified read availability has not been reported.</p>
+                  </div>
+                  <div id="certifiedReadLifecycle" class="certifiedReadLifecycle tone-neutral" role="status" aria-live="polite" aria-atomic="true" aria-busy="false" hidden>
+                    <strong id="certifiedReadLifecycleLabel"></strong>
+                    <span id="certifiedReadLifecycleSummary"></span>
+                  </div>
+                </div>
+              </section>
+              <section class="desktopCard" aria-labelledby="desktopCaptureHeading">
+                <div class="paneHeader">
+                  <h3 id="desktopCaptureHeading" class="paneTitle paneTitleSmall">Latest workstation capture</h3>
+                </div>
+                <div id="screenMeta" class="screenMeta">Loading desktop capture…</div>
+                <button id="screenFrame" class="screenFrame" type="button" aria-label="Open latest desktop capture">
+                  <img id="screenImage" alt="Latest Operator workstation capture" />
+                </button>
+              </section>
+              <section class="actionsPane" aria-labelledby="recentEventsHeading">
+                <div class="paneHeader">
+                  <h3 id="recentEventsHeading" class="paneTitle paneTitleSmall">Recent activity</h3>
+                </div>
+                <div id="events" class="events" role="log" aria-live="polite" aria-relevant="additions text"></div>
+              </section>
+              <section class="artifactsPane" aria-labelledby="artifactsHeading">
+                <div class="paneHeader">
+                  <h3 id="artifactsHeading" class="paneTitle paneTitleSmall">Artifacts</h3>
+                </div>
+                <div id="artifacts" class="artifacts"></div>
+                <pre id="artifactPreview" class="artifactPreview" hidden></pre>
+              </section>
+            </div>
+          </details>
+        </aside>
+      </main>
+    </div>
+
+    <dialog id="screenDialog" class="screenDialog">
+      <form method="dialog" class="screenDialogShell">
+        <div class="screenDialogHeader">
+          <div>
+            <p class="paneKicker">Desktop View</p>
+            <h2 class="paneTitle paneTitleSmall">Expanded workstation capture</h2>
+          </div>
+          <button id="closeScreenDialogButton" type="submit">Close</button>
+        </div>
+        <div class="screenDialogBody">
+          <img id="screenDialogImage" alt="Expanded desktop screenshot" />
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="authDialog" class="authDialog">
+      <form id="authForm" class="authDialogShell">
+        <div class="authDialogHeader">
+          <div>
+            <p class="paneKicker">BIMTools Login</p>
+            <h2 class="paneTitle paneTitleSmall">Sign in to BIMTools</h2>
+            <p class="paneNote compactPaneNote">Use the same credentials as the Revit add-in. This stores the shared local auth cache so either UI can bootstrap the other.</p>
+          </div>
+          <button id="authCancelButton" type="button">Close</button>
+        </div>
+        <label class="authField">
+          <span>Email</span>
+          <input id="authEmailInput" type="email" autocomplete="username" placeholder="you@example.com" required />
+        </label>
+        <label class="authField">
+          <span>Password</span>
+          <input id="authPasswordInput" type="password" autocomplete="current-password" placeholder="Password" required />
+        </label>
+        <p id="authStatusSummary" class="authStatusSummary"></p>
+        <p id="authErrorText" class="authErrorText" hidden></p>
+        <div class="authDialogActions">
+          <button id="authLogoutButton" type="button">Sign Out</button>
+          <button id="authSubmitButton" type="submit">Sign In</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,22 @@
+import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs/promises';import os from 'node:os';import path from 'node:path';import http from 'node:http';import {once} from 'node:events';
+test('actual standalone server presents the approved UI and local status, rejects login and foreign configuration',async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'operator-public-ui-'));
+ const names=['OPERATOR_DESKTOP_NO_LISTEN','OPERATOR_WORKSPACE_ROOT','OPERATOR_CLIENT_CONFIG_PATH','OPERATOR_BACKEND_URL','OPERATOR_TOKEN','OPERATOR_BEARER_TOKEN'];
+ const before=Object.fromEntries(names.map(n=>[n,process.env[n]]));
+ t.after(async()=>{for(const n of names){if(before[n]===undefined)delete process.env[n];else process.env[n]=before[n];}await fs.rm(root,{recursive:true,force:true});});
+ const backend=http.createServer((req,res)=>{assert.equal(req.headers['x-operator-token'],'synthetic-local-token');res.setHeader('content-type','application/json');res.end(JSON.stringify({ok:true}));});
+ backend.listen(0,'127.0.0.1');await once(backend,'listening');t.after(()=>new Promise(r=>backend.close(r)));
+ process.env.OPERATOR_DESKTOP_NO_LISTEN='1';process.env.OPERATOR_WORKSPACE_ROOT=root;
+ process.env.OPERATOR_CLIENT_CONFIG_PATH=path.join(root,'client.json');process.env.OPERATOR_BACKEND_URL=`http://127.0.0.1:${backend.address().port}`;
+ process.env.OPERATOR_TOKEN='synthetic-local-token';delete process.env.OPERATOR_BEARER_TOKEN;
+ await fs.writeFile(process.env.OPERATOR_CLIENT_CONFIG_PATH,JSON.stringify({auth_mode:'shared_token'}));
+ const {app}=await import('../server.js');const server=app.listen(0,'127.0.0.1');await once(server,'listening');t.after(()=>new Promise(r=>server.close(r)));
+ const base=`http://127.0.0.1:${server.address().port}`;
+ const page=await (await fetch(base)).text();assert.match(page,/id="taskDrawer"/);assert.match(page,/id="newSessionButton"/);
+ const status=await(await fetch(base+'/api/auth/status')).json();assert.equal(status.signInRequired,false);assert.equal(status.authMode,'shared_token');assert.equal(status.authStoreExists,false);
+ const login=await fetch(base+'/api/auth/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email:'nobody@example.invalid',password:'fixture'})});assert.equal(login.status,400);assert.match(await login.text(),/No account sign-in/);
+ assert.equal((await fetch(base+'/api/backend/health')).status,200);
+ process.env.OPERATOR_BACKEND_URL='https://foreign.invalid';
+ const refused=await fetch(base+'/api/backend/health');assert.equal(refused.status,502);assert.match(await refused.text(),/Standalone Operator requires/);
+ const crossOrigin=await fetch(base+'/api/session/new',{method:'POST',headers:{Origin:'https://foreign.invalid','content-type':'application/json'},body:'{}'});assert.equal(crossOrigin.status,403);
+});

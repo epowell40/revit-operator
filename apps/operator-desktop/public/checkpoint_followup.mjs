@@ -1,0 +1,93 @@
+const bindingKeys = ["assignment_id", "session_id", "run_id", "generation"];
+
+/** Display eligibility only. A button must not promise a renewal unsupported by
+ * the task's frozen policy. The authenticated endpoint still owns admission. */
+export function checkpointResourceRenewalAvailable(s, supportsProductRenewal = false) {
+  const p=s?.spec?.execution_policy,b=s?.current_binding;
+  const product=supportsProductRenewal===true && p?.mode==='single_actor_review_v1'
+    && p.selected_by==='trusted_runtime_host' && typeof p.principal_id==='string' && p.principal_id.length>0
+    && p.principal_id===b?.principal_id && p.principal_id===s.spec.binding?.principal_id
+    && p.session_id===b?.session_id && p.document_fingerprint===b?.document_fingerprint
+    && Boolean(p.document_fingerprint) && p.ready_work_handoff==='continue_ready_work_v1'
+    && bindingKeys.every(key=>b?.[key]!=null && b[key]===s.spec.binding?.[key])
+    && b.document_fingerprint===s.spec.binding?.document_fingerprint;
+  return Boolean(s && !s.terminal && s.quiescent && !s.provider_usage_hold
+    && s.execution_control?.state !== 'paused'
+    && s.spec?.requested_effect === 'apply'
+    && (p?.mode === 'local_advisory_v1' && p.progress_allowance || product)
+    && s.completion_proposal?.verified === false
+    && typeof s.completion_proposal.review_id === 'string' && s.completion_proposal.review_id
+    && s.pending_review_ids?.length === 1 && s.pending_review_ids[0] === s.completion_proposal.review_id
+    && !s.unresolved_unknown_operation_ids?.length && !s.pending_input_variable_ids?.length
+    && !s.in_flight_operation_ids?.length && !s.in_flight_provider_call_ids?.length);
+}
+
+/** User-facing preparation only; the authenticated backend rechecks custody,
+ * resource bounds and all execution fences before journaling an authorization. */
+export function checkpointResourceRenewalContext(publication,goal) {
+  const context=checkpointDirectionContext(publication,goal),s=publication.snapshot;
+  if(!(s.spec.execution_policy?.mode==='local_advisory_v1' && s.spec.execution_policy.progress_allowance)
+      && !(s.spec.execution_policy?.mode==='single_actor_review_v1' && publication.supports_explicit_resource_renewal_v1===true))
+    throw new Error('This task does not support an additional allowance. Its saved work and prior usage are retained.');
+  if(!context.checkpoint||context.paused||!checkpointResourceRenewalAvailable(s,publication.supports_explicit_resource_renewal_v1))
+    throw new Error('Settle the current apply checkpoint before explicitly renewing its allowance.');
+  return {...context.checkpoint,resource_renewal:{provider_calls:64,total_tokens:16_000_000}};
+}
+
+/** Read fences from the authenticated canonical publication, never a display badge.
+ * This is a UI consistency check; the steering endpoint owns release eligibility. */
+export function checkpointDirectionContext(publication, goal) {
+  const snapshot = publication?.snapshot;
+  const binding = goal?._bindingV2;
+  const document = goal?._projection?.target?.document_fingerprint;
+  if (publication?.schema !== "revit-operator.assignment-kernel-publication/v2"
+      || publication.assignment_id !== binding?.assignment_id
+      || !Number.isSafeInteger(publication.assignment_version)
+      || !Number.isSafeInteger(goal?._assignmentVersion)
+      || publication.assignment_version < goal._assignmentVersion
+      || snapshot?.assignment_version !== publication.assignment_version
+      || !bindingKeys.every(key => binding?.[key] != null
+        && snapshot?.current_binding?.[key] === binding[key]
+        && snapshot?.spec?.binding?.[key] === binding[key])
+      || !document || snapshot.current_binding.document_fingerprint !== document
+      || snapshot.spec.binding.document_fingerprint !== document
+      || (snapshot.provider_usage_hold?.hold_id ?? null) !== (goal._providerUsageHold?.hold_id ?? null)
+      || (snapshot.execution_control?.command_id ?? null) !== (goal._executionControl?.command_id ?? null)
+      || (snapshot.execution_control?.state ?? "running") !== (goal._executionControl?.state ?? "running")) {
+    throw new Error("The task or its controls changed. Refresh the task before sending this direction. Your draft is retained.");
+  }
+  const paused = snapshot.execution_control?.state === "paused";
+  const proposal = snapshot.completion_proposal;
+  if (!proposal) return { checkpoint: null, paused };
+  const policy=snapshot.spec.execution_policy;
+  const reviewPolicy=policy?.mode==='local_advisory_v1'
+    ||policy?.mode==='single_actor_review_v1'&&policy.selected_by==='trusted_runtime_host'
+      &&typeof policy.principal_id==='string'&&policy.principal_id.length>0
+      &&policy.principal_id===snapshot.spec.binding.principal_id&&policy.principal_id===snapshot.current_binding.principal_id
+      &&policy.session_id===snapshot.current_binding.session_id&&policy.document_fingerprint===document;
+  if (snapshot.terminal || !reviewPolicy
+      || proposal.verified !== false || typeof proposal.review_id !== "string" || !proposal.review_id
+      || snapshot.pending_review_ids?.length !== 1 || snapshot.pending_review_ids[0] !== proposal.review_id) {
+    throw new Error("This checkpoint cannot accept a follow-up yet. Your draft is retained.");
+  }
+  return { paused, checkpoint: {
+    review_id: proposal.review_id,
+    expected_control_command_id: snapshot.execution_control?.command_id ?? null,
+    document_fingerprint: document
+  } };
+}
+
+/** A saved receipt alone can be an old idempotent retry. Read the current task
+ * again before using its ordinary fenced Resume; an explicit Pause wins. */
+export function checkpointResumeReady(publication, goal, command) {
+  const context = checkpointDirectionContext(publication, goal);
+  const snapshot = publication.snapshot;
+  return !context.paused && !snapshot.provider_usage_hold && !context.checkpoint && !snapshot.terminal
+    && snapshot.outcome === "active" && snapshot.quiescent === true
+    && snapshot.pending_review_ids?.length === 0
+    && snapshot.pending_input_variable_ids?.length === 0
+    && snapshot.unresolved_unknown_operation_ids?.length === 0
+    && (snapshot.execution_control?.command_id ?? null) === command.checkpoint.expected_control_command_id
+    && snapshot.current_binding.document_fingerprint === command.checkpoint.document_fingerprint
+    && bindingKeys.every(key => snapshot.current_binding[key] === command[key]);
+}

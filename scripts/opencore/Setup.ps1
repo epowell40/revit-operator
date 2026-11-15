@@ -2,6 +2,7 @@
 param([ValidateSet(2023,2024,2025,2026,2027)][int]$RevitYear, [switch]$NoOpenSettings)
 . "$PSScriptRoot/Common.ps1"
 Assert-ClosedRevit
+if(Get-NetTCPConnection -State Listen -LocalPort 7007,3907 -ErrorAction SilentlyContinue){throw 'Stop Operator with Stop-OpenCore.cmd before setup. Existing processes were not changed.'}
 if (!$RevitYear) {
     $years = @(2023..2027 | Where-Object { Test-Path -LiteralPath (Join-Path $env:ProgramFiles "Autodesk/Revit $_/RevitAPI.dll") })
     if (!$years.Count) { throw 'Install a supported Autodesk Revit version (2023-2027) before setting up Operator.' }
@@ -36,18 +37,29 @@ foreach ($root in @($manifestDir,(Join-Path $env:ProgramData "Autodesk/Revit/Add
     }
 }
 New-Item -ItemType Directory -Force $OpenCoreState | Out-Null
-$acl=Get-Acl -LiteralPath $OpenCoreState
-$acl.SetAccessRuleProtection($true,$false)
 $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User
-$acl.SetAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl','ContainerInherit,ObjectInherit','None','Allow')))
-Set-Acl -LiteralPath $OpenCoreState -AclObject $acl
+$existingAcl=Get-Acl -LiteralPath $OpenCoreState
+$rules=@($existingAcl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]))
+$alreadyPrivate=$existingAcl.AreAccessRulesProtected -and $rules.Count -eq 1 -and
+    $rules[0].IdentityReference -eq $sid -and $rules[0].AccessControlType -eq 'Allow' -and
+    $rules[0].FileSystemRights -eq 'FullControl' -and $rules[0].InheritanceFlags -eq 'ContainerInherit, ObjectInherit'
+if(!$alreadyPrivate){
+    $acl=New-Object Security.AccessControl.DirectorySecurity
+    $acl.SetAccessRuleProtection($true,$false)
+    $acl.SetAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl','ContainerInherit,ObjectInherit','None','Allow')))
+    Set-Acl -LiteralPath $OpenCoreState -AclObject $acl
+}
 Write-PrivateSettings
 $oldPath = $env:PATH
 try {
     $env:PATH = "$(Split-Path $node);$oldPath"
-    foreach ($name in @('mcp-server','operator-backend')) {
+    foreach ($name in @('mcp-server','operator-backend','operator-desktop')) {
         Push-Location (Join-Path $OpenCoreRoot "apps/$name")
-        try { Invoke-Checked $npm @('ci','--no-audit','--no-fund'); Invoke-Checked $npm @('run','build') } finally { Pop-Location }
+        try {
+            Invoke-Checked $npm @('ci','--no-audit','--no-fund')
+            if($name -ne 'operator-desktop'){Invoke-Checked $npm @('run','build')}
+            else { Invoke-Checked $node @('--check','server.js') }
+        } finally { Pop-Location }
     }
     # Pin the supported CLI locally; never modify the user's global Codex installation.
     Invoke-Checked $npm @('install','--prefix',(Join-Path $OpenCoreState 'tools'),'--no-audit','--no-fund','--save-exact','@openai/codex@0.157.0')
@@ -62,10 +74,21 @@ try {
     Invoke-Checked $dotnet $buildArgs
     $dll = Join-Path (Split-Path $project) "bin/Release/$framework/win-x64/RevitBridge.dll"
     if (!(Test-Path -LiteralPath $dll)) { throw 'Build finished without the expected RevitBridge.dll; no registration changed.' }
+    # Build the sandbox beside this add-in; never borrow another installation.
+    $dynamicRoot=Join-Path (Split-Path $dll) 'dynamic-runtime'
+    foreach($part in @(@{project='DynamicRevitSandboxSupervisor';folder='supervisor'},@{project='DynamicRevitWorker';folder='worker'})) {
+        $runtimeProject=Join-Path $OpenCoreRoot ("apps/dynamic-revit-runtime/{0}/{0}.csproj" -f $part.project)
+        Invoke-Checked $dotnet @('publish',$runtimeProject,'-c','Release','-r','win-x64','--self-contained','true','-p:PublishSingleFile=false','-o',(Join-Path $dynamicRoot $part.folder),'--nologo','--verbosity:minimal')
+    }
+    $runtimeFiles=@(Get-ChildItem -LiteralPath $dynamicRoot -File -Recurse | ForEach-Object {
+        @{relative=$_.FullName.Substring($dynamicRoot.Length+1);sha256=(Get-FileHash -LiteralPath $_.FullName).Hash}
+    })
+    Write-OpenCoreText (Join-Path $OpenCoreState 'dynamic-runtime.json') (@{root=$dynamicRoot;files=$runtimeFiles} | ConvertTo-Json -Depth 5)
     $receiptPath = Join-Path $OpenCoreState 'install.json'
     $previous = if (Test-Path -LiteralPath $receiptPath) { Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json } else { $null }
     if ($previous -and $previous.revitYear -ne $RevitYear) { throw 'Restore the prior Open Core registration before selecting another Revit year.' }
     Assert-ClosedRevit
+if(Get-NetTCPConnection -State Listen -LocalPort 7007,3907 -ErrorAction SilentlyContinue){throw 'Stop Operator with Stop-OpenCore.cmd before setup. Existing processes were not changed.'}
     New-Item -ItemType Directory -Force $manifestDir | Out-Null
     $before = if (Test-Path -LiteralPath $manifest) { [Convert]::ToBase64String([IO.File]::ReadAllBytes($manifest)) } else { $null }
     if ($previous -and (Get-FileHash -LiteralPath $manifest).Hash -ne $previous.manifestSha256) { throw 'The registration changed outside this setup. Restore/review it before reinstalling.' }
