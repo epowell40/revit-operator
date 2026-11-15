@@ -1,6 +1,7 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "feedback_task_binding.test.ts",
     "openai_data_policy.test.ts",
     "desktop_provider_policy.test.ts",
     "improvement_redact.test.ts",
@@ -434,6 +435,7 @@
     "lib/evidenceTextRangeSchema.test.ts"
   ],
   "desktop_tests": [
+    "test/task_feedback_ui.test.js",
     "test/saved_computer_owner.test.js",
     "test/cad_attachment.test.js",
     "test/server_smoke.test.js",
@@ -623,6 +625,13 @@
     "NativeCapturedFailureObservationTests"
   ],
   "failure_families": [
+    {
+      "id": "feedback_selection_binding_20261115",
+      "coverage": [
+        "backend:feedback_task_binding.test.ts",
+        "desktop:test/task_feedback_ui.test.js"
+      ]
+    },
     {
       "id": "lookup_failure_lost_in_canonical_presentation_20261113",
       "coverage": [
