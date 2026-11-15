@@ -381,7 +381,9 @@
     "topology_routing_scope.test.ts",
     "aec_task_intent.test.ts",
     "desktop_native_tool_exposure.test.ts",
-    "desktop_native_contract_delivery.test.ts"
+    "desktop_native_contract_delivery.test.ts",
+    "codex_explicit_auth.test.ts",
+    "codex_config.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -5558,6 +5560,14 @@
       "coverage": [
         "dotnet:NativeCapturedFailureObservationTests",
         "mcp:lib/dynamicNativeProgram.test.ts"
+      ]
+    },
+    {
+      "id": "opencore-explicit-api-key-and-first-run-agent-route",
+      "coverage": [
+        "backend:codex_explicit_auth.test.ts",
+        "backend:codex_config.test.ts",
+        "javascript:app/revit-bridge-addin/RevitBridge.Common.Tests/OperatorUnifiedAgentSettingsUi.test.mjs"
       ]
     }
   ],

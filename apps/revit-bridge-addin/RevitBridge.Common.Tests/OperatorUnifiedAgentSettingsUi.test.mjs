@@ -17,7 +17,7 @@ function boot(storage) {
     set value(value) { this.current = options.includes(value) ? value : ''; },
     addEventListener(_event, handler) { this.change = handler; } };
   const control = () => ({ value: '', checked: false, addEventListener() {} });
-  const context = { agentModelEl, reasoningSel: control(), speedModeEl: control(), speedDietEl: control(), post() {},
+  const context = { agentModelEl, reasoningSel: control(), post() {},
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) } };
   const settings = runInNewContext(between('      function readBoolPref(', '      function setRunStatus(')
     + between('      if (reasoningSel) {\n        try { reasoningSel.value', "      sendBtn.addEventListener('click'")
@@ -38,8 +38,8 @@ test('native Settings preserves each offered model through change, reload, and t
     const payload = reloaded.settings();
     for (const key of ['agent_model', 'planner_model', 'executor_model']) assert.equal(payload[key], model, key);
     assert.equal(payload.agent_reasoning_effort, 'high');
-    assert.equal(payload.speed_mode, false);
-    assert.equal(payload.context_diet, false);
+    assert.equal(payload.speed_mode, true);
+    assert.equal(payload.context_diet, true);
     assert.equal(payload.split_planner_executor, false);
   }
 });
@@ -57,4 +57,21 @@ test('native Settings keeps Sol as the default and rejects unknown stored or sel
   page.model.value = 'unknown-model';
   page.model.change();
   assert.equal(storage.get('op.agentModel'), 'gpt-5.6-sol');
+});
+
+test('native pane removes cryptic switches and keeps optimized payload defaults', () => {
+ assert.doesNotMatch(source, /id=""speed(?:Mode|Diet)""/);
+ const value=boot(new Map()).settings();
+ assert.equal(value.speed_mode,true);assert.equal(value.context_diet,true);
+ assert.equal(value.include_screenshot_every_turn,false);
+});
+
+test('a new pane uses the configured agent, preserving an explicit legacy preference', () => {
+ for (const stored of [null, 'auto', 'direct']) {
+  const control={value:'',addEventListener(){}};
+  runInNewContext(between('      if (brainRouteSel) {', '      if (authLoginBtn) {'), {
+   brainRouteSel:control,readStringPref:(_key,fallback)=>stored??fallback,writeStringPref(){}
+  });
+  assert.equal(control.value,stored??'direct');
+ }
 });

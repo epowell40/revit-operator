@@ -1,41 +1,63 @@
-# Local Setup
+# Install Open Core on Windows
 
-This repository is in the public-core migration phase. The local/self-host source packages are not fully migrated yet, so these instructions describe the intended public setup and the configuration conventions that are already stable.
+Open Core runs on your own computer with your own OpenAI API key. It does not
+require a BIMTools account or use the BIMTools hosted backend. OpenAI bills API
+usage separately from any ChatGPT subscription.
 
-## Configuration
+## First setup
 
-Copy `.env.example` to `.env` on your machine and keep `.env` uncommitted.
+1. Install Autodesk Revit 2023–2027, a supported [Node.js LTS](https://nodejs.org/en/download)
+   (22.23.4+ or 24.22.1+), and the [.NET SDK](https://dotnet.microsoft.com/download)
+   (8 or later; 10 or later for Revit 2027). Install the SDK, not just the runtime.
+2. Download [the public source ZIP](https://github.com/epowell40/revit-operator/archive/refs/heads/main.zip)
+   and extract all files into a permanent, short path, for example `C:\RevitOperator`.
+   Do not run setup inside the ZIP or a temporary folder.
+3. Close Revit. Double-click **Setup-OpenCore.cmd**. Choose your Revit version if
+   prompted. Setup installs locked Node dependencies, a project-local supported
+   Codex runtime, and builds the add-in. The first build needs internet access
+   and can take several minutes. Administrator rights are not required.
+4. Notepad opens **OpenCore.settings.txt**. Replace `PASTE_YOUR_KEY_HERE` with your
+   OpenAI API key, save, and close it. This private file has one setting:
 
-Recommended local defaults:
+   ```text
+   OPENAI_API_KEY=PASTE_YOUR_KEY_HERE
+   ```
 
-```text
-REVIT_OPERATOR_MODE=local
-OPERATOR_API_BASE_URL=http://127.0.0.1:7007
-OPERATOR_HOSTED_ENABLED=false
-```
+5. Double-click **Start-OpenCore.cmd**. It starts the authenticated loopback-only
+   backend and launches Revit with the matching local configuration. If Revit asks
+   about the locally built RevitOperator add-in, review it and choose **Always Load**.
+6. Open a disposable model, then choose **RevitOperator → Operator** on the ribbon. Start with a read-only
+   request such as “What model and view are open?” before trying model changes.
 
-Optional local paths:
+Keep the extracted folder: the add-in runs from its build output. Do not move or
+delete it while installed. Your key is never passed as a command-line argument or
+printed by these scripts. Do not share the settings file or `.opencore` folder;
+the latter contains local task records and setup recovery information.
 
-```text
-OPERATOR_WORKSPACE_ROOT=%LOCALAPPDATA%\RevitOperator\Workspace
-OPERATOR_LOCAL_SKILLS_DIR=%LOCALAPPDATA%\RevitOperator\Skills
-```
+## Everyday use and recovery
 
-## Expected Components
+- Start with **Start-OpenCore.cmd**, so Revit and the backend share the same local
+  workspace and authentication. There is no BIMTools login in this mode.
+- Save your work and close Revit, then run **Stop-OpenCore.cmd**. It stops this
+  installation's backend, not an unrelated server occupying the port.
+- To return to a previous Operator package, close Revit, stop Open Core, and run
+  **Restore-Previous-Install.cmd**. Setup retains the previous add-in registration
+  and does not overwrite your hosted account configuration.
+- Retry a failed build by running setup again. Registration changes happen only
+  after the build succeeds. Setup stops rather than create duplicate registrations.
+- If setup reports a missing prerequisite, install the named component and retry.
+  For a particular version, run `Setup-OpenCore.cmd -RevitYear 2023`.
+- For startup errors, review `.opencore/backend.error.log`. Do not post your API
+  key or entire task history in a public issue.
 
-The public core is intended to include:
+## What is included
 
-- Revit add-in shell.
-- Local backend/server.
-- Operator UI.
-- Skill runtime.
-- Public sample skills.
-- Generic Revit API tool/action framework.
+This source distribution currently uses the **in-Revit pane**. The newer Desktop
+client and managed sign-in/update experience are distributed separately with the
+BIMTools workstation package; source setup does not silently download them.
+There is no prebuilt GitHub release installer at this checkpoint. Source setup
+needs the build prerequisites above; it is not a standalone binary installer.
 
-As each component is migrated, this file will gain the exact build and run commands for that package.
-
-## Current Status
-
-The public repo currently contains the open-core structure, license, configuration examples, security rules, and setup documentation. Production hosted functionality remains in BIMTools' private/commercial repo.
-
-Do not commit real `.env` files.
+For external coding agents without the Operator pane, see
+[External agent harness](EXTERNAL_AGENT_HARNESS.md). For server deployment, see
+[Self hosting](SELF_HOSTING.md).

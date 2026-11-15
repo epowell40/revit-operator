@@ -1,4 +1,6 @@
 .env
+.opencore/
+OpenCore.settings.txt
 .env.*
 !.env.example
 !.env.local.example

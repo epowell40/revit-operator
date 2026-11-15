@@ -1973,7 +1973,7 @@
     },
     {
       "path": "apps/operator-backend/src/codex/config.ts",
-      "sha256": "sha256:667273630aea5e900450a89ace951a6ff8beeaa1a2d795f5665a7529d7ad3a49"
+      "sha256": "sha256:d68d9af19ff779a6ac8284a5f26f4751bcb3ca09e8da72c9f429d041b63839ac"
     },
     {
       "path": "apps/operator-backend/src/codex/conversation_turn.ts",
@@ -5350,6 +5350,10 @@
     {
       "path": "apps/operator-backend/test/codex_conversation_turn.test.ts",
       "sha256": "sha256:ff583c52af3e44e1b550583ed8f776cc05988ccc8bd48839ef716e7279e14659"
+    },
+    {
+      "path": "apps/operator-backend/test/codex_explicit_auth.test.ts",
+      "sha256": "sha256:904c0024e9426d317cd37514914205ecafaea7a4874ca2814cff6d9bb5ca2f9a"
     },
     {
       "path": "apps/operator-backend/test/codex_instruction_binding.test.ts",
@@ -9365,7 +9369,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorUnifiedAgentSettingsUi.test.mjs",
-      "sha256": "sha256:0f355feade866978b649b8a3ad2838d4e947789f3c24c23bf6e18100940894b1"
+      "sha256": "sha256:d6be29d64dccd45859a202bc94c6db35b95751b1168fbe9278b0ade03668a3fe"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorViewImageContractTests.cs",
@@ -12406,7 +12410,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorWebUiHtml.cs",
-      "sha256": "sha256:dc15cd297c5ab9676752845ed9a27086e5371b8d3660a3b5df06b5d0d35f43d4"
+      "sha256": "sha256:2d4d624cc1bddde54ba43eb41b9649e8ef564a2518e5c459d5c81ad0c8605c1a"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/ShowOperatorPaneCommand.cs",
@@ -12641,7 +12645,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:dbfe1bd995d5d9c2b6095eda601eb05ae666dd1447ad865c394eccc62cd94b0c",
+  "inputs_hash": "sha256:ae9213e1b1be9aecd981c8f3a5ba56ff68511a7ae60a7c14bf73e2cf3d51f3d0",
   "result": {
     "passed": true,
     "checks": [

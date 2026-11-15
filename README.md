@@ -4,7 +4,15 @@ This repository contains the open-source core of Revit Operator. BIMTools also m
 
 ## Local Mode
 
-Supported release targets are Revit 2023, 2024, and 2025 with Node.js 20+ for machines running the backend or MCP server.
+For Windows/Revit 2023–2027, download and extract this repository, then double-click
+**Setup-OpenCore.cmd**. It builds and registers the public add-in, opens
+**OpenCore.settings.txt** for your OpenAI API key, and provides **Start-OpenCore.cmd**
+for everyday use. Node.js 22.23.4+ (or supported newer LTS) and the .NET SDK are
+prerequisites. See [the step-by-step installation guide](docs/LOCAL_SETUP.md).
+
+The public source distribution uses the in-Revit pane. The newer Desktop client
+is part of the separately distributed BIMTools workstation package. No BIMTools
+account is required for Open Core.
 
 Use local mode for development and self-host testing:
 
@@ -14,7 +22,9 @@ OPERATOR_API_BASE_URL=http://127.0.0.1:7007
 OPERATOR_HOSTED_ENABLED=false
 ```
 
-Copy `.env.example` to a local `.env` file and fill only local values. Do not commit real `.env` files.
+Setup configures local mode automatically. Developers can instead use
+`apps/operator-backend/.env.local`; a root `.env` is not loaded by the backend.
+Do not commit real `.env` files or `OpenCore.settings.txt`.
 
 See [docs/LOCAL_SETUP.md](docs/LOCAL_SETUP.md) for the current local setup notes and [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md) for self-hosting guidance.
 
