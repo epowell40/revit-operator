@@ -4,6 +4,8 @@ Open Core runs on your own computer with your own OpenAI API key. It does not
 require a BIMTools account or use the BIMTools hosted backend. OpenAI bills API
 usage separately from any ChatGPT subscription.
 
+[Watch the Open Core installation walkthrough](https://bimtools.com/revit-operator-open-core-install).
+
 ## First setup
 
 1. Install Autodesk Revit 2023–2027, a supported [Node.js LTS](https://nodejs.org/en/download)
