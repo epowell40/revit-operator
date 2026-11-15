@@ -169,14 +169,17 @@ test("work details open on request, expose their state, and return keyboard focu
   assert.equal(nodes.workDetailsButton.focused, true);
 });
 
-test("conversation defaults keep feedback and connection diagnostics inside Settings", async () => {
+test("conversation keeps feedback beside answers and connection diagnostics inside Settings", async () => {
   const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
   const settings = html.slice(html.indexOf('<details id="advancedPanel"'), html.indexOf('</header>'));
   assert.match(settings, /<summary>Settings<\/summary>/);
-  for (const id of ["backendText", "micDeviceSelect", "feedbackBar", "runtimeProfileBadge"]) assert.ok(settings.includes(`id="${id}"`), id);
+  for (const id of ["backendText", "micDeviceSelect", "runtimeProfileBadge"]) assert.ok(settings.includes(`id="${id}"`), id);
+  assert.doesNotMatch(settings, /id="feedbackBar"/);
   assert.match(html, /<aside id="workDetails"[^>]+ hidden>/);
   assert.equal([...html.matchAll(/id="promptInput"/g)].length, 1);
   const conversation = html.slice(html.indexOf('id="chatScroll"'), html.indexOf('<aside id="workDetails"'));
+  assert.match(conversation, /id="feedbackBar"/, "Task feedback stays visible beside the answer");
+  assert.equal([...html.matchAll(/id="feedbackBar"/g)].length, 1);
   assert.match(conversation, /id="assignmentInputs"/, "C27: required task questions must be visible without opening Work details");
   assert.equal([...html.matchAll(/id="assignmentInputs"/g)].length, 1);
   assert.match(source, /if \(!assistantMessage\.directContextAnswer\)/);
