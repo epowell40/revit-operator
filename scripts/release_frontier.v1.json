@@ -5586,6 +5586,14 @@
         "desktop:test/standalone.test.mjs",
         "desktop:test/standalone-server.test.mjs"
       ]
+    },
+    {
+      "id": "standalone_csharp_runtime_missing_or_foreign_20261115",
+      "coverage": [
+        "desktop:test/standalone-launcher.test.mjs",
+        "mcp:lib/dynamicRuntimeInstallation.test.ts",
+        "mcp:lib/dynamicRevitProgramRunner.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
