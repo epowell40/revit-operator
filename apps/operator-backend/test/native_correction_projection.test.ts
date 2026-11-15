@@ -7,9 +7,24 @@ import {storeEvidence,retrieveEvidence} from '../src/evidence/evidence_store.js'
 import {modelEvidenceEnvelope} from '../src/evidence/model_context_budget.js';
 import {adaptMcpToolCallResultToDynamicResponse} from '../src/brains/codex_dynamic_result_adapter.js';
 import {boundDesktopNativeOutput} from '../src/assignments/desktop_native_output.js';
-import {projectNativeCorrectionTargets} from '../src/evidence/native_correction_projection.js';
+import {projectNativeCorrectionTargets,reduceNativeCorrectionPage} from '../src/evidence/native_correction_projection.js';
 
 const scope={session_id:'correction',assignment_id:'assignment',run_id:'run',attempt_id:'attempt',generation:1};
+test('batch-reduced correction page resumes at the first omitted native row with gaps and missing fields intact',()=>{
+ const old=process.env.OPERATOR_WORKSPACE_ROOT,root=fs.mkdtempSync(path.join(os.tmpdir(),'correction-repage-'));process.env.OPERATOR_WORKSPACE_ROOT=root;
+ try{
+  const payload=fixture();payload.result[0]!.boundingBox=null as any;payload.result[0]!.location=null as any;
+  const saved=storeEvidence({scope,source:'assignment_kernel_v2:revit_call_tool',trust_level:'authoritative_native',raw:payload},8192);
+  const original=JSON.stringify(saved.projection),next=reduceNativeCorrectionPage(saved.projection);
+  assert(next);const v=next.inline_payload;
+  assert.equal(v.rows[0].row_index,1);assert(v.rows[0].missing_fields.includes('typeId'));
+  const page=retrieveEvidence({scope,evidence_id:saved.ref.evidence_id,purpose:'Continue correction readback',max_bytes:6000,
+   item_range:{path:v.retrieval.path,start:v.retrieval.next_start,count:2,fields:v.retrieval.fields}});
+  assert.deepEqual((page.selection as any[])[0].values.location,payload.result[v.retrieval.next_start]!.location);
+  assert.equal(JSON.stringify(saved.projection),original);assert.equal(page.complete,false);
+  assert.equal(reduceNativeCorrectionPage({...next,inline_payload:{...v,rows:v.rows.slice(0,1),coverage:{...v.coverage,returned_rows:1}}}),null);
+ }finally{if(old===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=old;fs.rmSync(root,{recursive:true,force:true});}
+});
 function fixture(){
  const result=Array.from({length:80},(_,i)=>({id:i+100,found:true,uniqueId:'native-uid-'+i,className:'DetailLine',category:'Lines',name:'Detail Lines',
   boundingBox:{min:{x:i,y:0,z:0},max:{x:i+1,y:1,z:0}},location:{type:'curve',curveType:'Line',p0:{x:i,y:0,z:0},p1:{x:i+1,y:1,z:0}},

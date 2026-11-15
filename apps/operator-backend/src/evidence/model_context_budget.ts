@@ -1,5 +1,6 @@
 import type { EvidenceProjectionV1, EvidenceTelemetryEventV1 } from "./evidence_ref.js";
 import { appendEvidenceTelemetry } from "./evidence_store.js";
+import {reduceNativeCorrectionPage} from './native_correction_projection.js';
 
 export const MODEL_EVIDENCE_ENVELOPE_SCHEMA = "revit-operator.model-evidence-envelope.v1" as const;
 
@@ -342,6 +343,35 @@ export function prepareBoundedModelEvidenceInput(input: unknown, budget = getEvi
     }
     return {...row, output:blocks};
   });
+  // After lossless packing, share the remaining budget across optional native
+  // correction pages. Keep at least one complete spatial row per readback;
+  // paging restarts at the first omitted original row, never a guessed offset.
+  // Write receipts, controls, images and durable projections stay untouched.
+  for(let step=0;step<256;step++){
+    try{assertBoundedModelEvidencePayload(packed,budget);return packed;}
+    catch(error){if(!(error instanceof Error)||error.message!==`Projected evidence exceeds the ${budget.request_bytes}-byte model-request budget.`)throw error;}
+    let best:{row:any;index:number;envelope:any;projectionIndex:number;compact:any;size:number}|null=null;
+    for(const row of packed){
+      if(row?.type!=='function_call_output'||!Array.isArray(row.output))continue;
+      for(let i=0;i<row.output.length;i++){
+        const block=row.output[i];if(block?.type!=='input_text'||typeof block.text!=='string')continue;
+        let e:any;try{e=JSON.parse(block.text);}catch{continue;}
+        if(e?.schema!==MODEL_EVIDENCE_ENVELOPE_SCHEMA||e.omitted!==0
+          ||!Object.keys(e).every(k=>['schema','evidence_projections','omitted','retrieval'].includes(k))
+          ||![canonicalRetrieval,shortRetrieval].includes(e.retrieval)||!Array.isArray(e.evidence_projections))continue;
+        e.evidence_projections.forEach((p:any,j:number)=>{
+          const compact=reduceNativeCorrectionPage(p),size=bytes(p);
+          if(compact&&bytes(compact)<size&&(!best||size>best.size))best={row,index:i,envelope:e,projectionIndex:j,compact,size};
+        });
+      }
+    }
+    if(!best)break;
+    const selected=best as {row:any;index:number;envelope:any;projectionIndex:number;compact:any};
+    selected.envelope.evidence_projections[selected.projectionIndex]=selected.compact;
+    // packed has fresh rows/arrays; the input and retained records are not edited.
+    selected.row.output=selected.row.output.slice();
+    selected.row.output[selected.index]={...selected.row.output[selected.index],text:JSON.stringify(selected.envelope)};
+  }
   // Irreducible/unknown data still fails closed. Keep the existing item/request
   // caps, all call IDs and per-projection source/hash/scope/retrieval contracts.
   assertBoundedModelEvidencePayload(packed, budget); return packed;

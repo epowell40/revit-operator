@@ -4,6 +4,45 @@ type Row=Record<string,unknown>;
 const object=(v:unknown):v is Row=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 const fields=['id','found','uniqueId','className','category','name','typeId','boundingBox','location'];
 
+/** Repage only the optional correction table in a model-only copy. The raw
+ * readback and all native effects/controls remain retained and unchanged.
+ * Never infer read-only authority from a null effect or drop unknown fields. */
+export function reduceNativeCorrectionPage(p:any):any|null{
+ const exact=(v:any,keys:string[])=>object(v)&&Object.keys(v).length===keys.length&&keys.every(k=>Object.hasOwn(v,k));
+ const v=p?.inline_payload,c=v?.coverage,r=v?.retrieval;
+ if(!object(p)||p.schema!=='revit-operator.evidence-projection.v1'
+  ||p.source!=='assignment_kernel_v2:revit_call_tool'||p.trust_level!=='authoritative_native'
+  ||p.effect_state!==null||p.before_hash!==null||p.after_hash!==null
+  ||typeof p.evidence_id!=='string'||!/^ev1_[A-Za-z0-9_-]+$/.test(p.evidence_id)
+  ||p.artifact_ref!==p.evidence_id||typeof p.content_hash!=='string'||!/^sha256:[a-f0-9]{64}$/.test(p.content_hash)
+  ||!object(p.retrieval)||p.retrieval.tool_name!=='operator_retrieve_evidence'
+  ||!exact(v,['scope','native_postcondition_verified','task_verified','rows','coverage','retrieval','guidance'])
+  ||v.scope!=='requested_element_ids_only'||v.native_postcondition_verified!==false||v.task_verified!==false
+  ||typeof v.guidance!=='string'||!Array.isArray(v.rows)||v.rows.length<2||v.rows.length>16
+  ||!exact(c,['source_rows','spatial_rows','returned_rows','complete','source_rows_exhausted'])
+  ||c.complete!==false||typeof c.source_rows_exhausted!=='boolean'
+  ||![c.source_rows,c.spatial_rows,c.returned_rows].every(n=>Number.isSafeInteger(n)&&n>0)
+  ||c.source_rows>4096||c.spatial_rows>c.source_rows||c.returned_rows>c.spatial_rows||c.returned_rows!==v.rows.length
+  ||!exact(r,['evidence_id','path','fields','next_start'])||r.evidence_id!==p.evidence_id||r.path!=='result'
+  ||JSON.stringify(r.fields)!==JSON.stringify(fields)
+  ||(c.source_rows_exhausted?r.next_start!==null:!Number.isSafeInteger(r.next_start)||r.next_start<0||r.next_start>=c.source_rows))return null;
+ let previous=-1;const ids=new Set();
+ for(const row of v.rows){
+  if(!exact(row,['row_index','values','missing_fields'])||!Number.isSafeInteger(row.row_index)
+   ||row.row_index<=previous||row.row_index>=c.source_rows||!object(row.values)
+   ||!Object.keys(row.values).every(k=>fields.includes(k))||!Array.isArray(row.missing_fields)
+   ||JSON.stringify(row.missing_fields)!==JSON.stringify(fields.filter(k=>!Object.hasOwn(row.values,k)))
+   ||!Number.isSafeInteger(row.values.id)||row.values.id<=0||ids.has(row.values.id)||typeof row.values.found!=='boolean'
+   ||(!object(row.values.boundingBox)&&!object(row.values.location)))return null;
+  previous=row.row_index;ids.add(row.values.id);
+ }
+ if(r.next_start!==null&&r.next_start<=previous)return null;
+ const rows=v.rows.slice(0,-1);
+ return {...p,truncated:true,additional_evidence:true,inline_payload:{...v,rows,
+  coverage:{...c,returned_rows:rows.length,source_rows_exhausted:false},
+  retrieval:{...r,next_start:v.rows.at(-1).row_index}}};
+}
+
 /** Convenient selected fields from the existing native readback, not another
  * read, a geometry matcher, a complete inventory or task-verification fact. */
 export function projectNativeCorrectionTargets(ref:EvidenceRefV1,payload:unknown,maxBytes:number):Row|null{
