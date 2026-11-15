@@ -636,6 +636,10 @@ namespace RevitBridge.Operator
         }
         textarea { min-height: 44px; max-height: 72px; }
       }
+      .agentSettings { order: 1; width: 100%; }
+      .agentSettings > summary { cursor: pointer; padding: 6px 0; font-size: 13px; }
+      .agentSettings[open] { max-height: 32vh; overflow: auto; }
+      .agentSettings .controlRow, .agentSettings > .policy { margin: 6px 0; }
     </style>
   </head>
   <body>
@@ -655,6 +659,7 @@ namespace RevitBridge.Operator
               <div id=""grantBadge"" class=""badge tone-neutral"" title=""Bridge-layer write grant status (required for MCP writes)"">Grant: off</div>
               <div id=""authBadge"" class=""badge tone-warning"" title=""Operator authentication status"">Auth: required</div>
             </div>
+            <details class=""agentSettings"" id=""agentSettings""><summary>Settings</summary>
             <div class=""controlRow controlRowPolicies"">
               <div class=""policy"">
                 <span>Writes:</span>
@@ -674,7 +679,7 @@ namespace RevitBridge.Operator
               </div>
               <div class=""policy"">
                 <span>Brain:</span>
-                <select id=""brainRoute"" title=""Configured direct uses the hosted agent harness; Auto pipeline keeps the legacy deterministic router available as a fallback."">
+                <select id=""brainRoute"" title=""Configured direct uses the configured agent runtime; Auto pipeline keeps the legacy deterministic router available as a fallback."">
                   <option value=""auto"">Auto pipeline</option>
                   <option value=""direct"" selected>Configured direct</option>
                 </select>
@@ -691,16 +696,6 @@ namespace RevitBridge.Operator
               </select>
             </div>
             <div class=""controlRow controlRowPolicies"">
-              <label class=""policy"" title=""Route simple commands through the fast executor model."">
-                <span>Speed:</span>
-                <input id=""speedMode"" type=""checkbox"">
-              </label>
-              <label class=""policy"" title=""Send a smaller Revit context and shorter tool summaries."">
-                <span>Diet:</span>
-                <input id=""speedDiet"" type=""checkbox"">
-              </label>
-            </div>
-            <div class=""controlRow controlRowPolicies"">
               <div class=""policy"">
                 <span>Agent:</span>
                 <select id=""agentModel"" title=""One model for the complete Operator turn, including planning, tool use, execution, and verification."">
@@ -712,6 +707,7 @@ namespace RevitBridge.Operator
                 </select>
               </div>
             </div>
+            </details>
             <div id=""runStatus"" class=""statusPill tone-neutral"" title=""Current run status"">
               <span id=""runStatusLabel"">Idle</span>
               <span class=""statusDots"" aria-hidden=""true""><span></span><span></span><span></span></span>
@@ -885,8 +881,6 @@ namespace RevitBridge.Operator
       const nativeApiPolicySel = document.getElementById('nativeApiPolicy');
       const brainRouteSel = document.getElementById('brainRoute');
       const reasoningSel = document.getElementById('reasoning');
-      const speedModeEl = document.getElementById('speedMode');
-      const speedDietEl = document.getElementById('speedDiet');
       const agentModelEl = document.getElementById('agentModel');
       const newChatBtn = document.getElementById('newChat');
       const runStatusEl = document.getElementById('runStatus');
@@ -1124,8 +1118,8 @@ namespace RevitBridge.Operator
       }
 
       function getSpeedSettings() {
-        const speedMode = !!(speedModeEl && speedModeEl.checked);
-        const contextDiet = !!(speedDietEl ? speedDietEl.checked : true);
+        const speedMode = true; // Optimized execution is the normal user experience.
+        const contextDiet = true;
         const agentModel = normalizeAgentModel(agentModelEl ? agentModelEl.value : '', 'gpt-5.6-sol');
         const agentEffort = normalizeReasoningValue(reasoningSel ? reasoningSel.value : 'medium');
         return {
@@ -2544,33 +2538,6 @@ namespace RevitBridge.Operator
         });
         post('reasoning.set', { effort: normalizeReasoningValue(reasoningSel.value) });
       }
-      if (speedModeEl) {
-        try {
-          if (localStorage.getItem('op.speedDefaultsVersion') !== 'unified-agent-56-v3') {
-            localStorage.setItem('op.speedMode', '1');
-            localStorage.setItem('op.speedDiet', '1');
-            localStorage.setItem('op.reasoningEffort', 'medium');
-            localStorage.setItem('op.agentModel', 'gpt-5.6-sol');
-            localStorage.setItem('op.speedDefaultsVersion', 'unified-agent-56-v3');
-            if (reasoningSel) {
-              reasoningSel.value = 'medium';
-              post('reasoning.set', { effort: 'medium' });
-            }
-          }
-        } catch {}
-        try { speedModeEl.checked = readBoolPref('op.speedMode', true); } catch {}
-        speedModeEl.addEventListener('change', () => {
-          writeBoolPref('op.speedMode', !!speedModeEl.checked);
-          if (speedModeEl.checked && speedDietEl && !speedDietEl.checked) {
-            speedDietEl.checked = true;
-            writeBoolPref('op.speedDiet', true);
-          }
-        });
-      }
-      if (speedDietEl) {
-        try { speedDietEl.checked = readBoolPref('op.speedDiet', true); } catch {}
-        speedDietEl.addEventListener('change', () => writeBoolPref('op.speedDiet', !!speedDietEl.checked));
-      }
       if (agentModelEl) {
         try { agentModelEl.value = normalizeAgentModel(readStringPref('op.agentModel', 'gpt-5.6-sol'), 'gpt-5.6-sol'); } catch {}
         agentModelEl.addEventListener('change', () => {
@@ -2984,7 +2951,7 @@ namespace RevitBridge.Operator
         });
       }
       if (brainRouteSel) {
-        try { brainRouteSel.value = readStringPref('op.brainRoute', 'auto') === 'direct' ? 'direct' : 'auto'; } catch {}
+        try { brainRouteSel.value = readStringPref('op.brainRoute', 'direct') === 'direct' ? 'direct' : 'auto'; } catch {}
         brainRouteSel.addEventListener('change', () => {
           brainRouteSel.value = brainRouteSel.value === 'direct' ? 'direct' : 'auto';
           writeStringPref('op.brainRoute', brainRouteSel.value);

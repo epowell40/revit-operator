@@ -108,6 +108,23 @@ export function ensureCodexHomeConfig(opts: { codexHome: string; repoRoot?: stri
 }
 
 export function ensureCodexHomeAuth(opts: { codexHome: string }): void {
+  // Explicit local installation credentials take precedence over an unrelated
+  // desktop Codex account. A broken explicit file must never fall back silently.
+  const explicit = process.env.OPERATOR_CODEX_AUTH_FILE?.trim();
+  if (explicit) {
+    let contents: string;
+    try {
+      contents = fs.readFileSync(path.resolve(explicit), "utf8").replace(/^\uFEFF/, "");
+      const auth = JSON.parse(contents);
+      if (typeof auth.OPENAI_API_KEY !== "string" || !auth.OPENAI_API_KEY.trim()) throw new Error();
+    } catch {
+      throw new Error("The configured Operator API-key file is missing or invalid. Check OpenCore.settings.txt and restart Operator.");
+    }
+    ensureDir(opts.codexHome);
+    const dst = path.join(opts.codexHome, "auth.json");
+    if (!fs.existsSync(dst) || fs.readFileSync(dst, "utf8") !== contents) fs.writeFileSync(dst, contents, { mode: 0o600 });
+    return;
+  }
   try {
     ensureDir(opts.codexHome);
     const dst = path.join(opts.codexHome, "auth.json");
