@@ -9,6 +9,7 @@ import test from "node:test";
 import {
   getDesktopComputerProviderErrorReceipt,
   relayDesktopComputerResponse,
+  desktopComputerErrorResponse,
   relayBoundDesktopComputerResponse
 } from "../src/desktop_computer.js";
 import { storeEvidence } from "../src/evidence/evidence_store.js";
@@ -17,6 +18,7 @@ import { createGoal, __testOnlyResetGoalListCache } from "../src/goals/service.j
 import { createAssignmentKernelForGoalV2 } from "../src/assignments/assignment_kernel_v2_factory.js";
 import { getAssignmentKernelSnapshotV2 } from "../src/assignments/assignment_kernel_v2_store.js";
 import {desktopNativeModelTools} from '../src/assignments/desktop_native_tools.js';
+import {controlAssignmentExecutionV2} from '../src/assignments/assignment_kernel_v2_controls.js';
 
 test("bound desktop HTTP relay retains canonical in-flight and usage without verifying work", async () => {
   const previous = { key: process.env.OPERATOR_OPENAI_API_KEY, base: process.env.OPERATOR_OPENAI_BASE_URL,
@@ -93,6 +95,15 @@ test("bound desktop HTTP relay retains canonical in-flight and usage without ver
     assert.equal(snapshot.provider_call_ids.length, 1);
     assert.equal(Object.values(snapshot.provider_calls)[0]!.usage!.total_tokens, 26);
     assert.equal(Object.values(snapshot.provider_calls)[0]!.model, "gpt-6.1-sol");
+    controlAssignmentExecutionV2({binding,command_id:'pause-test',expected_command_id:null,action:'pause'});
+    let refusal:unknown;
+    try { await relayBoundDesktopComputerResponse({model:'gpt-6.1-sol',reasoning_effort:'medium',input:'Inspect PDF',message_id:'not-started',tools:modelTools},{...binding,kernelVersion:2}); }
+    catch(error){refusal=error;}
+    assert(refusal);assert.equal(requests,1,'admission refusal never reaches the provider');
+    assert.deepEqual(desktopComputerErrorResponse(refusal).provider_response_usage,{
+      schema:'revit-operator.provider-response-usage/v1',session_id:binding.session_id,message_id:'not-started',disposition:'not_started',raw_response_ids:[]});
+    assert.equal(desktopComputerErrorResponse(new Error('external_provider_admission_denied:blocked:provider_call_budget_exhausted')).provider_response_usage,undefined,
+      'matching error prose alone cannot prove non-dispatch');
     assert.deepEqual(Object.values(snapshot.provider_calls)[0]!.upstream_receipt, {
       call_id: result.model_call_receipt.call_id, route: "desktop_computer",
       model: result.model_call_receipt.model, requested_model: result.model_call_receipt.requested_model,

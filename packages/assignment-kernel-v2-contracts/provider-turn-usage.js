@@ -21,9 +21,11 @@ export const PROVIDER_RESPONSE_USAGE_V1_SCHEMA = "revit-operator.provider-respon
 export function parseProviderResponseUsageV1(value) {
   const row = object(value);
   if (row.schema !== PROVIDER_RESPONSE_USAGE_V1_SCHEMA || !id(row.session_id) || !id(row.message_id)
-      || !["completed", "interrupted", "failed"].includes(row.disposition)
-      || !Array.isArray(row.raw_response_ids) || row.raw_response_ids.length !== 1
-      || !id(row.raw_response_ids[0]) || row.thread_id !== undefined || row.turn_id !== undefined)
+      || !["not_started", "completed", "interrupted", "failed"].includes(row.disposition)
+      || !Array.isArray(row.raw_response_ids)
+      || (row.disposition === "not_started" ? row.raw_response_ids.length !== 0
+        : row.raw_response_ids.length !== 1 || !id(row.raw_response_ids[0]))
+      || row.thread_id !== undefined || row.turn_id !== undefined)
     throw new Error("provider_response_usage_invalid");
   return { schema: PROVIDER_RESPONSE_USAGE_V1_SCHEMA, session_id: row.session_id, message_id: row.message_id,
     disposition: row.disposition, raw_response_ids: [...row.raw_response_ids] };
@@ -65,7 +67,7 @@ export function buildProviderUsageCoverageV1(attemptValues, receiptValues) {
   if (unassigned.length > 0) complete = false;
   return { schema: PROVIDER_USAGE_COVERAGE_V1_SCHEMA, request_count: attempts.length, attempts: rows,
     unassigned_raw_response_ids: unassigned, complete,
-    no_provider_invocation: complete && rows.every(row => row.provider_turn_usage?.disposition === "not_started") && receipts.length === 0 };
+    no_provider_invocation: complete && rows.every(row => (row.provider_response_usage ?? row.provider_turn_usage)?.disposition === "not_started") && receipts.length === 0 };
 }
 
 /** The host owns request attempts. Response metadata can only settle an existing exact attempt. */

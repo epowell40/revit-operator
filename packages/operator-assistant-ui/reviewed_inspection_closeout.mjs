@@ -14,8 +14,26 @@ const readySnapshot=(s,binding)=>Boolean(s&&sameBinding(s.current_binding,bindin
 // Stop the execution turn only after the existing backend command reports a
 // terminal result. The normal canonical presenter still owns the final answer;
 // a partial disposition must not become an optimistic full-success message.
-export const reviewedInspectionHasTerminalResult=result=>Boolean(result?.state==='submitted'
- &&['complete','complete_with_issues','verified_noop'].includes(result.outcome));
+export const reviewedInspectionHasTerminalResult=result=>Boolean((result?.state==='submitted'
+ &&['complete','complete_with_issues','verified_noop'].includes(result.outcome))
+ ||(result?.state==='canonical_stopped'&&result.outcome==='blocked'));
+
+/** A nested reviewer can exhaust the shared task allowance. Stop the owner at
+ * the already-journaled canonical boundary rather than requesting another
+ * provider turn. This never completes an inspection or changes task status. */
+export async function reviewStoppedAssignment({binding,review,readSnapshot}) {
+ if(review?.schema!=='operator.visual_work_review.v1'||review.authority!=='supporting_visual_assessment'
+  ||review.state!=='unavailable'||review.ok!==false||!sameBinding(review.owner,binding)
+  ||review.native_postcondition_verified!==false||review.whole_task_verified!==false)return null;
+ try {
+  const s=await readSnapshot();
+  if(!sameBinding(s?.current_binding,binding)||!Number.isSafeInteger(s.assignment_version)||s.assignment_version<1
+   ||s.terminal!==true||s.outcome!=='blocked'||s.quiescent!==true
+   ||!['in_flight_operation_ids','in_flight_provider_call_ids','unresolved_unknown_operation_ids'].every(k=>Array.isArray(s[k])&&!s[k].length))return null;
+  return {state:'canonical_stopped',outcome:s.outcome,reason:s.terminal_reason,
+   native_postcondition_verified:false,whole_task_verified:false};
+ } catch {return null;}
+}
 
 // An independently deferred, unperformed design item must stay unfinished, but
 // must not prevent inspecting the completed edits. This only permits an

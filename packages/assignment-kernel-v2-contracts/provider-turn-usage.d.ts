@@ -11,7 +11,7 @@ export type ProviderTurnUsageV1 = {
 };
 export declare const PROVIDER_RESPONSE_USAGE_V1_SCHEMA: "revit-operator.provider-response-usage/v1";
 export type ProviderResponseUsageV1 = { schema: typeof PROVIDER_RESPONSE_USAGE_V1_SCHEMA;
-  session_id: string; message_id: string; disposition: "completed" | "interrupted" | "failed"; raw_response_ids: string[] };
+  session_id: string; message_id: string; disposition: "not_started" | "completed" | "interrupted" | "failed"; raw_response_ids: string[] };
 export declare function parseProviderResponseUsageV1(value: unknown): ProviderResponseUsageV1;
 export type ProviderUsageAttemptV1 = { session_id: string | null; message_id: string | null;
   provider_turn_usage: ProviderTurnUsageV1 | null; route?: "desktop_computer"; provider_response_usage?: ProviderResponseUsageV1 | null; conflicted: boolean; complete: boolean; missing_raw_response_ids: string[] };
