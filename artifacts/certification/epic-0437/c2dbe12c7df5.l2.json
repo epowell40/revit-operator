@@ -3021,7 +3021,7 @@
     },
     {
       "path": "apps/operator-backend/src/desktop_computer.ts",
-      "sha256": "sha256:e2b257515cde163fecb2cf2515d760ca6a9ed46e12691bdc91d827aea5b27456"
+      "sha256": "sha256:5f5bdcf884e3696663f8cbe9bdbe32cf0ab00571e527b06d42593500b8718c3b"
     },
     {
       "path": "apps/operator-backend/src/desktop_image_delivery.ts",
@@ -5625,7 +5625,7 @@
     },
     {
       "path": "apps/operator-backend/test/desktop_computer_telemetry.test.ts",
-      "sha256": "sha256:1d81de4dce8733c0435cae1f206351c47420f0fd046ed1a049c9a95750c337f8"
+      "sha256": "sha256:1cf8e3c87ade4bf8ebf4968d7acd3a6cbed678c88922382e9a1a281133202e67"
     },
     {
       "path": "apps/operator-backend/test/desktop_context_continuation.test.ts",
@@ -12558,15 +12558,15 @@
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/provider-response-usage.test.mjs",
-      "sha256": "sha256:e7bef90586b9cf3f0214999e969439a9de05b931bbffe916d82b6da79a17033b"
+      "sha256": "sha256:cd60f73354f35162b7d4b38a82432fe7205ac2b44c58fe79ae5cb82792f06246"
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/provider-turn-usage.d.ts",
-      "sha256": "sha256:f5d457278798cdcefbd13dbb52f6c4ed4de385800f7e4d090d10a7e50f888b23"
+      "sha256": "sha256:a63061c1b84fdbd84698b1157da08e72d52fb152c68107ff92b9a936a8a1efbe"
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/provider-turn-usage.js",
-      "sha256": "sha256:2e4a6422b8a49e1e56e461bfae726afcf0924b4fef00e17daa2ab376c120d69a"
+      "sha256": "sha256:1677a6c7a0098107416dbcbe6f1c1745aa87dd3a059ab6fab5b96bc87eac1336"
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/provider-usage-hold.d.ts",
@@ -12641,7 +12641,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:ea8086f4abec49dc5ce100afe535dbb7c1315ee5847dd59e6936b98fee9d2016",
+  "inputs_hash": "sha256:dbfe1bd995d5d9c2b6095eda601eb05ae666dd1447ad865c394eccc62cd94b0c",
   "result": {
     "passed": true,
     "checks": [
