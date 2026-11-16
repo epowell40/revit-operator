@@ -2490,15 +2490,27 @@ async function submitFeedback(rating) {
     throw new Error("No backend session is available for feedback yet.");
   }
 
+  const feedbackSession=state.sessionId;
+  const feedbackGoal=selectedGoal();
+  const selectedBinding=feedbackGoal?._bindingV2;
+  if(feedbackGoal?._sourceKind==='assignment_kernel_v2'&&!selectedBinding)throw Error('Reopen this task before submitting feedback.');
+  if(selectedBinding&&selectedBinding.session_id!==state.sessionId)throw Error('Reopen this task before submitting feedback.');
+  const taskBinding=selectedBinding?Object.fromEntries(['assignment_id','session_id','run_id','generation'].map(k=>[k,selectedBinding[k]])):undefined;
   const payload = await fetchJson("/api/feedback", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       session_id: state.sessionId,
       rating,
+      task_binding:taskBinding,
       note: `${elements.fbNote.value || ""}`.trim()
     })
   });
+
+  // A saved rating belongs to the submitted task even if the user navigates
+  // away while the request is in flight. Do not clear the new task's note.
+  if(state.sessionId!==feedbackSession||taskBinding&&!['assignment_id','session_id','run_id','generation']
+    .every(key=>selectedGoal()?._bindingV2?.[key]===taskBinding[key]))return;
 
   const feedbackSummary = payload?.github_issue?.started
     ? "Feedback saved. GitHub issue creation started."
