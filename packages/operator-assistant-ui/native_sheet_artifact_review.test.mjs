@@ -38,6 +38,56 @@ for(const mode of ['target_view','native_visible_region'])test(mode+' reviews on
  assert(!modelText(out.output).includes('"native_postcondition_verified":true'));
 });
 
+function inactiveSheetFixture() {
+ const f=fixture(),read=f.host.readTargetContext,capture=f.host.captureTarget;
+ f.host.readTargetContext=async()=>{
+  const context=await read();
+  const other=render();
+  other.viewId=42;
+  other.viewUniqueId='other-sheet';
+  other.views[0]={...other.views[0],viewId:42,viewUniqueId:'other-sheet'};
+  context.document.activeView={id:42,name:'Other sheet',type:'DrawingSheet',sheetRenderState:other};
+  return context;
+ };
+ f.host.captureTarget=async(...args)=>{
+  const result=await capture(...args);
+  result.native_result.activeViewId=42;
+  return result;
+ };
+ return f;
+}
+
+test('an inactive native sheet with complete render inputs requests activation before spending a reviewer call',async()=>{
+ const f=inactiveSheetFixture(),result=await reviewCurrentWork(f.request,f.host);
+ assert.equal(result.state,'unavailable');
+ assert.equal(result.reason,'visual_review_activate_sheet_for_assessment');
+ assert.equal(result.location.view_id,41);
+ assert.equal(result.location.active_view_id,42);
+ assert.match(result.guidance,/Activate.*41.*native_visible_region/);
+ assert.equal(result.reviewer_response_id,null);
+ assert.equal(result.native_postcondition_verified,false);
+ assert.equal(result.whole_task_verified,false);
+ assert.equal(f.paid(),false);
+ assert.equal(f.captures(),1);
+ assert.equal(f.images.length,1);
+ const output=visualWorkReviewModelOutput({output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',
+  evidence_projections:[{evidence_id:'review'}]})},result,'review');
+ const feedback=JSON.parse(modelText(output.output)).evidence_projections[0].visual_work_review;
+ assert.equal(feedback.reason_code,'visual_review_activate_sheet_for_assessment');
+ assert.match(feedback.guidance,/Activate.*41/);
+});
+
+test('the same inactive native sheet can still deliver its current pixels for primary observation',async()=>{
+ const f=inactiveSheetFixture();
+ const result=await reviewCurrentWork({...f.request,review_mode:'observe'},f.host);
+ assert.equal(result.state,'observed');
+ assert.equal(result.location.view_id,41);
+ assert.equal(result.location.active_view_id,42);
+ assert.equal(result.whole_task_verified,false);
+ assert.equal(f.paid(),false);
+ assert.equal(f.captures(),1);
+});
+
 const negatives={
  epoch:c=>c.nativeChangeObservations.epoch='new',sequence:c=>c.nativeChangeObservations.throughSequence++,
  session:c=>{c.document.sessionId='other';c.nativeChangeObservations.documentSessionId='other';},project:c=>c.document.projectIdentity.fingerprint='other',
