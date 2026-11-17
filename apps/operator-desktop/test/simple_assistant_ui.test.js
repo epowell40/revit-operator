@@ -1,4 +1,4 @@
-import { normalizeAgentModel } from '../public/agent_model_catalog.mjs';
+import { agentModelRequiresReasoning, normalizeAgentModel } from '../public/agent_model_catalog.mjs';
 import { taskDraftKey } from "../public/task_navigation.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -27,13 +27,13 @@ function bootModelSettings(storage) {
   const elements = { agentModel, agentReasoning: control(), showWork: control() };
   const settings = runInNewContext(['readBoolSetting', 'writeBoolSetting', 'readStringSetting', 'writeStringSetting',
     'normalizeSpeedModel', 'normalizeReasoningEffort', 'getSpeedSettings', 'synchronizeModelReasoning', 'initializeSpeedControls'].map(functionSource).join('\n')
-    + '; initializeSpeedControls(); getSpeedSettings', { elements, normalizeAgentModel,
+    + '; initializeSpeedControls(); getSpeedSettings', { elements, agentModelRequiresReasoning, normalizeAgentModel,
       localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) } });
   return { model: agentModel, reasoning: elements.agentReasoning, showWork: elements.showWork, settings };
 }
 
 test('Settings preserves each offered model through change, reload, and the request payload', () => {
-  for (const model of ['gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-luna', 'gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
+  for (const model of ['gpt-6.1-sol', 'gpt-6.2-sol', 'gpt-6.1-terra', 'gpt-6-luna', 'gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
     const storage = new Map([['operator.speedDefaultsVersion', 'unified-agent-v1'], ['operator.agentReasoning', 'high'], ['operator.speedMode', '0'], ['operator.speedDiet', '0']]);
     const page = bootModelSettings(storage);
     page.model.value = model;

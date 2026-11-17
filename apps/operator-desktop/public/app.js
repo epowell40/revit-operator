@@ -1,4 +1,4 @@
-import { normalizeAgentModel } from './agent_model_catalog.mjs';
+import { agentModelRequiresReasoning, normalizeAgentModel } from './agent_model_catalog.mjs';
 import { parseTaskNavigation, renderTaskList, renderSessionStart, taskDraftKey, taskStateLabel, currentTaskState, computerStateMatchesTask, computerStateIncludesSubmittedMessage } from "./task_navigation.mjs";
 import { createComposerDraftStore, staleComposerNotice, saveComposerRefreshTarget, readComposerRefreshTarget, clearComposerRefreshTarget } from "./composer_draft.mjs";
 import { beginComposerSend, selectChatSubmissionMode, startsFreshComputerConversation, routeSavedChatSubmission } from "./composer_intake.mjs";
@@ -4158,7 +4158,7 @@ function getSpeedSettings() {
 
 function synchronizeModelReasoning() {
   if (!elements.agentReasoning) return;
-  const requiresReasoning = elements.agentModel?.value === "gpt-6.1-sol";
+  const requiresReasoning = agentModelRequiresReasoning(elements.agentModel?.value);
   for (const option of elements.agentReasoning.options || []) {
     if (option.value === "none") option.disabled = requiresReasoning;
   }

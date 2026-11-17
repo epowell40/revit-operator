@@ -4,9 +4,10 @@ import { ordinaryInputTokens, standardProviderTextTokenCostUsd as cost } from ".
 
 const tokens = { input_tokens:100, cached_input_tokens:60, cache_write_input_tokens:10, output_tokens:40 };
 
-test("Terra and Luna price actual cache categories and the per-call long threshold", () => {
+test("Terra, Luna and Sol 6.2 price actual cache categories and the per-call long threshold", () => {
   for (const [model, input, cached, write, output] of [
-    ['gpt-6.1-terra', 1, .05, 1.25, 5], ['gpt-6-luna', .1, .01, .125, .5]
+    ['gpt-6.1-terra', 1, .05, 1.25, 5], ['gpt-6-luna', .1, .01, .125, .5],
+    ['gpt-6.2-sol', 2, .1, 2.5, 10]
   ] as const) {
     assert.equal(cost(model, tokens), (30*input + 60*cached + 10*write + 40*output)/1_000_000);
     assert.equal(cost(model, {...tokens, input_tokens:272001}),
