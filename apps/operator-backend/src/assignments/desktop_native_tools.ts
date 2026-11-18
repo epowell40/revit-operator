@@ -95,12 +95,6 @@ export function desktopNativeModelTools(tools:Tool[]) {
   const result=tools.filter(tool=>(tool.deferLoading!==true||tool.name==='operator_run_dynamic_revit_program'||directExecutor&&tool.name==='operator_manage_work_plan')
     &&!(directExecutor&&supplemental.has(tool.name))).map(tool=>({type:'function',name:PREFIX+tool.name,
     description:tool.description,parameters:tool.inputSchema,strict:false}));
-  const nativeCaller=result.find(tool=>tool.name===PREFIX+'revit_call_tool');
-  if(nativeCaller) {
-    nativeCaller.description+=' If a read-only request asks for the current Revit model title or active view name, use GET /revit/context through this tool for the answer. Cite ["document","title"] and ["document","activeView","name"] from the returned task-result observation as requested. These labels cannot establish model contents. No C# read or review is needed for the labels.';
-    const orientation=result.find(tool=>tool.name===PREFIX+'revit_get_context');
-    if(orientation)orientation.description+=' Use for orientation and navigation control evidence. If a read-only request asks you to report the model title or view name in the answer, use native__revit_call_tool with GET /revit/context as the first read instead.';
-  }
   result.push({type:'function',name:PREFIX+'invoke',strict:false,
     description:'Call an existing deferred Revit Operator MCP tool by its documented name and exact arguments. Use native__describe_tool to read its current request schema and instructions first; native HTTP tool search does not describe MCP executors. The backend validates the current catalog, assignment, arguments and native authority. This is a direct tool call in your current context, not a helper agent.',
     parameters:{type:'object',properties:{tool:{type:'string'},arguments:{type:'object'}},required:['tool','arguments'],additionalProperties:false}});
