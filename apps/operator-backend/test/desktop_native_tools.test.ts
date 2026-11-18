@@ -185,6 +185,9 @@ for(const descriptionMode of ['invoke','direct','known','missing','large']) test
   assert.match(catalog.guidance,/Preserve the existing startup view and framing on edits to an existing model/);
   assert.match(catalog.guidance,/For newly drafted deliverables or an explicit opening-view request/);
   assert.match(catalog.guidance,/The native compiler does not reference Newtonsoft\.Json or System\.Text\.Json/);
+  assert.match(catalog.guidance,/Finish the tracked save and independent file inspection before the final review/);
+  assert.match(catalog.guidance,/Include pre-save code evidence IDs with fresh post-save visuals/);
+  assert.match(catalog.guidance,/Honor explicit review-before-save requests/);
   const receipt=createOpenAiModelCallReceipt({route:'desktop_computer',requested_model:'test-model',reasoning_effort:'medium',started_at_utc:new Date().toISOString(),duration_ms:1,
    response:{id:'response',status:'completed',model:'test-model',usage:{input_tokens:1,output_tokens:1,total_tokens:2}}});
   const response={...retained().response,model_call_receipt:receipt};
