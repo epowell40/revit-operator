@@ -10869,6 +10869,7 @@ function toComputerInputMessage(message, options = {}) {
   if (cadReferences.length) content.push({ type: "input_text", text:
     "RETAINED DWG REFERENCES (metadata only; original_access_verified:false). " +
     "Inspect the drawing through Revit. When placement in the model is authorized, use /revit/link-cad with the registered relative_path as sourcePath and the exact sha256 as expectedSourceSha256. " +
+    "For requested hosted door swings, read linked CAD and actual door arcs in the same plan. Native C# can walk GeometryInstance.GetInstanceGeometry() on the link and doors in model coordinates. Compare hinge center, radius, endpoints and midpoint around the fixed opening. Test the two host-axis reflections and their combination before choosing an authorized flip. Leave ambiguous or missing source arcs unresolved. After correction, re-read the actual arcs; family facing and hand vectors alone do not prove the drawn swing. " +
     "Check the actual CAD units, orientation, native layer geometry and visible plan before relying on them. This reference alone grants no write authority.\n" +
     JSON.stringify(cadReferences) });
   if (cadAttachments.length > cadReferences.length) content.push({ type: "input_text", text:
