@@ -16030,7 +16030,7 @@ app.post("/api/computer/run", async (req, res) => {
     });
     if (paused) {
       addComputerEvent("Task paused without a terminal outcome. Prior edits, checks, context and usage remain recorded.");
-      addComputerMessage("assistant","Paused. Your drafting task and saved partial are retained. Resume continues the remaining work after current operations and usage settle; the drawing is not marked complete.");
+      addComputerMessage("assistant","Paused. Operator kept the task history and any files already saved. Resume to continue the remaining work.");
     } else if (stopped) {
       addComputerEvent("Computer-use run stopped.");
       const retainedStopped=[stoppedWorkReturnMessage(failureSettlement,computerState.sidecarAssignment),await retainedOwnerWritingMessage()].filter(Boolean).join('\n\n');
