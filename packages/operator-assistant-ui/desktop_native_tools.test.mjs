@@ -72,6 +72,24 @@ test('host sends only identity/context, preserves native image blocks and does n
  assert.equal(calls,1);assert.equal(output.native_model_output.output[1].image_url,'data:image/png;base64,AAA');
  assert.equal(JSON.parse(output.output).ok,true);assert.equal(output.native_model_output.native_success,undefined);
 });
+test('a checked copy is browser presentation metadata and stays outside model context',async()=>{
+ const binding=desktopNativeBinding(assignment);
+ const message={role:'assistant',message_id:'saved-checkpoint:a:save-observation',text:'Saved file: Review copy.rvt'};
+ const native={schema:'operator.desktop-native-result.v1',result:{success:true,contentItems:[{type:'inputText',text:'Native file inspection.'}]}};
+ for(const scope of [binding,{...binding,session_id:'foreign'},{...binding,generation:2}]){
+  let calls=0;
+  const output=await invokeDesktopNativeTool({assignment,messageId:'m',responseId:'r',context:{},
+   call:{name:'native__invoke',call_id:'inspect'},request:async(_route,opts)=>{
+    assert.equal(opts.headers['x-operator-desktop-presentation'],'checked-copy-v1');
+    calls++;
+    return {...native,checked_copy:{binding:scope,message}};
+   }});
+  assert.equal(calls,1);
+  assert.deepEqual(output.checked_copy,scope===binding?{binding,message}:undefined);
+  assert.doesNotMatch(JSON.stringify([output,output.native_model_output]),/Review copy|checked_copy/);
+ }
+});
+
 test('transport failure never invokes an automatic retry and missing host identity refuses',async()=>{
  let calls=0;const args={assignment,messageId:'message',responseId:'response',call:{name:'native__revit_ping',call_id:'call'},
   request:async()=>{calls++;throw Error('lost transport');}};

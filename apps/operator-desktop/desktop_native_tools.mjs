@@ -128,7 +128,8 @@ function codeReviewSelector(call,result,binding) {
 export async function invokeDesktopNativeTool({assignment,messageId,responseId,call,context,request}) {
   if(!call?.name?.startsWith('native__')||!messageId||!responseId||!call.call_id)
     throw Error('desktop_native_provider_identity_required');
-  const result=await request('/api/assignments/v2/desktop-native/call',{method:'POST',body:JSON.stringify({
+  const result=await request('/api/assignments/v2/desktop-native/call',{method:'POST',
+    headers:{'x-operator-desktop-presentation':'checked-copy-v1'},body:JSON.stringify({
     ...desktopNativeBinding(assignment),message_id:messageId,response_id:responseId,call_id:call.call_id,context})});
   if(result?.schema==='operator.desktop-native-pending.v1') {
     const binding=desktopNativeBinding(assignment);
@@ -155,6 +156,14 @@ export async function invokeDesktopNativeTool({assignment,messageId,responseId,c
     native_stop_reason:result.stop_reason??null,content:result.result.contentItems})};
   Object.defineProperty(output,'native_model_output',{value:{type:'function_call_output',call_id:call.call_id,output:content}});
   Object.defineProperty(output,'native_stop_reason',{value:result.stop_reason??null});
+  const checkedCopy=result.checked_copy,binding=desktopNativeBinding(assignment);
+  if(checkedCopy&&Object.keys(binding).every(key=>checkedCopy.binding?.[key]===binding[key])
+    &&checkedCopy.message?.role==='assistant'
+    &&typeof checkedCopy.message.message_id==='string'
+    &&checkedCopy.message.message_id.startsWith(`saved-checkpoint:${binding.assignment_id}:`)
+    &&typeof checkedCopy.message.text==='string'&&checkedCopy.message.text.length<=4000){
+    Object.defineProperty(output,'checked_copy',{value:checkedCopy});
+  }
   return output;
 }
 

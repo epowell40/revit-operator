@@ -83,6 +83,7 @@ const state = {
   feedbackVisible: false,
   backendMessages: [],
   computerMessages: [],
+  checkedProjectCopy: null,
   computerEvents: [],
   computerProgress: null,
   computerScreen: null,
@@ -1237,7 +1238,11 @@ function renderAttachStrip() {
 function renderMessages() {
   renderSessionStartScreen();
   elements.messages.innerHTML = "";
-  for (const message of activeMessages()) {
+  const messages = activeMessages();
+  const copy = state.checkedProjectCopy;
+  const liveCopy = state.activeRunKind !== "backend" && copy?.sessionId === state.sessionId
+    && copy.epoch === state.taskNavigationEpoch ? copy.message : null;
+  for (const message of liveCopy ? [...messages, liveCopy] : messages) {
     const normalizedRole = message.role === "user" ? "user" : message.role === "error" ? "error" : "assistant";
     const assistantParts = normalizedRole === "assistant" ? splitAssistantControlText(message.text) : null;
     const messageText = assistantParts ? assistantParts.text : `${message.text || ""}`;
@@ -5060,7 +5065,8 @@ async function syncComputerState() {
     ? { ...selectedGoal()?._bindingV2 } : null;
   const selectedAssignmentId = state.taskNavigationAssignmentId;
   const requestId = ++state.computerSyncRequestId;
-  const payload = await fetchJsonWithTimeout("/api/computer/state", {}, 10_000);
+  const query = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : "";
+  const payload = await fetchJsonWithTimeout(`/api/computer/state${query}`, {}, 10_000);
   if (requestId !== state.computerSyncRequestId) return;
   if (state.resetting) return;
   // A fallback backend stream owns its busy state and transcript. An idle
@@ -5074,6 +5080,10 @@ async function syncComputerState() {
       || !computerStateMatchesTask(payload, selectedGoal()?._bindingV2, sessionId))) return;
   if (!savedBinding && sessionId && payload.backendSessionId !== sessionId) return;
   state.computerSubmissionMessageId = "";
+  const copy = payload.checkedProjectCopy;
+  const checkedProjectCopy = payload.running && computerStateMatchesTask(payload, copy?.binding, sessionId)
+    ? copy.message : null;
+  state.checkedProjectCopy = checkedProjectCopy ? { message:checkedProjectCopy, sessionId, epoch } : null;
   state.activityLastSeenAt = Date.now();
   state.activityConnectionLost = false;
   const wasDesktopPreviewCaptureBlocked = desktopPreviewCaptureBlocked(state.computerRunSubmissionPending, state.desktopCaptureSuppressed);
@@ -5083,6 +5093,7 @@ async function syncComputerState() {
     running: payload.running,
     error: payload.error,
     messages: payload.messages,
+    checkedProjectCopy,
     events: payload.events,
     progress: payload.progress,
     certifiedReadUi: certifiedReadFixture,

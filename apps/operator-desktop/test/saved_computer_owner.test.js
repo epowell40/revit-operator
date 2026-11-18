@@ -23,7 +23,7 @@ test('browser state shows resumed conversation without publishing host context a
  const routeSource=server.slice(start,server.indexOf('\n});',start)+4);
  let state;
  runInNewContext(routeSource,{
-  app:{get(path,handler){assert.equal(path,'/api/computer/state');handler({}, {json(data){state=data;}});}},
+  app:{get(path,handler){assert.equal(path,'/api/computer/state');handler({}, {setHeader(){},json(data){state=data;}});}},
   computerState:{messages},browserComputerAssignmentBinding:()=>binding,
   modelCallReceiptsSnapshot:()=>[],providerUsageCoverageSnapshot:()=>({}),
   modelCallReceiptIntegritySnapshot:()=>({}),browserSafeCertifiedReadUi:()=>null,

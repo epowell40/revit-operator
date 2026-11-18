@@ -799,6 +799,7 @@ const computerState = {
   nativeCodeReviewStart: null,
   sidecarAssignment: null,
   canonicalAssignmentOutcome: null,
+  checkedProjectCopy: null,
   pendingClarification: null,
   workReturn: null,
   workReturnTerminalPresentation: null,
@@ -6271,6 +6272,7 @@ function resetComputerConversation() {
   computerState.screen = { x: 0, y: 0, width: 0, height: 0, monitorCount: 0, monitors: [] };
   computerState.preferences = { sheetNamesAllCaps: false };
   computerState.messages = [];
+  computerState.checkedProjectCopy = null;
   computerState.events = [];
   computerState.performanceReceipts = [];
   computerState.modelCallReceiptGeneration = 0;
@@ -13497,6 +13499,7 @@ async function executeComputerLoop(options = {}) {
         throw new Error("Stopped by user.");
       }
       if (item.type === "computer_call") {
+        computerState.checkedProjectCopy = null;
         const actions = getComputerActions(item);
         if (actions.some((action) => action?.type !== "screenshot")) {
           transientGatewayRetrySafe = false;
@@ -13563,10 +13566,12 @@ async function executeComputerLoop(options = {}) {
           currentAction: item.name
         });
         const nativeCall=!!nativeContext&&item.name?.startsWith('native__');
+        computerState.checkedProjectCopy = null;
         const functionOutput = nativeCall
           ? await invokeDesktopNativeTool({assignment:computerState.sidecarAssignment,messageId:response.desktop_message_id,
             responseId:response.id,call:item,context:nativeContext,request:nativeRequest})
           : await executeFunction({...item,hostDesktopHelperScope:true});
+        if (nativeCall) computerState.checkedProjectCopy = functionOutput.checked_copy ?? null;
         if(functionOutput.native_pending) {
           computerState.nativeInteractivePlacement=retainNativeInteractivePlacement(functionOutput.native_pending,
             computerState.sidecarAssignment,nativeContext);
@@ -15713,14 +15718,19 @@ function browserComputerAssignmentBinding() {
   } catch { return null; }
 }
 
-app.get("/api/computer/state", (_req, res) => {
+app.get("/api/computer/state", (req, res) => {
+  const binding=browserComputerAssignmentBinding(),copy=computerState.checkedProjectCopy;
+  const exposeCopy=computerState.running&&binding&&copy&&req.query?.session_id===binding.session_id
+    &&Object.keys(binding).every(key=>binding[key]===copy.binding[key]);
+  res.setHeader("cache-control","no-store");
   res.json({
     running: computerState.running,
     desktopCaptureSuppressed: computerState.desktopCaptureSuppressed,
     error: computerState.error,
     lastResponseId: computerState.lastResponseId,
     backendSessionId: computerState.backendSessionId,
-    assignmentBindingV2: browserComputerAssignmentBinding(),
+    assignmentBindingV2: binding,
+    checkedProjectCopy: exposeCopy ? copy : null,
     screenshotVersion: computerState.screenshotVersion,
     screen: computerState.screen,
     messages: browserComputerMessages(computerState.messages),
@@ -15832,6 +15842,7 @@ app.post("/api/computer/run", async (req, res) => {
     || automaticDirectRevitDelegateTurnPolicy(prompt, attachments));
   const startupAbortController = new AbortController();
   computerState.running = true;
+  computerState.checkedProjectCopy = null;
   computerState.desktopCaptureSuppressed = deterministicDelegateOnlyTurnPolicy(prompt) || automaticDirectRevitDelegate || phase4CBPdfTransport;
   computerState.error = "";
   computerState.stopRequested = false;
