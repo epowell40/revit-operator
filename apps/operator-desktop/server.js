@@ -14576,7 +14576,9 @@ app.get("/api/session/history", async (req, res) => {
   try {
     const sessionId = `${req.query?.session_id || ""}`.trim();
     if (!sessionId) return sendJsonError(res, "A conversation is required.", 400);
-    res.json(await readBackendJson(`/session/history?session_id=${encodeURIComponent(sessionId)}`));
+    const query = new URLSearchParams({session_id:sessionId});
+    if (typeof req.query?.assignment_id === "string") query.set("assignment_id",req.query.assignment_id);
+    res.json(await readBackendJson(`/session/history?${query}`));
   } catch (error) { sendJsonError(res, error, Number(error?.status) || 502); }
 });
 

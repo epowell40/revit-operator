@@ -150,6 +150,35 @@ test("history restoration ignores a late response for the previous conversation"
   assert.equal(renders, 0);
   assert.deepEqual(state.backendMessages, []);
 });
+
+test("saved history requests the selected assignment and rejects a stale result in the same conversation", async () => {
+  let resolveOld;
+  const state = { sessionId: "shared", taskNavigationAssignmentId: "first", taskNavigationEpoch: 1, backendMessages: [] };
+  const calls = [];
+  const restore = runInNewContext(functionSource('restoreConversationHistory') + "; restoreConversationHistory", {
+    state,
+    fetchJson: route => {
+      calls.push(route);
+      return calls.length === 1
+        ? new Promise(resolve => { resolveOld = resolve; })
+        : Promise.resolve({ session_id: "shared", messages: [{ role: "assistant", text: "Second answer" }] });
+    },
+    mergeConversationHistory: (_current, history) => history,
+    renderMessages() {},
+    setStatus: () => {}
+  });
+  const pending = restore();
+  state.taskNavigationAssignmentId = "second";
+  state.taskNavigationEpoch++;
+  await restore();
+  resolveOld({ session_id: "shared", messages: [{ role: "assistant", text: "First answer" }] });
+  await pending;
+  assert.deepEqual(calls, [
+    "/api/session/history?session_id=shared&assignment_id=first",
+    "/api/session/history?session_id=shared&assignment_id=second"
+  ]);
+  assert.deepEqual(state.backendMessages, [{ role: "assistant", text: "Second answer" }]);
+});
 test("work details open on request, expose their state, and return keyboard focus on close", () => {
   const nodes = Object.fromEntries(["workDetails", "workDetailsButton", "assignmentCompactToggle"].map(id => [id, {
     hidden: true, attributes: {}, setAttribute(key, value) { this.attributes[key] = value; }, focus() { this.focused = true; }

@@ -5,7 +5,21 @@ import {getAssignmentKernelSnapshotV2} from './assignment_kernel_v2_store.js';
 import {desktopExecutorOwnsAssignmentV2,desktopHelperScopeForSnapshotV1,desktopHelperScopeFromContextV1} from './desktop_executor_owner.js';
 import {appendMessage} from '../session_store.js';
 import {conversationDisplay} from '../conversation_history.js';
-import {getConversationTurn} from '../memory/sqlite_store.js';
+import {getConversationTurn,type ConversationEntry} from '../memory/sqlite_store.js';
+import {deriveTerminalResultV2} from './assignment_kernel_v2_terminal_result.js';
+
+/** Restore the bound, evidence-backed read answer for a selected desktop task.
+ * The terminal journal is durable even when the live desktop transcript is gone. */
+export function desktopReadConversationResultV1(sessionId:string,assignmentId:string):ConversationEntry|null{
+ const snapshot=getAssignmentKernelSnapshotV2(assignmentId);
+ if(!snapshot?.terminal||!snapshot.quiescent||!snapshot.finished_at
+  ||snapshot.current_binding.session_id!==sessionId||!desktopExecutorOwnsAssignmentV2(snapshot)
+  ||snapshot.spec.requested_effect!=='read'||!snapshot.result_delivery
+  ||!['complete','complete_with_issues','verified_noop'].includes(snapshot.outcome))return null;
+ const text=deriveTerminalResultV2(snapshot).result_summary;
+ if(!text.trim()||Buffer.byteLength(text,'utf8')>24000)return null;
+ return {role:'assistant',message_id:`terminal-result:${assignmentId}:${snapshot.assignment_version}`,text,created_at:snapshot.finished_at};
+}
 
 /** Presentation provenance only. Never changes task authority or verification.
  * The exact authenticated helper still has its raw turn/run and evidence logs,

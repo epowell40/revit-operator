@@ -1949,13 +1949,18 @@ function setSession(sessionId) {
 async function restoreConversationHistory() {
   const sessionId = state.sessionId;
   if (!sessionId) return;
+  const assignmentId = state.taskNavigationAssignmentId;
+  const epoch = state.taskNavigationEpoch;
+  const taskQuery = assignmentId ? `&assignment_id=${encodeURIComponent(assignmentId)}` : "";
   try {
-    const payload = await fetchJson(`/api/session/history?session_id=${encodeURIComponent(sessionId)}`);
-    if (state.sessionId !== sessionId || payload?.session_id !== sessionId) return;
+    const payload = await fetchJson(`/api/session/history?session_id=${encodeURIComponent(sessionId)}${taskQuery}`);
+    if (state.sessionId !== sessionId || payload?.session_id !== sessionId
+        || state.taskNavigationAssignmentId !== assignmentId || state.taskNavigationEpoch !== epoch) return;
     state.backendMessages = mergeConversationHistory(state.backendMessages, payload.messages);
     renderMessages();
   } catch {
-    if (state.sessionId === sessionId && !state.streaming) setStatus("Conversation history is unavailable.");
+    if (state.sessionId === sessionId && state.taskNavigationAssignmentId === assignmentId
+        && state.taskNavigationEpoch === epoch && !state.streaming) setStatus("Conversation history is unavailable.");
   }
 }
 

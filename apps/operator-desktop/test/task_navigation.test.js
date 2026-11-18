@@ -74,12 +74,13 @@ test('C51 sending the first message clears the original New Chat key before sess
   await store.save(await taskDraftKey(tab,'other-task'),{text:'Other unsent work',attachments:[attachment],sessionId:'other-task'});
   const start=source.indexOf('elements.chatForm.addEventListener("submit", async (event) => {'),end=source.indexOf('\n});',start)+4;
   const clearStart=source.indexOf('function clearChatComposerForSubmission('),clearEnd=source.indexOf('\n}\n',clearStart)+2;
+  const limitStart=source.indexOf('function assertAttachmentTotalSize('),limitEnd=source.indexOf('\n}\n',limitStart)+2;
   const context={state,elements,composerDraftStore:store,composerDraftKey:tab,composerDraftTimer:null,taskDraftKey,clearTimeout,
     beginComposerSend,pausedTaskAcceptsDirection:()=>false,selectedGoal:()=>null,loadedBrowserIdentity:'current',async assertLoadedBrowserFresh(){},
     setStatus(){},updateControls(){},renderAttachStrip(){},updateFeedbackBarVisibility(){},scheduleComposerDraftSave(){},showComposerNotice(){},
     createChatSubmission:(text,attachments)=>({rawPrompt:text,text,attachments}),beginOptimisticChatSubmission(){},
     async sendPrompt(){sent++;state.sessionId='allocated-session';},handleChatSubmissionFailure(error){throw error;}};
-  runInNewContext([body('persistComposerDraft'),source.slice(clearStart,clearEnd),source.slice(start,end)].join('\n'),context);
+  runInNewContext([body('persistComposerDraft'),source.slice(clearStart,clearEnd),source.slice(limitStart,limitEnd),source.slice(start,end)].join('\n'),context);
   await handler({preventDefault(){}});
   assert.equal(sent,1);assert.equal(await store.load(await taskDraftKey(tab,'')),null);
   assert.equal((await store.load(await taskDraftKey(tab,'other-task'))).text,'Other unsent work');
