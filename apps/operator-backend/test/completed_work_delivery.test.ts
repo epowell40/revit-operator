@@ -5,6 +5,7 @@ import {verifiedChangePresentationV2} from '../src/assignments/verified_change_p
 import {deriveTerminalResultV2} from '../src/assignments/assignment_kernel_v2_terminal_result.js';
 import {modelSavedProjectCheckpointV1,savedCopyHandoffV2,savedProjectBeforeInterruptionV2,savedProjectCheckpointV2} from '../src/assignments/saved_copy_handoff_v2.js';
 import {finalCodexAssignmentMessageV2} from '../src/brains/codex_assignment_progress.js';
+import {codexAssignmentEvidenceContextV2} from '../src/brains/codex_assignment_evidence.js';
 import {generateWorkReturnFromKernelV2} from '../src/work_returns/assignment_kernel_v2_generator.js';
 import {workReturnTerminalPresentationV2} from '../src/work_returns/terminal_presentation.js';
 import {verifyWorkReturnHash} from '../src/work_returns/generator.js';
@@ -195,7 +196,7 @@ test('an explicit refresh of an earlier review copy uses the new file check even
   const stored=storeEvidence({scope:{...op.binding,attempt_id:id},source:'assignment_kernel_v2:revit_call_tool',trust_level:'authoritative_native',raw});
   Object.assign(observation,{operation_id:id,observation_id:observationId,raw_payload_hash:digest,raw_payload_ref:'evidence:'+stored.ref.evidence_id});
   Object.assign(op.result,{operation_id:id,raw_payload_hash:digest,completed_at:completedAt});
-  Object.assign(op,{operation_id:id,observation_ids:[observationId],settled_assignment_version:version});
+  Object.assign(op,{operation_id:id,observation_ids:[observationId],admitted_assignment_version:version-1,settled_assignment_version:version});
   snapshot.observations[observationId]=observation;
   snapshot.operations[id]=op;
  }
@@ -214,4 +215,16 @@ test('an explicit refresh of an earlier review copy uses the new file check even
  const unchecked=structuredClone(snapshot);
  unchecked.operations[read.operation_id].observation_ids=[];
  assert.equal(savedProjectCheckpointV2(unchecked),null,'Earlier file inspection cannot verify the latest bytes');
+
+ const current=structuredClone(snapshot);
+ Object.assign(current,{execution_control:{state:'running'},quiescent:true,in_flight_provider_call_ids:[],
+  pending_input_variable_ids:[],pending_review_ids:[],provider_usage_hold:null});
+ const index=(state:any)=>JSON.parse(codexAssignmentEvidenceContextV2(state,save.operation_id));
+ const pending=(state:any)=>index(state).pending_verification.some((row:any)=>row.operation_id===firstSave.operation_id);
+ const saved=index(current).verified_postconditions.find((row:any)=>row.operation_id===save.operation_id);
+ assert.deepEqual(saved?.saved_file_check,{file_name:path.win32.basename(fresh!.file),superseded_operation_ids:[firstSave.operation_id],superseded_count:1});
+ assert.equal(pending(current),false);
+ assert.equal(pending(snapshot),true,'Pause retains the original evidence and suppresses live handoff guidance');
+ current.operations[firstSave.operation_id].verification_operation_ids=[];
+ assert.equal(pending(current),true,'An unchecked earlier save cannot be silently resolved');
 }));

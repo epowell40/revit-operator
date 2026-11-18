@@ -18,6 +18,8 @@ import {nativeCommitProgressIdentityV2,observedNativeWorkTargetIdentitiesV1} fro
 import {qualifiedLargeInspectionDiscoveryV2} from '../assignments/large_inspection_discovery.js';
 import {authorizedArtifactExportPath} from '../artifact_export_intent.js';
 import {nativeProgramEffectStateV2} from '../verification/native_program_effect_postcondition_v2.js';
+import {replacedSavedProjectChecksV2} from '../assignments/saved_copy_handoff_v2.js';
+import path from 'node:path';
 
 /** A discoverable existing read contract, not an executed check or fuel grant.
  * Candidate identities come from native receipts, not program-return claims.
@@ -152,9 +154,9 @@ export function codexAssignmentEvidenceContextV2(snapshot: AssignmentSnapshotV2,
   const hostBudget = budgetStatus ? { host_budget: assignmentBudgetForPrompt(budgetStatus) } : {};
   const hint=observedWorkReadbackGuidance(snapshot);
   const continuationReadback=hint?{continuation_readback:hint}:{};
-  const verified_postconditions=verifiedPostconditions(snapshot);
+  const acceptedChecks=verifiedPostconditions(snapshot);
   const inspection_read_candidates=inspectionReadCandidates(snapshot);
-  const pendingOperations = Object.values(snapshot.operations)
+  const uncheckedOperations = Object.values(snapshot.operations)
     .filter(op => op.requested_effect === "apply" && op.persistent_effect === "applied" && op.settlement_state === "settled"
       && sameAssignmentBindingV2(op.binding, snapshot.current_binding)
       && !snapshot.input_invalidated_operation_ids?.includes(op.operation_id)
@@ -162,6 +164,20 @@ export function codexAssignmentEvidenceContextV2(snapshot: AssignmentSnapshotV2,
     .sort((a,b)=>(b.settled_assignment_version??0)-(a.settled_assignment_version??0)
       || (b.settled_at??b.opened_at??'').localeCompare(a.settled_at??a.opened_at??'')
       || b.operation_id.localeCompare(a.operation_id));
+  const replacement=replacedSavedProjectChecksV2(snapshot,uncheckedOperations);
+  const verifiedReplacement=replacement&&acceptedChecks.some(row=>row.operation_id===replacement.current.operation_id
+   &&row.read_operation_id===replacement.current.file_inspection_operation_id)?replacement:null;
+  const superseded=new Set(verifiedReplacement?.superseded);
+  const pendingOperations=uncheckedOperations.filter(op=>!superseded.has(op.operation_id));
+  const verified_postconditions=acceptedChecks.map(row=>{
+   if(!verifiedReplacement||row.operation_id!==verifiedReplacement.current.operation_id)return row;
+   const ids=verifiedReplacement.superseded.slice(0,8);
+   return {...row,
+    scope:'Latest native file inspection for a checked revision of the same review copy. Model content and appearance checks are separate.',
+    guidance:'The updated file replaced the earlier revision at this exact path. Reuse this independent file inspection. Earlier file checks remain in history and need no repeat. Finish any requested model or drawing checks.',
+    saved_file_check:{file_name:path.win32.basename(verifiedReplacement.current.file),superseded_operation_ids:ids,
+     superseded_count:verifiedReplacement.superseded.length}};
+  });
   const pendingVerification = pendingOperations.slice(0, 8).map(op => {
     const next_inspection=pendingDuctVerificationRequestV2(op);
     const guidance=familyLoadVerificationExclusionGuidanceV2(snapshot,op)

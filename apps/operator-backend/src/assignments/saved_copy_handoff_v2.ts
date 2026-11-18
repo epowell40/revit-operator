@@ -36,22 +36,27 @@ function nativePayload(snapshot:AssignmentSnapshotV2,operation:OperationV2,accep
  return null;
 }
 
-function latestSavedProject(snapshot:AssignmentSnapshotV2, eligible:(save:OperationV2,file:string)=>boolean){
+function boundSavedProject(snapshot:AssignmentSnapshotV2,op:OperationV2,eligible:(save:OperationV2,file:string)=>boolean){
+  const r=op.result,body=op.input?.body as Record<string,unknown>|undefined;
+  if(op.requested_effect!=='apply'||op.persistent_effect!=='applied'||op.input?.path!=='/revit/save-as'||op.input.method!=='POST'
+   ||!r||!nativeDocumentCheckpointResultV2(r)||!boundNativeOperation(snapshot,op)||!Number.isFinite(Date.parse(r.completed_at))
+   ||!body||body.dryRun===true||typeof body.filePath!=='string')return null;
+  const saved=r.native_artifact_receipt?.save_document,output=r.native_artifact_receipt?.outputs?.[0];
+  if(!saved?.after||!output||output.stable_read!==true||!path.win32.isAbsolute(saved.after.path)||saved.project_binding_changed
+   ||saved.before.project_fingerprint!==op.binding.document_fingerprint||saved.after.project_fingerprint!==op.binding.document_fingerprint)return null;
+  const file=saved.after.path;
+  const expected=path.win32.isAbsolute(body.filePath)?body.filePath:path.win32.resolve(path.win32.dirname(saved.before.path),body.filePath);
+  if(normalized(expected)!==normalized(file)||normalized(output.path)!==normalized(file)||!eligible(op,file))return null;
+  const id=nativePayload(snapshot,op,raw=>canonicalJsonV2(raw.artifact_receipt)===canonicalJsonV2(r.native_artifact_receipt));
+  return id?{file,copy:saved.document_path_changed,created_at:r.completed_at,observation_id:id,operation_id:op.operation_id}:null;
+}
+
+function latestSavedProject(snapshot:AssignmentSnapshotV2,eligible:(save:OperationV2,file:string)=>boolean){
  const candidates=Object.values(snapshot.operations).filter(op=>op.requested_effect==='apply'&&op.persistent_effect==='applied')
   .sort((a,b)=>(b.result?.completed_at??'').localeCompare(a.result?.completed_at??''));
  for(const op of candidates){
-  const r=op.result,body=op.input?.body as Record<string,unknown>|undefined;
-  if(!r||!nativeDocumentCheckpointResultV2(r)||!boundNativeOperation(snapshot,op)
-   ||op.input.path!=='/revit/save-as'||op.input.method!=='POST'||!Number.isFinite(Date.parse(r.completed_at))
-   ||!body||body.dryRun===true||typeof body.filePath!=='string')continue;
-  const saved=r.native_artifact_receipt?.save_document,output=r.native_artifact_receipt?.outputs?.[0];
-  if(!saved?.after||!output||output.stable_read!==true||!path.win32.isAbsolute(saved.after.path)||saved.project_binding_changed
-   ||saved.before.project_fingerprint!==op.binding.document_fingerprint||saved.after.project_fingerprint!==op.binding.document_fingerprint)continue;
-  const file=saved.after.path;
-  const expected=path.win32.isAbsolute(body.filePath)?body.filePath:path.win32.resolve(path.win32.dirname(saved.before.path),body.filePath);
-  if(normalized(expected)!==normalized(file)||normalized(output.path)!==normalized(file)||!eligible(op,file))continue;
-  const id=nativePayload(snapshot,op,raw=>canonicalJsonV2(raw.artifact_receipt)===canonicalJsonV2(r.native_artifact_receipt));
-  if(id)return {file,copy:saved.document_path_changed,created_at:r.completed_at,observation_id:id,operation_id:op.operation_id};
+  const saved=boundSavedProject(snapshot,op,eligible);
+  if(saved)return saved;
  }
  return null;
 }
@@ -89,6 +94,17 @@ function savesSeparateReviewCopy(snapshot:AssignmentSnapshotV2,save:OperationV2,
  })!==null;
 }
 
+function checkedFileInspection(snapshot:AssignmentSnapshotV2,save:OperationV2){
+ return save.verification_operation_ids.find(id=>{
+  const read=snapshot.operations[id],result=read?.result;
+  return read?.verification_of_operation_id===save.operation_id&&result?.dispatch_state==='dispatched'
+   &&result.result_schema_id==='operator-native/POST:/revit/inspect-exported-files/v2'
+   &&boundNativeOperation(snapshot,read)&&verificationOperationHasVerifiedPostconditionV2(snapshot,id)
+   &&Date.parse(read.opened_at)>=Date.parse(save.result!.completed_at)
+   &&nativePayload(snapshot,read,raw=>savedDocumentPostconditionV2(save.input,save.result!.native_artifact_receipt,raw,read.input))!==null;
+ });
+}
+
 /** An independently checked copy of the project at its saved checkpoint.
  * An outstanding model response cannot change these facts. Native work,
  * uncertain effects and a later committed edit can supersede the checkpoint. */
@@ -100,17 +116,29 @@ export function savedProjectCheckpointV2(snapshot:AssignmentSnapshotV2){
   if(!localFile(file,'.rvt')||!save.settled_assignment_version)return false;
   if(Object.values(snapshot.operations).some(op=>op.operation_id!==save.operation_id&&op.persistent_effect!=='none'
     &&(!op.settled_assignment_version||op.settled_assignment_version>save.settled_assignment_version!)))return false;
-  inspectionId=save.verification_operation_ids.find(id=>{
-   const read=snapshot.operations[id],result=read?.result;
-   return read?.verification_of_operation_id===save.operation_id&&result?.dispatch_state==='dispatched'
-    &&result.result_schema_id==='operator-native/POST:/revit/inspect-exported-files/v2'
-    &&boundNativeOperation(snapshot,read)&&verificationOperationHasVerifiedPostconditionV2(snapshot,id)
-    &&Date.parse(read.opened_at)>=Date.parse(save.result!.completed_at)
-    &&nativePayload(snapshot,read,raw=>savedDocumentPostconditionV2(save.input,save.result!.native_artifact_receipt,raw,read.input))!==null;
-  });
+  inspectionId=checkedFileInspection(snapshot,save);
   return inspectionId!==undefined&&savesSeparateReviewCopy(snapshot,save,file);
  });
  return saved&&inspectionId?{...saved,file_inspection_operation_id:inspectionId}:null;
+}
+
+/** Earlier file checks are historical when a checked overwrite replaces their
+ * bytes at the same output path. This affects guidance only. */
+export function replacedSavedProjectChecksV2(snapshot:AssignmentSnapshotV2,candidates:readonly OperationV2[]){
+ const saves=candidates.filter(op=>op.input?.path==='/revit/save-as');
+ if(!saves.length||!desktopResponseContinuationAllowed(snapshot))return null;
+ const current=savedProjectCheckpointV2(snapshot);
+ if(!current||current.copy)return null;
+ const latest=snapshot.operations[current.operation_id];
+ const superseded=saves.flatMap(op=>{
+  if(!op.settled_assignment_version||op.settled_assignment_version>=latest.settled_assignment_version!)return [];
+  const older=boundSavedProject(snapshot,op,(_save,file)=>normalized(file)===normalized(current.file));
+  if(!older)return [];
+  const readId=checkedFileInspection(snapshot,op);
+  const readVersion=readId?snapshot.operations[readId].settled_assignment_version:undefined;
+  return readVersion&&latest.admitted_assignment_version&&readVersion<latest.admitted_assignment_version?[op.operation_id]:[];
+ });
+ return superseded.length?{current,superseded}:null;
 }
 
 /** A checked save can settle its file step in the current actor response.
