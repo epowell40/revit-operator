@@ -103,6 +103,76 @@ test('overflow preserves every image, raw failure/control, visual check and curr
     envelopeWithReview.evidence_projections[0].visual_work_review);
 });
 
+const targetedSheet = (requestedPlacementIds: number[]) => {
+  const viewportGeometry = [101, 102, 103, 104].map(viewportId => ({
+    viewportId, viewId: viewportId + 100, viewportType: {id: 50, name: 'Viewport with title'},
+    rotation: 'None', center: {u: viewportId / 100, v: 1},
+    placementAnchor: {pointXyz: [viewportId, 0, 0]},
+    box: {minU: viewportId / 100, minV: 0, maxU: viewportId / 100 + 0.3, maxV: 1},
+  }));
+  const placedViews = viewportGeometry.map(row => ({viewId: row.viewId, name: `Plan ${row.viewId}`,
+    viewType: 'FloorPlan', scale: 48, viewportIds: [row.viewportId]}));
+  const placedSchedules = [{instanceId: 300, scheduleId: 400, name: 'Panel list',
+    boundingBox: {minU: 0, minV: 0, maxU: 1, maxV: 1}}];
+  return {...projection('targeted', true), attempt_id: 'opv2_' + 'b'.repeat(64),
+    verification_relevance: 'authoritative', truncated: false, key_counts: {'viewportIds.length': 4, 'pending_verification.length': 1},
+    key_facts: {status: 'Ok', 'placedViews[0].name': 'conflicting retained summary'}, inline_payload: {
+      status: 'Ok', action: 'detail', sheetElementId: 99, sheetId: 99, viewId: 99,
+      sheetNumber: 'E001', sheetName: 'Electrical plans', title: 'Electrical plans', isPlaceholder: false,
+      requestedPlacementIds, viewportCount: 4, placedViewCount: 4, placedScheduleCount: 1, titleBlockCount: 0,
+      sheetOutline: {minU: 0, minV: 0, maxU: 2, maxV: 2}, viewportIds: viewportGeometry.map(row => row.viewportId),
+      viewportGeometry, placedViews, placedSchedules, titleBlocks: [],
+    }};
+};
+const targetedBatch = (p: any) => Array.from({length: 6}, (_, i) => ({
+  type: 'function_call_output', call_id: `layout_${i}`, output: [
+    {type: 'input_text', text: JSON.stringify(context.modelEvidenceEnvelope([p]))},
+    {type: 'input_text', text: '{"pending_verification":1,"outcome":"unchecked"}'},
+  ],
+}));
+
+test('targeted sheet reads keep requested view and schedule boxes when a completed tool batch overflows', () => {
+  const source = targetedSheet([102, 300]);
+  const input = targetedBatch(source), original = structuredClone(input);
+  const budget = {item_bytes: 8192, request_bytes: 15000};
+  assert.throws(() => context.assertBoundedModelEvidencePayload(input, budget), /15000-byte/);
+  assert.strictEqual(prepare(input), input);
+  const result = prepare(input, budget);
+  context.assertBoundedModelEvidencePayload(result, budget);
+  assert.deepEqual(input, original);
+  const reads = result.map((row: any, i: number) => {
+    assert.equal(row.call_id, input[i].call_id);
+    assert.deepEqual(row.output[1], input[i].output[1]);
+    return JSON.parse(row.output[0].text).evidence_projections[0];
+  });
+  const compact = reads.filter((read: any) => read.truncated);
+  assert.ok(compact.length > 0);
+  for (const read of compact) {
+    assert.equal(read.evidence_id, source.evidence_id);
+    assert.equal(read.content_hash, source.content_hash);
+    assert.deepEqual(read.retrieval, source.retrieval);
+    assert.equal(read.key_counts['pending_verification.length'], 1);
+    assert.equal(read.key_facts['placedViews[0].name'], 'conflicting retained summary');
+    assert.deepEqual(read.inline_payload.requestedPlacementIds, [102, 300]);
+    assert.equal(read.inline_payload.viewportCount, 4);
+    assert.equal(read.additional_evidence, true);
+    assert.deepEqual(read.inline_payload.viewportGeometry.map((row: any) => row.viewportId), [102]);
+    assert.deepEqual(read.inline_payload.viewportGeometry[0].box, source.inline_payload.viewportGeometry[1].box);
+    assert.deepEqual(read.inline_payload.placedViews, [source.inline_payload.placedViews[1]]);
+    assert.deepEqual(read.inline_payload.placedSchedules, source.inline_payload.placedSchedules);
+  }
+});
+
+test('targeted sheet fallback refuses missing targets and untrusted or mutation projections', () => {
+  const budget = {item_bytes: 8192, request_bytes: 15000};
+  for (const source of [targetedSheet([999]), targetedSheet([102, 102]),
+    {...targetedSheet([102]), trust_level: 'untrusted_caller'},
+    {...targetedSheet([102]), effect_state: 'applied'},
+    {...targetedSheet([102]), artifact_ref: 'ev1_foreign'}]) {
+    assert.throws(() => prepare(targetedBatch(source), budget), /15000-byte/);
+  }
+});
+
 test('actual relay batches once, appends current canonical feedback, and retains usage without another provider turn', async () => {
   const {default: fs} = await import('node:fs'), {default: os} = await import('node:os');
   const {default: path} = await import('node:path'), {default: http} = await import('node:http');
