@@ -208,6 +208,21 @@ public sealed class NativeProgramCompilerTests
     {
         Reject(Program("doc.ActiveView.Name=\"x\";return \"\";"), "NATIVE_READ_HAS_MUTATION", "read");
         Reject(Program("doc.ActiveView.Scale++;return \"\";"), "NATIVE_READ_HAS_MUTATION", "read");
+        Reject(Program("var options=new Options();options.View=doc.ActiveView;return \"\";"), "NATIVE_READ_HAS_MUTATION", "read");
+        Reject(Program("var options=new Options { View=doc.ActiveView };doc.ActiveView.Name=\"x\";return \"\";"),
+            "NATIVE_READ_HAS_MUTATION", "read");
+    }
+
+    [NativeCompileFact]
+    public void FreshGeometryOptionsCanSelectAViewInAReadProgram()
+    {
+        var result = Compile(Program("var element=doc.GetElement(new ElementId(32));" +
+            "var geometry=element.get_Geometry(new Options { View=doc.ActiveView });" +
+            "return geometry == null ? \"missing\" : geometry.Count().ToString();"), "read");
+        Assert.NotNull(result.Artifact);
+        Assert.Contains(result.Artifact!.DirectNativeMembers,
+            member => member.Id == "P:Autodesk.Revit.DB.Options.View" && !member.MutationHint);
+        Assert.DoesNotContain(result.Artifact.DirectNativeMembers, member => member.MutationHint);
     }
 
     [NativeCompileFact]

@@ -156,12 +156,23 @@ internal static class NativeProgramCompiler
             if (symbol is not (IMethodSymbol or IPropertySymbol or IFieldSymbol)) continue;
             var id = symbol.GetDocumentationCommentId() ?? symbol.ToDisplayString();
             var mutation = symbol is IMethodSymbol && NativeApiMutationNames.IsMutating(name);
-            // A native property setter is also a mutation; source assignment cannot
-            // hide it behind a property rather than a Set* method.
-            if (symbol is IPropertySymbol && (node.Parent is AssignmentExpressionSyntax a && a.Left == node
+            // A property write may mutate the model. An initializer selecting
+            // the view on a new detached geometry query options object only
+            // configures extraction. All other property writes keep the guard.
+            if (symbol is IPropertySymbol && (node.Parent is AssignmentExpressionSyntax assignment && assignment.Left == node
                 || node.Parent is PrefixUnaryExpressionSyntax prefix && (prefix.IsKind(SyntaxKind.PreIncrementExpression) || prefix.IsKind(SyntaxKind.PreDecrementExpression))
                 || node.Parent is PostfixUnaryExpressionSyntax postfix && (postfix.IsKind(SyntaxKind.PostIncrementExpression) || postfix.IsKind(SyntaxKind.PostDecrementExpression))))
-                mutation = true;
+            {
+                var initializesFreshGeometryOptionsView = id == "P:Autodesk.Revit.DB.Options.View"
+                    && symbol.ContainingAssembly.Name == "RevitAPI"
+                    && node.Parent is AssignmentExpressionSyntax initializerAssignment
+                    && initializerAssignment.IsKind(SyntaxKind.SimpleAssignmentExpression)
+                    && initializerAssignment.Parent is InitializerExpressionSyntax initializer
+                    && initializer.IsKind(SyntaxKind.ObjectInitializerExpression)
+                    && initializer.Parent is BaseObjectCreationExpressionSyntax creation
+                    && SymbolEqualityComparer.Default.Equals(model.GetTypeInfo(creation).Type, symbol.ContainingType);
+                mutation = !initializesFreshGeometryOptionsView;
+            }
             members[id] = new(id, typeName, name, mutation || members.TryGetValue(id, out var old) && old.MutationHint);
             if (mode == "read" && mutation)
                 syntaxDiagnostics.Add(Diagnostic("NATIVE_READ_HAS_MUTATION", "Read-mode source references a native mutation: " + id));
