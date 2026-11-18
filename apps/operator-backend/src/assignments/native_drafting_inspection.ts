@@ -4,6 +4,8 @@ import {sameAssignmentBindingV2} from '../domain/assignment-kernel/identity.js';
 import {appliedOperationHasVerifiedPostconditionV2} from '../domain/assignment-kernel/outcome.js';
 import {nativeProgramEffectStateV2,readNativeProgramEffectObservationV2} from '../verification/native_program_effect_postcondition_v2.js';
 import {nativeInspectionTargetIdsV2} from './native_inspection_coverage.js';
+import {deletionRequestV2} from '../verification/deletion_contract_v2.js';
+import {verifiedDeletionClosureV2} from '../verification/deleted_elements_postcondition_v2.js';
 
 /** A mixed inspection can include surviving objects with identity-only coverage.
  * Unsupported native public state is NOT proof of those objects' preservation.
@@ -55,7 +57,9 @@ export function nativeDraftingInspectionTargetsV2(snapshot:AssignmentSnapshotV2,
    ||snapshot.input_invalidated_operation_ids?.includes(op.operation_id)||snapshot.unresolved_unknown_operation_ids.length
    ||typeof state?.documentSessionId!=='string'||!state.documentSessionId||state.documentSessionId.length>200)return null;
  const fingerprint='sha256:'+String(snapshot.current_binding.document_fingerprint??'').replace(/^sha256:/,'');
- const observed=inspectionState(state,fingerprint,ids,rows);
+ // The native state collector orders its selector by ID. Match the exact
+ // requested set here while leaving the wire receipt and its internal order intact.
+ const observed=inspectionState(state,fingerprint,[...ids].sort((a,b)=>a-b),rows);
  if(!observed||!observed.version||rows.some(r=>observed.items.find(i=>i.elementId===r.id)?.found!==r.found))return null;
  const writes=Object.values(snapshot.operations).filter(o=>o.requested_effect==='apply'&&o.persistent_effect!=='none');
  const lastEdit=Math.max(0,...writes.map(o=>Date.parse(o.result?.completed_at??'')));
@@ -68,14 +72,23 @@ export function nativeDraftingInspectionTargetsV2(snapshot:AssignmentSnapshotV2,
  for(let start=0;start<present.length;start+=500){const chunk=present.slice(start,start+500);
   if(!nativeInspectionTargetIdsV2({...op.input,body:{...body,elementIds:chunk.map(r=>r.id)}},{result:chunk}))return null;
  }
- const states=new Map<string,ReturnType<typeof nativeProgramEffectStateV2>>();
+ const latestSave=writes.filter(w=>w.input?.path==='/revit/save-as'&&sameAssignmentBindingV2(w.binding,snapshot.current_binding))
+   .sort((a,b)=>Date.parse(b.result!.completed_at)-Date.parse(a.result!.completed_at))[0];
+ const absentByWrite=new Map<string,Set<number>>();
  for(const r of rows.filter(r=>!r.found)){
   const latest=writes.filter(w=>w.result?.affected_target_identities?.includes('element_id:'+r.id))
     .sort((a,b)=>Date.parse(b.result!.completed_at)-Date.parse(a.result!.completed_at))[0];
   if(!latest||!sameAssignmentBindingV2(latest.binding,snapshot.current_binding)||!appliedOperationHasVerifiedPostconditionV2(snapshot,latest.operation_id))return null;
-  if(!states.has(latest.operation_id))states.set(latest.operation_id,nativeProgramEffectStateV2(snapshot,latest));
-  const prior=states.get(latest.operation_id)?.items.find(i=>i.elementId===r.id);
-  if(!prior||prior.found!==false)return null;
+  if(!absentByWrite.has(latest.operation_id)){
+   const explicitDelete=deletionRequestV2(latest.input);
+   // After Save As, the native observation must identify the saved session.
+   // Verification of the file itself remains a separate inspection citation.
+   if(explicitDelete&&latestSave&&latestSave.result?.native_artifact_receipt?.save_document?.after?.session_id!==state.documentSessionId)return null;
+   const absent=explicitDelete?verifiedDeletionClosureV2(snapshot,latest)
+     :nativeProgramEffectStateV2(snapshot,latest)?.items.filter(i=>!i.found).map(i=>i.elementId);
+   absentByWrite.set(latest.operation_id,new Set(absent??[]));
+  }
+  if(!absentByWrite.get(latest.operation_id)!.has(r.id))return null;
  }
  return [...ids].sort((a,b)=>a-b);
 }

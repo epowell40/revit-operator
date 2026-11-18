@@ -27,6 +27,12 @@ function subject(snapshot:AssignmentSnapshotV2,op:OperationV2){const r=op.result
   return deletionClosureV2(op.input,payload,r.affected_target_identities??[],nativeChangeInventoryCompleteV2(op,r,payload));
 }
 
+/** Already verified deletion closure for a later native inspection. The
+ * affected footprint may contain surviving elements; only return deleted IDs. */
+export function verifiedDeletionClosureV2(snapshot:AssignmentSnapshotV2,op:OperationV2):number[]|null{
+  return appliedOperationHasVerifiedPostconditionV2(snapshot,op.operation_id)?subject(snapshot,op):null;
+}
+
 export function deletionReadbackPlansForIdsV2(ids:readonly number[]){
   const plans=[];
   // The native API has a real sixteen-operation limit; do not generate an

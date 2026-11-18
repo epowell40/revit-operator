@@ -6,6 +6,7 @@ import type { AssignmentWorkPlanV2 } from "../domain/assignment-kernel/work_plan
 import { appliedOperationHasVerifiedPostconditionV2, verificationOperationHasVerifiedPostconditionV2 } from '../domain/assignment-kernel/outcome.js';
 import { verifiedNativeWorkTargetIdentitiesV2 } from '../domain/assignment-kernel/verified_work_targets.js';
 import { sameAssignmentBindingV2 } from '../domain/assignment-kernel/identity.js';
+import { deletionRequestV2 } from '../verification/deletion_contract_v2.js';
 
 /** Actionable pointers derived from verified dependencies, never inspection
  * proof. Keep the final semantic/preservation comparison and owner review. */
@@ -36,6 +37,7 @@ export function projectNextNativeInspectionV2(snapshot?: AssignmentSnapshotV2) {
   const times = Object.values(snapshot.operations).filter(o => o.persistent_effect === 'applied').map(o => Date.parse(o.result?.completed_at ?? ''));
   const latest = Math.max(Date.parse(item.declared_at),0,...times);
   if (!Number.isFinite(latest)) return null;
+  const includesDeletion = edits.some(id => deletionRequestV2(snapshot.operations[id]?.input) !== null);
   const modelReadCandidates = Object.values(snapshot.operations).filter(op => {
     const r=op.result,body=op.input.body as Record<string,unknown>|undefined,requested=body?.elementIds??body?.ids;
     // The existing inspection consumer also accepts exact typed note reads.
@@ -44,7 +46,9 @@ export function projectNextNativeInspectionV2(snapshot?: AssignmentSnapshotV2) {
     // native bytes, identity coverage, freshness and paired artifact evidence.
     const typedNotes=op.input.path === '/revit/find-text-notes' && Array.isArray(body?.elementIds)
       && body.elementId == null && body.ids == null && body.docId == null && body.familyDocumentId == null;
-    return ids.length > 0 && (op.input.path === '/revit/get-element-summary' || typedNotes) && op.input.method === 'POST'
+    const matchingRead = includesDeletion ? op.input.path === '/revit/get-element-summary' && body?.includeNativeProgramEffectState === true
+      : op.input.path === '/revit/get-element-summary' || typedNotes;
+    return ids.length > 0 && matchingRead && op.input.method === 'POST'
       && op.requested_effect === 'read' && op.persistent_effect === 'none' && op.settlement_state === 'settled'
       && r?.authority === 'native-host' && r.status === 'succeeded' && r.dispatch_state === 'dispatched'
       && sameAssignmentBindingV2(op.binding,snapshot.current_binding) && sameAssignmentBindingV2(r.binding,op.binding)
@@ -61,7 +65,8 @@ export function projectNextNativeInspectionV2(snapshot?: AssignmentSnapshotV2) {
       && !snapshot.input_invalidated_operation_ids?.includes(id) && verificationOperationHasVerifiedPostconditionV2(snapshot,id);
   });
   return {item_id:item.item_id, required_target_ids:targets,
-    element_summary_read:ids.length ? {method:'POST',path:'/revit/get-element-summary',body:{elementIds:ids}} : null,
+    element_summary_read:ids.length ? {method:'POST',path:'/revit/get-element-summary',body:{elementIds:ids,
+      ...(includesDeletion?{includeNativeProgramEffectState:true}:{})}} : null,
     existing_element_read_candidates:modelReadCandidates,
     paired_artifact_read_candidates:[...new Set(paired)].sort(), validation_required:true, coverage_only:true,
     notice:'Exact dependency targets and candidate read metadata, not inspection proof. Validate existing candidates through the normal checklist consumer first; if missing or incomplete use a supported fresh complete identity read after the latest edit (including SaveAs). Pair file reads for artifact targets. Keep requested preservation comparisons and final visual review; do not repeat edits, saves or unrelated discovery to obtain coverage.'};
