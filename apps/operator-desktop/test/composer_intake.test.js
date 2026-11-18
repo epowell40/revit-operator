@@ -42,6 +42,17 @@ test('ordinary fresh local composer uses available computer owner and preserves 
   assert.equal(h.calls[0].submission.attachments[0].dataBase64, 'source-pixels');
 });
 
+test('long computer task briefs retain their final instruction and excessive text stays in the unsent draft', () => {
+  const h = routingHarness();
+  const clause = " Do not save over the original.";
+  const prompt = "Update the current schedule.".padEnd(16_000 - clause.length, " Check labels.") + clause;
+  const attachment = { filename: "reference.pdf", dataBase64: "source" };
+  const submitted = h.create(prompt, [attachment]);
+  assert.equal(submitted.text, prompt);
+  assert.equal(submitted.attachments[0].filename, attachment.filename);
+  assert.throws(() => h.create("X" + prompt, [attachment]), /exceeds 16,000 characters/);
+  assert.deepEqual(h.calls, []);
+});
 test('a file drop stages all references and keeps one submission and one task owner', async () => {
   const files = [{ name: 'Library example.pdf', type: 'application/pdf', size: 3 },
     { name: 'Hospital example.pdf', type: 'application/pdf', size: 3 }];

@@ -30,7 +30,7 @@ import {validateSheetExportScope} from './sheet_export_scope.mjs';
 import { needsPrinterCapableLane, PRINT_EXECUTION_GUIDANCE, PDF_EXPORT_TOOL_GUIDANCE, waitForLocalArtifact } from "./print_execution_policy.mjs";
 import { createTaskRunRegistry } from "./task_runs.mjs";
 import { rejectedChatSubmissionAdmission } from "./public/chat_submission_admission.mjs";
-import { excludesComputerUse } from "./public/composer_intake.mjs";
+import { exactComputerTaskSource, excludesComputerUse } from "./public/composer_intake.mjs";
 import { parseTaskNavigation, readNavigationAssignment } from "./task_navigation.mjs";
 const taskRuns = createTaskRunRegistry();
 // Only an actual host-scoped retrieval can use the bounded selection relay.
@@ -5859,6 +5859,7 @@ async function restoreSavedComputerAssignment(binding, control, options = {}) {
 }
 
 async function beginSidecarComputerAssignment(prompt, attachments = [], options = {}) {
+  const source = exactComputerTaskSource(prompt);
   const ensureSession = options.ensureComputerBackendSession || ensureComputerBackendSession;
   const request = options.readBackendJson || readBackendJson;
   const sessionId = await ensureSession();
@@ -5871,7 +5872,7 @@ async function beginSidecarComputerAssignment(prompt, attachments = [], options 
     // A protected area or "do not print" must not turn an edit into a read.
     const classification = await request("/chat/intake", { method: "POST", signal: options.signal,
       body: JSON.stringify({ version: "operator.backend.v1", session_id: sessionId,
-        message_id: conversationMessageId, user_text: trimToolText(prompt, 5000),
+        message_id: conversationMessageId, user_text: source,
         intake_attachment_count: Array.isArray(attachments) ? attachments.length : 0 }) });
     if (classification?.routing_status !== "accepted" || !["inspect", "task"].includes(classification.route))
       throw new Error("I couldn’t establish this task’s scope. No model work has started; please retry the request.");
@@ -5881,7 +5882,7 @@ async function beginSidecarComputerAssignment(prompt, attachments = [], options 
   const workBudget = {
     mode: "sidecar_computer",
     source: "operator_desktop",
-    source_user_request: trimToolText(prompt, 5000),
+    source_user_request: source,
     ...(conversationMessageId ? { conversation_message_id: conversationMessageId } : {}),
     execution_substrate: "operator_desktop_outer_agent",
     ...target,
@@ -5894,7 +5895,7 @@ async function beginSidecarComputerAssignment(prompt, attachments = [], options 
     body: JSON.stringify({
       session_id: sessionId,
       title,
-      objective: trimToolText(prompt, 5000) || title,
+      objective: source || title,
       acceptance_criteria: [
         "Return a truthful, evidence-backed result for the requested work."
       ],
@@ -5932,7 +5933,7 @@ async function beginSidecarComputerAssignment(prompt, attachments = [], options 
     kernel_version: kernelVersion,
     control_command_id: null,
     title,
-    objective: trimToolText(prompt, 5000) || title,
+    objective: source || title,
     work_budget: { ...workBudget, requested_effect: readCanonicalAssignmentRequestedEffect(payload.goal) }
   };
   computerState.sidecarAssignment = assignment;
@@ -15791,13 +15792,6 @@ app.post("/api/computer/run", async (req, res) => {
   const savedBinding = req.body?.assignment_binding_v2;
   if (savedBinding && (freshConversation || req.body?.clarification_response))
     return sendJsonError(res, "Saved continuation cannot also start a new conversation or resolve a different clarification.", 409);
-  if (freshConversation && desktopHandoffReadinessRequired()) {
-    try {
-      assertDesktopHandoffNativeReady(await checkRevitBridgeHealth());
-    } catch (error) {
-      return sendJsonError(res, error, 409);
-    }
-  }
   const requestedClarificationResponse = req.body?.clarification_response;
   if (freshConversation && requestedClarificationResponse) return sendJsonError(res, "A new conversation cannot resume a saved clarification.", 409);
   let clarificationContinuation = null;
@@ -15812,6 +15806,7 @@ app.post("/api/computer/run", async (req, res) => {
       expected_control_command_id:computerState.sidecarAssignment.control_command_id??null}:null;
   let attachments = [];
   try {
+    if (!savedBinding && !clarificationContinuation && !retainedDirection) exactComputerTaskSource(prompt);
     attachments = sanitizePendingAttachments(req.body?.pending_attachments || []);
   } catch (error) {
     return sendJsonError(res, error, 400);
@@ -15820,6 +15815,13 @@ app.post("/api/computer/run", async (req, res) => {
   if(retainedDirection&&attachments.length)return sendJsonError(res,'Saved task directions currently accept text only. Your attachments remain in the draft.',409);
   if (!prompt && attachments.length === 0) {
     return sendJsonError(res, "prompt or attachment is required.", 400);
+  }
+  if (freshConversation && desktopHandoffReadinessRequired()) {
+    try {
+      assertDesktopHandoffNativeReady(await checkRevitBridgeHealth());
+    } catch (error) {
+      return sendJsonError(res, error, 409);
+    }
   }
   // Reset only the idle relay, never the persisted prior assignment or its effects.
   try { await releaseIdleNativeInteractiveContinuity(); }
