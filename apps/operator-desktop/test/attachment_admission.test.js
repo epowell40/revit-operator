@@ -109,6 +109,49 @@ test('the desktop run fits an in-limit Unicode brief alongside the full attachme
   }
 });
 
+test('a persisted registered-reference answer returns through the desktop endpoint without a model assignment', async () => {
+  const sources = [{ id: 'equipment-reference' }, { id: 'notes-reference' }];
+  const prompt = 'Compare these reference files only. What does each say?';
+  const answer = 'Equipment.json reports 275 CFM. Keep the existing panel names (Notes.txt).';
+  const calls = [];
+  configureOperatorDesktopTestHooks({ computerRunTestHooks: {
+    enableSidecarAssignment: true,
+    ensureComputerBackendSession: async () => 'source-answer-session',
+    getLatestComputerUserBackendAttachments: async () => sources,
+    buildHybridBackendContext: async () => ({ui:{client:'synthetic-file-only-check'}}),
+    readBackendJson: async (route, options) => {
+      calls.push(route);
+      assert.equal(route, '/chat/intake');
+      const body = JSON.parse(options.body);
+      assert.equal(body.user_text, prompt);
+      assert.equal(body.intake_attachment_count, 2);
+      assert.deepEqual(body.intake_attachment_ids, sources.map(source => source.id));
+      return { route: 'answer', assistant_message: answer, routing_status: 'accepted',
+        history_saved: true, registered_reference_answer: true };
+    }
+  } });
+  const server = app.listen(0, '127.0.0.1');
+  try {
+    await new Promise((resolve, reject) => { server.once('listening', resolve); server.once('error', reject); });
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const response = await fetch(origin + '/api/computer/run', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, pending_attachments: [file('Equipment.json'), file('Notes.txt')] }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).direct_reference_answer, true);
+    const state = await fetch(origin + '/api/computer/state').then(result => result.json());
+    assert.equal(state.running, false);
+    assert.equal(state.assignmentBindingV2, null);
+    assert.equal(state.progress.phase, 'completed');
+    assert.equal(state.messages.at(-1).text, answer);
+    assert.deepEqual(calls, ['/chat/intake']);
+  } finally {
+    configureOperatorDesktopTestHooks();
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
 test('a single actor message preserves independently addressable references even with duplicate filenames', () => {
   const sessionId = 'multiple-references';
   const attachments = ['example-one', 'example-two'].map((id, index) => {

@@ -5878,10 +5878,18 @@ async function beginSidecarComputerAssignment(prompt, attachments = [], options 
     const classification = await request("/chat/intake", { method: "POST", signal: options.signal,
       body: JSON.stringify({ version: "operator.backend.v1", session_id: sessionId,
         message_id: conversationMessageId, user_text: source,
-        intake_attachment_count: Array.isArray(attachments) ? attachments.length : 0 }) });
+        intake_attachment_count: Array.isArray(attachments) ? attachments.length : 0,
+        ...(registeredAttachments.length ? {intake_attachment_ids: registeredAttachments.map(attachment => attachment.id)} : {}) }) });
+    options.signal?.throwIfAborted();
+    if (registeredAttachments.length && classification?.routing_status === "accepted" && classification.route === "answer"
+        && classification.registered_reference_answer === true && classification.history_saved === true
+        && typeof classification.assistant_message === "string" && classification.assistant_message.trim()) {
+      return { sourceAnswer: classification.assistant_message, sessionId };
+    }
     if (classification?.routing_status !== "accepted" || !["inspect", "task"].includes(classification.route))
       throw new Error("I couldn’t establish this task’s scope. No model work has started; please retry the request.");
   }
+  options.signal?.throwIfAborted();
   const target = sidecarAssignmentTarget();
   const title = trimToolText(`${prompt || ""}`.split(/\r?\n/)[0] || "Operator Desktop assignment", 180);
   const workBudget = {
@@ -16017,13 +16025,22 @@ app.post("/api/computer/run", async (req, res) => {
       });
       const reviewStart=captureNativeCodeReviewStart(initialContext,
         computerState.messages.filter(m=>m.role==='user').map(m=>m.text).join('\n\n'));
-      await beginSidecarComputerAssignment(prompt, attachments, {
+      const started = await beginSidecarComputerAssignment(prompt, attachments, {
         conversationMessageId: messageId || `computer:${randomId()}`,
         signal: startupAbortController.signal,
         ensureComputerBackendSession: computerRunTestHooks?.ensureComputerBackendSession || ensureComputerBackendSession,
         getLatestComputerUserBackendAttachments: computerRunTestHooks?.getLatestComputerUserBackendAttachments || getLatestComputerUserBackendAttachments,
         readBackendJson: computerRunTestHooks?.readBackendJson || readBackendJson
       });
+      if (started.sourceAnswer) {
+        if(computerState.stopRequested||startupAbortController.signal.aborted)throw new Error('Stopped by user.');
+        computerState.backendSessionId=started.sessionId;computerState.running=false;computerState.desktopCaptureSuppressed=false;
+        computerState.activeAbortController=null;computerState.authorizedRuntimeProfile=null;
+        updateComputerProgress({phase:'completed',currentAction:'Answer returned from the attached references',completedAt:new Date().toISOString()});
+        addComputerMessage('assistant',started.sourceAnswer);
+        finishComputerRunCertifiedRead(certifiedReadRun.generation,{kind:'success'});
+        return res.json({ok:true,desktopCaptureSuppressed:true,direct_reference_answer:true});
+      }
       computerState.nativeChangeObservationCursor = nativeChangeObservationCursor(computerState.sidecarAssignment, initialContext.nativeChangeObservation);
       computerState.nativeCodeReviewStart = bindNativeCodeReviewStart(reviewStart,computerState.sidecarAssignment);
       const pending = computerState.pendingClarification;
