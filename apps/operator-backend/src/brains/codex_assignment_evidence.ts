@@ -9,6 +9,7 @@ import { resultObservationEligibilityV2 } from "../domain/assignment-kernel/resu
 import type { assignmentWorkBudgetStatusV2 } from "../assignments/assignment_work_allowance_v2.js";
 import { assignmentBudgetForPrompt } from "./assignment_budget_prompt.js";
 import {NATIVE_PROPERTY_COMPARISON_FACT_V2}from '../verification/native_property_comparison_v2.js';
+import {nativeAccessoryBranchDiagnosticV2} from '../verification/native_accessory_evidence_v2.js';
 import {WORK_PLAN_INSPECTION_PATHS} from '../assignments/native_inspection_coverage.js';
 import {projectNextNativeInspectionV2} from '../assignments/work_plan_projection.js';
 import {regularSchedulePresentationCheckedScopeV2} from '../verification/regular_schedule_presentation_v2.js';
@@ -45,8 +46,10 @@ function latestNativeComparison(snapshot:AssignmentSnapshotV2,operationId:string
    .sort((a,b)=>(b!.settled_assignment_version??0)-(a!.settled_assignment_version??0))[0];
  if(!read)return undefined;
  if(read.result&&read.result.status!=='succeeded')return {read_operation_id:read.operation_id,state:'unavailable',reason:read.result.status};
+ const accessory=nativeAccessoryBranchDiagnosticV2(snapshot,read);
+ if(accessory)return accessory;
  for(const id of read.observation_ids){const o=snapshot.observations[id];
-  if(o?.authority!=='native-host'||o.raw_payload_hash!==read.result?.raw_payload_hash||!sameAssignmentBindingV2(o.binding,snapshot.current_binding))continue;
+  if(o?.authority!=='native-host'||o.operation_id!==read.operation_id||o.raw_payload_hash!==read.result?.raw_payload_hash||!sameAssignmentBindingV2(o.binding,snapshot.current_binding))continue;
   const fact=o.facts.find(f=>f.fact_id===NATIVE_PROPERTY_COMPARISON_FACT_V2&&f.fact_class==='control');
   if(typeof fact?.value!=='string'||fact.value.length>20000)continue;
   try{return {read_operation_id:read.operation_id,observation_id:id,evidence_id:o.raw_payload_ref.replace(/^evidence:/,''),as_of_read:true,...JSON.parse(fact.value)};}catch{/* malformed diagnostics never become authority */}

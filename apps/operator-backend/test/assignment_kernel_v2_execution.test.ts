@@ -18,10 +18,11 @@ import { revitRouteEffect } from "../src/action_path_mutability.js";
 import {example as nativeAccessoryExample} from './native_accessory_preservation.fixtures.js';
 import {committedNativeAccessoryReadbackPlanV2} from '../src/verification/native_accessory_evidence_v2.js';
 import {segmented} from './native_segmented_preservation_v2.test.js';
+import {codexAssignmentEvidenceContextV2} from '../src/brains/codex_assignment_evidence.js';
 
 test('native interactive accessory independent read settles through the existing kernel and survives durable restart',()=>{
  for(const kind of ['duct','pipe'] as const)for(const variant of ['packed_correct','packed_wrong_port','packed_non_native','correct','large_remote_prefix','large_remote_damage','unchanged_remote','missing_remote','extra_remote','forged_changed','omitted_changed','wrong_port','stale','echo','non_native'])workspace(()=>{
-  const f=nativeAccessoryExample(kind),{goal,snapshot}=setup('apply');
+  const f=nativeAccessoryExample(kind),{goal,snapshot}=setup('apply','Insert and connect the requested accessory, then save a separate copy as C:/fixture-result.rvt.');
   if(variant.startsWith('large_remote')){
    // Unchanged owners can precede every changed owner in a native system scan.
    // The generic 128-token selector only sees these first 64 remote elements.
@@ -78,14 +79,41 @@ test('native interactive accessory independent read settles through the existing
   if(variant==='large_remote_damage')f.after.nativePlacementState.owners.find((r:any)=>r.elementId===1000).state.metadata.level=999;
   const readPayload=variant.startsWith('packed_')?segmented({...f.after,padding:'x'.repeat(2_000_001)}):f.after;
   const response=envelope(read.operation_id,read.binding,variant==='echo'?{request:f.after}:readPayload);
+  if(variant==='wrong_port')Object.assign(response.structuredContent.observation,{semantic_facts:[
+   ...response.structuredContent.observation.semantic_facts,
+   {fact_id:'control.native_accessory_branch_comparison',fact_class:'control',value:'{"state":"branch_connected"}'}]});
   Object.assign(response.structuredContent.operation_result_v2,{result_schema_id:'operator-native/POST:/revit/get-connectors/v2',
     completed_at:variant==='stale'?'2026-10-29T11:59:59Z':'2026-10-29T12:00:03Z',...(['non_native','packed_non_native'].includes(variant)?{authority:'dynamic-runtime'}:{})});
   const settled=settleAssignmentKernelOperationV2(read,response).snapshot;
   const expected=variant==='correct'||variant==='unchanged_remote'||variant==='large_remote_prefix'||variant==='packed_correct';
   assert.equal(appliedOperationHasVerifiedPostconditionV2(settled,apply.operation_id),expected,kind+':'+variant);
+  const index=JSON.parse(codexAssignmentEvidenceContextV2(settled));
+  const pending=index.pending_verification.find((entry:{operation_id:string})=>entry.operation_id===apply.operation_id);
+  if(variant==='large_remote_damage'){
+   assert.equal(pending.latest_check.state,'branch_connected');
+   assert.equal(pending.latest_check.preservation_state,'not_established');
+   assert.equal(pending.latest_check.accessory_count,1);
+   assert.equal(pending.latest_check.outside_branch_modified_count,2);
+   assert.equal(pending.latest_check.as_of_read,true);
+   assert.match(pending.latest_check.guidance,/separate review copy/);
+   for(const mutate of [(s:any)=>s.execution_control={state:'paused'},(s:any)=>s.unresolved_unknown_operation_ids=['unknown'],
+    (s:any)=>s.input_invalidated_operation_ids=[read.operation_id],
+    (s:any)=>s.operations[apply.operation_id].result.completed_at='2026-10-29T12:00:04Z']){
+    const state=structuredClone(settled);mutate(state);
+    assert.doesNotMatch(codexAssignmentEvidenceContextV2(state),/branch_connected/);
+   }
+  }else assert.notEqual(pending?.latest_check?.state,'branch_connected',kind+':'+variant);
   __testOnlyResetGoalListCache();assert.equal(appliedOperationHasVerifiedPostconditionV2(getAssignmentKernelSnapshotV2(goal.id)!,apply.operation_id),expected);
   assert.equal(Object.values(settled.operations).filter(o=>o.requested_effect==='apply').length,1);
   assert.equal(settled.outcome,'active','Insertion proof alone does not complete save, review or delivery.');
+  if(variant==='large_remote_damage'){
+   const durable=getAssignmentKernelSnapshotV2(goal.id)!;
+   assert.match(codexAssignmentEvidenceContextV2(durable),/branch_connected/);
+   const save=openAssignmentKernelOperationV2({snapshot:durable,controller_request_id:'separate-review-copy',provider_turn_id:'save',capability_id:'revit_call_tool',
+    classified_effect:'apply',target_tokens:['path:c:/fixture-result.rvt'],arguments:{method:'POST',path:'/revit/save-as',body:{filePath:'C:/fixture-result.rvt',overwrite:false,dryRun:false}},
+    opened_at:'2026-10-29T12:00:05Z'});
+   assert.equal(save.request_identity.path,'/revit/save-as','The existing route can save an authorized copy while content preservation stays open');
+  }
  });
 });
 

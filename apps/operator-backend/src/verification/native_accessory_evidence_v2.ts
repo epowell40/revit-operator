@@ -2,9 +2,10 @@ import {payloadDigestV2} from '@revitoperator/payload-digest-v2';
 import {sameAssignmentBindingV2,type AssignmentSnapshotV2,type OperationV2,type OperationResultV2} from '../domain/assignment-kernel/index.js';
 import {retainedNativeAccessoryPayloadV2} from './parameter_schedule_preservation_v2.js';
 import {combinedReadFollowsSettledChanges} from './open_duct_postcondition_v2.js';
-import {nativeAccessoryPreservationV2} from './native_accessory_preservation_v2.js';
+import {nativeAccessoryPreservationAssessmentV2,nativeAccessoryPreservationV2} from './native_accessory_preservation_v2.js';
 import {expandNativeAccessoryPreservationV2,expandNativeAccessoryReadbackV2} from './native_preservation_snapshot_v2.js';
 const route='/revit/place-mep-accessory-interactively';
+export const NATIVE_ACCESSORY_BRANCH_COMPARISON_V2='control.native_accessory_branch_comparison';
 const obj=(v:unknown):Record<string,any>=>v&&typeof v==='object'&&!Array.isArray(v)?v as Record<string,any>:{};
 const sameIds=(a:unknown,b:unknown,max:number)=>Array.isArray(a)&&Array.isArray(b)&&a.length===b.length&&a.length<=max
  &&a.every(n=>Number.isSafeInteger(n)&&n>0)&&b.every(n=>Number.isSafeInteger(n)&&n>0)
@@ -33,7 +34,11 @@ function scope(snapshot:AssignmentSnapshotV2,apply:OperationV2){
  }catch{return null;}
 }
 export function nativeAccessoryReadRequestMatchesV2(snapshot:AssignmentSnapshotV2,apply:OperationV2,input:unknown):boolean{
- const s=scope(snapshot,apply),r=obj(input),b=obj(r.body);if(!s||r.method!=='POST'||r.path!=='/revit/get-connectors')return false;
+ const s=scope(snapshot,apply);
+ return s!==null&&matchesReadRequest(s,input);
+}
+function matchesReadRequest(s:NonNullable<ReturnType<typeof scope>>,input:unknown):boolean{
+ const r=obj(input),b=obj(r.body);if(r.method!=='POST'||r.path!=='/revit/get-connectors')return false;
  const allowed=Object.keys(s.body);
  if(Object.keys(b).some(k=>!allowed.includes(k)))return false;
  return Object.entries(s.body).every(([k,v])=>Array.isArray(v)?sameIds(b[k],v,k==='elementIds'?5000:k==='placementChangedIds'?1024:k==='preservationScheduleIds'?32:50):b[k]===v);
@@ -61,14 +66,20 @@ function eligible(snapshot:AssignmentSnapshotV2,subject:OperationV2,current:Oper
   ||!sameAssignmentBindingV2(read.binding,snapshot.current_binding)||!sameAssignmentBindingV2(current.binding,read.binding)
   ||!Number.isFinite(Date.parse(current.completed_at))||!Number.isFinite(Date.parse(read.opened_at))
   ||Date.parse(read.opened_at)<Date.parse(subject.result?.completed_at??'')||Date.parse(current.completed_at)<Date.parse(read.opened_at)
-  ||!combinedReadFollowsSettledChanges(snapshot,current)||payloadDigestV2(payload).digest!==current.raw_payload_hash
-  ||!nativeAccessoryReadRequestMatchesV2(snapshot,subject,read.input))return null;
- return scope(snapshot,subject);
+  ||!combinedReadFollowsSettledChanges(snapshot,current)||payloadDigestV2(payload).digest!==current.raw_payload_hash)return null;
+ const s=scope(snapshot,subject);
+ return s&&matchesReadRequest(s,read.input)?s:null;
 }
 /** Incoming native read uses current envelope authority; it does not fabricate a
  * settled read to call the retained-evidence path. */
 export function nativeAccessoryIncomingPostconditionV2(snapshot:AssignmentSnapshotV2,subject:OperationV2,current:OperationResultV2,payload:unknown):boolean{
- try{const s=eligible(snapshot,subject,current,payload);return !!s&&!!nativeAccessoryPreservationV2(subject.input,subject.result!.affected_target_identities??[],s.payload,expandNativeAccessoryReadbackV2(payload));}catch{return false;}
+ return Boolean(nativeAccessoryIncomingAssessmentV2(snapshot,subject,current,payload)?.preservation);
+}
+export function nativeAccessoryIncomingAssessmentV2(snapshot:AssignmentSnapshotV2,subject:OperationV2,current:OperationResultV2,payload:unknown){
+ try{
+  const s=eligible(snapshot,subject,current,payload);
+  return s?nativeAccessoryPreservationAssessmentV2(subject.input,subject.result!.affected_target_identities??[],s.payload,expandNativeAccessoryReadbackV2(payload)):null;
+ }catch{return null;}
 }
 export function nativeAccessoryPostconditionSatisfiedV2(snapshot:AssignmentSnapshotV2,subject:OperationV2,current:OperationResultV2,payload:unknown):boolean{
  try{
@@ -78,4 +89,34 @@ export function nativeAccessoryPostconditionSatisfiedV2(snapshot:AssignmentSnaps
   return !!observed&&payloadDigestV2(observed).digest===current.raw_payload_hash
    &&!!nativeAccessoryPreservationV2(subject.input,subject.result!.affected_target_identities??[],s.payload,expandNativeAccessoryReadbackV2(observed));
  }catch{return false;}
+}
+
+/** Bounded model-facing control from a current, host-derived observation. */
+export function nativeAccessoryBranchDiagnosticV2(snapshot:AssignmentSnapshotV2,read:OperationV2){
+ const subjectId=read.verification_of_operation_id,result=read.result;
+ if(!subjectId||snapshot.operations[read.operation_id]!==read||snapshot.terminal||snapshot.execution_control?.state==='paused'
+  ||snapshot.input_invalidated_operation_ids?.some(id=>id===subjectId||id===read.operation_id)
+  ||snapshot.operations[subjectId]?.request_identity?.path!==route||read.request_identity?.path!=='/revit/get-connectors'
+  ||read.settlement_state!=='settled'||read.purpose!=='verification'||read.fulfillment_role!=='verification'
+  ||result?.authority!=='native-host'||result.status!=='succeeded'||result.operation_id!==read.operation_id
+  ||!sameAssignmentBindingV2(read.binding,snapshot.current_binding)||!sameAssignmentBindingV2(result.binding,read.binding)
+  ||!combinedReadFollowsSettledChanges(snapshot,result))return null;
+ for(const id of read.observation_ids){
+  const observation=snapshot.observations[id];
+  if(observation?.authority!=='native-host'||observation.operation_id!==read.operation_id
+   ||observation.raw_payload_hash!==result.raw_payload_hash||!sameAssignmentBindingV2(observation.binding,read.binding))continue;
+  const fact=observation.facts.find(f=>f.fact_id===NATIVE_ACCESSORY_BRANCH_COMPARISON_V2&&f.fact_class==='control');
+  if(typeof fact?.value!=='string'||fact.value.length>512)continue;
+  try{
+   const value=obj(JSON.parse(fact.value));
+   const {kind,branch_count,accessory_count,outside_branch_modified_count}=value;
+   if(value.state!=='branch_connected'||value.preservation_state!=='not_established'||!['pipe','duct'].includes(kind)
+    ||!Number.isSafeInteger(branch_count)||branch_count<1||!Number.isSafeInteger(accessory_count)||accessory_count<branch_count||accessory_count>50
+    ||!Number.isSafeInteger(outside_branch_modified_count)||outside_branch_modified_count<0||outside_branch_modified_count>1024)continue;
+   return {read_operation_id:read.operation_id,observation_id:id,as_of_read:true,state:'branch_connected',preservation_state:'not_established',
+    kind,branch_count,accessory_count,outside_branch_modified_count,
+    guidance:'The independent native read confirmed the requested accessory type, fitted split run, and reciprocal connections. Overall preservation remains unverified. Keep this committed edit and report the outstanding scope. Repeating the same read will not recover missing observations. When authorized and admitted, save a separate review copy, verify its file, and disclose the remaining preservation uncertainty.'};
+  }catch{/* A malformed historical value carries no guidance. */}
+ }
+ return null;
 }
