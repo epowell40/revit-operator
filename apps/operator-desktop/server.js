@@ -10722,6 +10722,43 @@ function retainedCadDrawingReference(attachment, sessionId) {
     sha256: reference.sha256, bytes: reference.bytes, original_access_verified: false }];
 }
 
+function retainedWorkbookInspectionHint(attachment, { sessionId, tools } = {}) {
+  const ref = attachment.backendAttachment;
+  const mime = ATTACHMENT_MIME_BY_EXTENSION.get('.xlsx');
+  if (typeof sessionId !== 'string' || !sessionId || sessionId.length > 300 || ref.session_id !== sessionId ||
+      typeof ref.id !== 'string' || !/^[A-Za-z0-9_-]{1,160}$/.test(ref.id) || ref.id !== attachment.id ||
+      typeof ref.filename !== 'string' || ref.filename.length > 256 || /[\x00-\x1f]/.test(ref.filename) ||
+      ref.filename !== attachment.filename || attachmentExtension(ref.filename) !== '.xlsx' ||
+      ref.mime !== mime || attachment.mime !== mime || !Number.isSafeInteger(ref.bytes) ||
+      ref.bytes <= 0 || ref.bytes > 64 * 1024 * 1024 || ref.bytes !== attachment.bytes ||
+      typeof ref.relative_path !== 'string' || ref.relative_path.length > 520 ||
+      !/^artifacts\/uploads\/[^/\\:\x00-\x1f]+\.xlsx$/i.test(ref.relative_path) ||
+      typeof ref.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(ref.sha256)) return null;
+
+  const caller = Array.isArray(tools) && tools.find(tool =>
+    tool?.type === 'function' && tool.name === 'native__revit_call_tool');
+  const properties = caller?.parameters?.properties;
+  if (caller?.parameters?.type !== 'object' || !Array.isArray(properties?.method?.enum) ||
+      !properties.method.enum.includes('POST') || properties.path?.type !== 'string' ||
+      !Object.hasOwn(properties, 'body')) return null;
+
+  const source = ref.source_access;
+  const hint = source?.inspection_hint;
+  if (source?.schema !== 'operator.attachment-source-access.v1' || source.attachment_id !== ref.id ||
+      source.filename !== ref.filename || source.source_sha256 !== ref.sha256 || source.original_access_verified !== false ||
+      hint?.method !== 'POST' || hint.path !== '/revit/inspect-excel-source' ||
+      hint.body?.sourcePath !== ref.relative_path || hint.body.section !== 'worksheets' ||
+      hint.body.expectedSourceSha256 !== ref.sha256) return null;
+
+  // Bind the hint to the current file bytes. The native inspector still authorizes and verifies the read.
+  const encoded = attachment.dataBase64;
+  if (typeof encoded !== 'string' || encoded.length !== Math.ceil(ref.bytes / 3) * 4) return null;
+  const bytes = Buffer.from(encoded, 'base64');
+  if (bytes.length !== ref.bytes || createHash('sha256').update(bytes).digest('hex') !== ref.sha256) return null;
+  return { method: 'POST', path: '/revit/inspect-excel-source',
+    body: { sourcePath: ref.relative_path, section: 'worksheets', expectedSourceSha256: ref.sha256 } };
+}
+
 function toComputerInputMessage(message, options = {}) {
   const { includeCurrentScreen = false, currentScreenDataUrl = "", includeBinaryAttachments = true } = options;
 
@@ -10756,13 +10793,16 @@ function toComputerInputMessage(message, options = {}) {
     if (isCadDrawingAttachment(attachment)) return [];
     const reference = attachment?.backendAttachment;
     if (!reference?.id || !reference?.relative_path || !reference?.sha256) return [];
+    const hint = includeBinaryAttachments ? retainedWorkbookInspectionHint(attachment, options.attachmentDelivery) : null;
     return [{ id: reference.id, filename: reference.filename || attachment.filename,
       relative_path: reference.relative_path, sha256: reference.sha256, bytes: reference.bytes,
-      original_access_verified: false }];
+      original_access_verified: false, ...(hint ? { inspection_hint: hint } : {}) }];
   });
   if (originalReferences.length) content.push({ type: 'input_text', text:
     'RETAINED ORIGINAL ATTACHMENT REFERENCES (metadata only; not an inspection receipt). ' +
     'For workbooks, provider-parsed values are a preview, not verification of original formulas, cached results or layout. ' +
+    (originalReferences.some(ref => ref.inspection_hint)
+      ? 'For a workbook with an inspection_hint, call native__revit_call_tool with that method, path and body. Then read the needed cells with section cells and the returned sheetName. ' : '') +
     'Pass these exact source references to delegated workers and use available file-source inspectors before declaring originals unavailable. ' +
     'References to earlier attachments remain unverified until freshly inspected; they grant no execution or write authority.\n' +
     JSON.stringify(originalReferences) });

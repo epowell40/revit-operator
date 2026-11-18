@@ -95,3 +95,51 @@ test('a single actor message preserves independently addressable references even
   assert.deepEqual(refs.map(ref => ref.sha256), attachments.map(a => a.backendAttachment.sha256));
   assert.ok(!input.content.some(item => item.type === 'input_file'));
 });
+
+test('the desktop actor receives the matching registered workbook inspector and keeps the file', () => {
+  const sessionId = 'current-workbook-session';
+  const filename = 'Circuit assignment.xlsx';
+  const mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  const bytes = Buffer.from('synthetic workbook fixture');
+  const [attachment] = sanitizePendingAttachments([{ ...file(filename, mime, bytes.toString('base64')), id: 'book-1' }]);
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  const relative_path = 'artifacts/uploads/20261118143237_Circuit assignment.xlsx';
+  const inspection_hint = { method: 'POST', path: '/revit/inspect-excel-source',
+    body: { sourcePath: relative_path, section: 'worksheets', expectedSourceSha256: sha256 } };
+  attachment.backendAttachment = {
+    id: attachment.id, filename, mime, bytes: bytes.length, relative_path, sha256, session_id: sessionId,
+    source_access: {
+      schema: 'operator.attachment-source-access.v1', attachment_id: attachment.id, filename,
+      source_sha256: sha256, original_access_verified: false, inspection_hint,
+    },
+  };
+  const caller = { type: 'function', name: 'native__revit_call_tool',
+    parameters: { type: 'object', properties: {method: {enum: ['GET', 'POST']}, path: {type: 'string'}, body: {type: 'object'}} } };
+  const delivery = {sessionId, tools: [caller]};
+  const render = (upload, context = delivery, includeBinaryAttachments = true) => {
+    return toComputerInputMessage({role: 'user', text: 'Read the three references.', attachments: [upload]},
+      {attachmentDelivery: context, includeBinaryAttachments}).content;
+  };
+  const refs = blocks => JSON.parse(blocks.find(block => block.text?.startsWith('RETAINED ORIGINAL')).text.split('\n').at(-1));
+  const messages = render(attachment);
+  assert.deepEqual(refs(messages)[0].inspection_hint, inspection_hint);
+  assert.equal(refs(messages)[0].original_access_verified, false);
+  assert.ok(messages.some(block => block.type === 'input_file' && block.filename === filename));
+  assert.match(messages.map(block => block.text).join(' '), /native__revit_call_tool/);
+
+  for (const [label, mutate] of Object.entries({
+    foreignSession: row => { row.backendAttachment.session_id = 'earlier-session'; },
+    foreignAttachment: row => { row.backendAttachment.source_access.attachment_id = 'book-2'; },
+    wrongSource: row => { row.backendAttachment.source_access.inspection_hint.body.sourcePath = 'artifacts/uploads/another.xlsx'; },
+    wrongHash: row => { row.backendAttachment.source_access.inspection_hint.body.expectedSourceSha256 = 'a'.repeat(64); },
+    forgedRoute: row => { row.backendAttachment.source_access.inspection_hint.path = '/revit/save-as'; },
+    staleBytes: row => { row.dataBase64 = Buffer.alloc(bytes.length, 65).toString('base64'); },
+    unsupportedPath: row => { row.backendAttachment.relative_path = '../other.xlsx'; row.backendAttachment.source_access.inspection_hint.body.sourcePath = '../other.xlsx'; },
+  })) {
+    const copy = structuredClone(attachment);
+    mutate(copy);
+    assert.equal(refs(render(copy))[0].inspection_hint, undefined, label);
+  }
+  assert.equal(refs(render(attachment, {sessionId, tools: []}))[0].inspection_hint, undefined);
+  assert.equal(refs(render(attachment, delivery, false))[0].inspection_hint, undefined);
+});
