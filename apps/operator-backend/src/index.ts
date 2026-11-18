@@ -191,7 +191,7 @@ import { requireProviderAssignmentBinding } from "./assignments/provider_binding
 import { bindPreparedAssignmentToRequest, prepareAssignmentTurnWithAttachments } from "./assignments/turn_preparation.js";
 import { handleChatExecutionFailureBoundaryV2 } from "./assignments/chat_execution_failure_boundary.js";
 import { recordChatExecutionFailureDiagnostic } from "./assignments/chat_execution_failure_diagnostic.js";
-import { prepareExternalAssignmentRequest, startExternalAssignmentRun,retainedExternalAssignmentStart } from "./assignments/external_assignment_start.js";
+import { externalAssignmentInputHandoff, prepareExternalAssignmentRequest, startExternalAssignmentRun, retainedExternalAssignmentStart } from "./assignments/external_assignment_start.js";
 import { buildSidecarDiagnosticReport } from "./sidecar_diagnostics.js";
 import {
   applyEnvironmentPolicyToActions,
@@ -1264,7 +1264,7 @@ const server = http.createServer(async (req, res) => {
       try {
         const current = getCurrentGoalForSession(sessionId);
         const retained=retainedExternalAssignmentStart(body as Record<string,unknown>,current);
-        if(retained)return writeJson(res,200,{ok:true,goal:current,assignment_run:{assignment_id:retained.assignmentId,run_id:retained.runId,generation:retained.generation,kernel_version:retained.kernelVersion}});
+        if(retained)return writeJson(res,200,{ok:true,goal:current,assignment_run:{assignment_id:retained.assignmentId,run_id:retained.runId,generation:retained.generation,kernel_version:retained.kernelVersion},...externalAssignmentInputHandoff(retained,sessionId)});
         const {normalizedRequest,sourceAllowance}=await prepareExternalAssignmentRequest(body as Record<string,unknown>);
         const replaceBlockedSidecar = (body as any)?.replace_blocked_sidecar === true
           && current?.status === "blocked"
@@ -1297,7 +1297,8 @@ const server = http.createServer(async (req, res) => {
               run_id: assignmentRun.runId,
               generation: assignmentRun.generation,
               kernel_version: assignmentRun.kernelVersion
-            }
+            },
+            ...externalAssignmentInputHandoff(assignmentRun,sessionId)
           } : {})
         });
       } catch (error) {

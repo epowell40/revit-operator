@@ -5939,6 +5939,13 @@ async function beginSidecarComputerAssignment(prompt, attachments = [], options 
   computerState.sidecarAssignment = assignment;
   computerState.canonicalAssignmentOutcome = null;
   computerState.pendingClarification = null;
+  const outcome = payload.canonical_assignment_outcome;
+  if (outcome != null) {
+    if (kernelVersion !== 2 || outcome.outcome_state !== "awaiting_user_input"
+        || outcome.terminal_state !== "open" || outcome.quiescent !== true)
+      throw new Error("Backend returned an invalid startup clarification.");
+    recordCanonicalAssignmentOutcome(outcome, assignment);
+  }
   addComputerEvent(`Canonical assignment started (${assignment.goal_id.slice(0, 8) || "pending"}).`);
   return assignment;
 }
@@ -15973,6 +15980,18 @@ app.post("/api/computer/run", async (req, res) => {
       });
       computerState.nativeChangeObservationCursor = nativeChangeObservationCursor(computerState.sidecarAssignment, initialContext.nativeChangeObservation);
       computerState.nativeCodeReviewStart = bindNativeCodeReviewStart(reviewStart,computerState.sidecarAssignment);
+      const pending = computerState.pendingClarification;
+      if (pending) {
+        if (computerState.stopRequested || startupAbortController.signal.aborted) throw new Error("Stopped by user.");
+        computerState.running = false;
+        computerState.desktopCaptureSuppressed = false;
+        computerState.activeAbortController = null;
+        computerState.authorizedRuntimeProfile = null;
+        updateComputerProgress({phase:"awaiting_user_input",currentAction:pending.question,completedAt:new Date().toISOString()});
+        addComputerEvent("Canonical assignment is awaiting focused user input.");
+        finishComputerRunCertifiedRead(certifiedReadRun.generation,{kind:"pending_verification"});
+        return res.json({ok:true,desktopCaptureSuppressed:false,awaiting_user_input:true});
+      }
     }
     const semanticResolver = computerRunTestHooks?.resolveSemanticAecTransport || resolveSemanticAecTransport;
     const semanticAecTransport = !savedBinding && !retainedDirection && attachments.length === 0 && !phase4CBPdfTransport

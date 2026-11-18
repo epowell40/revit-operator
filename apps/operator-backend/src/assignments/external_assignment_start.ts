@@ -7,6 +7,7 @@ import { classifyAutoGoalRequest } from "../goals/auto_goal.js";
 import { assertConversationIntakeResolved, retainedIntakeDecision } from "../conversation_intake.js";
 import { preparePdfWorkAllowance, type PdfWorkAllowanceV1 } from "./pdf_work_allowance.js";
 import {getAssignmentKernelSnapshotV2} from './assignment_kernel_v2_store.js';
+import {canonicalAssignmentOutcomeForBinding} from './outcome_handoff.js';
 
 /** The controller sends the user's request; the backend owns its effect contract. */
 export function normalizeExternalAssignmentRequest(input: Record<string, unknown>): Record<string, unknown> {
@@ -34,6 +35,22 @@ export type ExternalAssignmentRunBinding = Readonly<{
   generation: number;
   kernelVersion: 1 | 2;
 }>;
+
+/** A task may already be waiting for input when its first run is returned. */
+export function externalAssignmentInputHandoff(run: ExternalAssignmentRunBinding, sessionId: string) {
+  if (run.kernelVersion !== 2) return {};
+  const snapshot = getAssignmentKernelSnapshotV2(run.assignmentId);
+  if (snapshot?.outcome !== 'awaiting_user_input' || snapshot.terminal || !snapshot.quiescent
+      || snapshot.execution_control?.state === 'paused' || snapshot.provider_usage_hold
+      || snapshot.unresolved_unknown_operation_ids.length) return {};
+  const outcome = canonicalAssignmentOutcomeForBinding({
+    session_id: sessionId, assignment_id: run.assignmentId, assignment_run_id: run.runId,
+    assignment_generation: run.generation
+  });
+  if (outcome?.outcome_state !== 'awaiting_user_input' || outcome.terminal_state !== 'open'
+      || !outcome.quiescent || !outcome.pending_clarification?.question) return {};
+  return { canonical_assignment_outcome: outcome };
+}
 
 /** Check before setAgentGoal: a new Sidecar start cannot overwrite the source
  * projection of an existing canonical task, then receive that task's old run. */
