@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';import fs from 'node:fs';import os from 
 import {storeEvidence} from '../src/evidence/evidence_store.js';
 import {verifiedChangePresentationV2} from '../src/assignments/verified_change_presentation_v2.js';
 import {deriveTerminalResultV2} from '../src/assignments/assignment_kernel_v2_terminal_result.js';
-import {savedCopyHandoffV2} from '../src/assignments/saved_copy_handoff_v2.js';
+import {savedCopyHandoffV2,savedProjectBeforeInterruptionV2} from '../src/assignments/saved_copy_handoff_v2.js';
 import {finalCodexAssignmentMessageV2} from '../src/brains/codex_assignment_progress.js';
 import {generateWorkReturnFromKernelV2} from '../src/work_returns/assignment_kernel_v2_generator.js';
 import {workReturnTerminalPresentationV2} from '../src/work_returns/terminal_presentation.js';
@@ -73,3 +73,34 @@ for(const [id,summary]of [['schedule-original','Verified in Revit: 1 schedule.']
   assert.equal(verifiedChangePresentationV2(s),null);
  }));
 }
+
+test('a project save remains available as a historical checkpoint during a separate family open failure',()=>fixture('schedule-original',snapshot=>{
+ const save=Object.values(snapshot.operations).find((operation:any)=>operation.input.path==='/revit/save-as') as any;
+ const checkpoint=save.result.native_artifact_receipt.save_document.after.path;
+ const operationId='separate-family-open';
+ const body={filePath:'C:\\Project\\Door.rfa',audit:false,detach:false,discardExistingOpenDocument:false};
+ const request={...save.request_identity,path:'/revit/open-model'};
+ snapshot.operations[operationId]={...save,operation_id:operationId,request_identity:request,
+  admitted_assignment_version:save.settled_assignment_version+1,settled_assignment_version:save.settled_assignment_version+3,
+  input:{method:'POST',path:'/revit/open-model',body},observation_ids:[],persistent_effect:'unknown',
+  result:{...save.result,operation_id:operationId,request_identity:request,persistent_effect:'unknown',status:'failed_after_dispatch'}};
+ Object.assign(snapshot,{terminal:false,outcome:'active',unresolved_unknown_operation_ids:[operationId],
+  in_flight_operation_ids:[],in_flight_provider_call_ids:[],pending_review_ids:[],execution_control:undefined});
+ const before=JSON.stringify(snapshot);
+ assert.equal(savedCopyHandoffV2(snapshot),null);
+ assert.equal(savedProjectBeforeInterruptionV2(snapshot)?.file,checkpoint);
+ for(const mode of ['same-project','discard','unrecognized-option','concurrent','foreign','stale-save','paused','pending-usage','another-unknown'] as const){
+  const copy=structuredClone(snapshot),operation=copy.operations[operationId];
+  if(mode==='same-project')operation.input.body.filePath=checkpoint;
+  if(mode==='discard')operation.input.body.discardExistingOpenDocument=true;
+  if(mode==='unrecognized-option')operation.input.body.futureOption=false;
+  if(mode==='concurrent')operation.admitted_assignment_version=save.settled_assignment_version;
+  if(mode==='foreign')operation.result.binding={...copy.current_binding,run_id:'other-run'};
+  if(mode==='stale-save')copy.input_invalidated_operation_ids=[save.operation_id];
+  if(mode==='paused')copy.execution_control={state:'paused'};
+  if(mode==='pending-usage')copy.in_flight_provider_call_ids=['pending'];
+  if(mode==='another-unknown')copy.unresolved_unknown_operation_ids.push('unproven');
+  assert.equal(savedProjectBeforeInterruptionV2(copy),null,mode);
+ }
+ assert.equal(JSON.stringify(snapshot),before);
+}));

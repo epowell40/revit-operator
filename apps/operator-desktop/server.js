@@ -15568,9 +15568,7 @@ app.post("/api/open-path", async (req, res) => {
       return sendJsonError(res, "path not found.", 404);
     }
     const stat = fs.statSync(resolvedPath);
-    if (stat.isDirectory()) {
-      await execFileAsync("explorer.exe", [resolvedPath], { windowsHide: true });
-    } else if (path.extname(resolvedPath).toLowerCase() === '.rvt') {
+    if (!stat.isDirectory() && path.extname(resolvedPath).toLowerCase() === '.rvt') {
       const opened = await openSavedRevitModel(resolvedPath);
       return res.json({ok:true,path:resolvedPath,...opened});
     } else {

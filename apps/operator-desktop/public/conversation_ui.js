@@ -106,7 +106,10 @@ export function compactWorkSummary(goal, running) {
 }
 
 export function mergeConversationHistory(current, history) {
-  const live = Array.isArray(current) ? current : [];
+  // Saved checkpoints are fresh projections of the selected task. Drop the
+  // previous projection when the server withdraws or replaces it.
+  const live = Array.isArray(current)
+    ? current.filter(message => !String(message.id || "").startsWith("saved-checkpoint:")) : [];
   const liveById = new Map(live.filter(message => message.id).map(message => [`${message.role}:${message.id}`, message]));
   const seen = new Set();
   const merged = [];

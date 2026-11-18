@@ -1,4 +1,5 @@
 import { agentModelRequiresReasoning, normalizeAgentModel } from '../public/agent_model_catalog.mjs';
+import { linkedTextParts, mergeConversationHistory } from '../public/conversation_ui.js';
 import { taskDraftKey } from "../public/task_navigation.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -262,4 +263,16 @@ test('product settings keep implementation controls behind a closed troubleshoot
   }
   assert.doesNotMatch(settings, /Hybrid Agent|Global write grant|Agent model/);
   assert.equal([...settings.matchAll(/id="agentModel"/g)].length, 1);
+});
+
+test("restoring Tasks replaces historical file handoffs when the server changes eligibility", () => {
+  const id = "saved-checkpoint:task:receipt";
+  const stored = { role: "assistant", message_id: id, text: "Saved file: Result.rvt\n[Open its folder](file:///C:/Project)" };
+  const old = { id, role: "assistant", text: "Old projection", attachments: [] };
+  const message = { id: "original-request", role: "user", text: "Draft the plan." };
+  const merged = mergeConversationHistory([old, message], [stored]);
+  assert.equal(merged.filter(item => item.id === id).length, 1);
+  assert.equal(merged[0].text, stored.text);
+  assert.equal(linkedTextParts(merged[0].text).find(item => item.href)?.href, "file:///C:/Project");
+  assert.deepEqual(mergeConversationHistory(merged, []), [message]);
 });

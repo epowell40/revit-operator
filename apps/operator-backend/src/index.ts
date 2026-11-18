@@ -15,7 +15,7 @@ import { readJson, writeJson } from "./http.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest } from "./contracts.js";
 import { appendMessage, appendToolSummary, assertSessionOwnership, ensureSession } from "./session_store.js";
 import { recordUiContextConversation } from "./conversation_history.js";
-import {desktopReadConversationResultV1,requestConversationPersistenceV1,retainDesktopInitialConversationV1} from './assignments/desktop_conversation.js';
+import {desktopConversationResultV1,requestConversationPersistenceV1,retainDesktopInitialConversationV1} from './assignments/desktop_conversation.js';
 import {getAssignmentKernelSnapshotV2} from './assignments/assignment_kernel_v2_store.js';
 import { getConversationHistory } from "./memory/sqlite_store.js";
 import { consumeRestartRequested, scheduleBackendRestart } from "./dev/dev_agent.js";
@@ -1169,7 +1169,7 @@ const server = http.createServer(async (req, res) => {
       }
       try {
         const messages = getConversationHistory(sessionId);
-        const result = assignmentId ? desktopReadConversationResultV1(sessionId, assignmentId) : null;
+        const result = assignmentId ? desktopConversationResultV1(sessionId, assignmentId) : null;
         if (result && !messages.some(message => message.role === "assistant" && message.text === result.text)) {
           messages.push(result);
           messages.sort((left, right) => left.created_at.localeCompare(right.created_at));

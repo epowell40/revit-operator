@@ -1,3 +1,5 @@
+import path from 'node:path';
+import {pathToFileURL} from 'node:url';
 import type {ChatRequest} from '../contracts.js';
 import type {AssignmentBindingV2} from '../domain/assignment-kernel/index.js';
 import {sameAssignmentBindingV2} from '../domain/assignment-kernel/index.js';
@@ -7,13 +9,22 @@ import {appendMessage} from '../session_store.js';
 import {conversationDisplay} from '../conversation_history.js';
 import {getConversationTurn,type ConversationEntry} from '../memory/sqlite_store.js';
 import {deriveTerminalResultV2} from './assignment_kernel_v2_terminal_result.js';
+import {savedProjectBeforeInterruptionV2} from './saved_copy_handoff_v2.js';
+import {requestMatchesAssignmentPrincipalId} from '../request_context.js';
 
-/** Restore the bound, evidence-backed read answer for a selected desktop task.
- * The terminal journal is durable even when the live desktop transcript is gone. */
-export function desktopReadConversationResultV1(sessionId:string,assignmentId:string):ConversationEntry|null{
+/** Restore the selected task's evidence-backed result after reconnecting. */
+export function desktopConversationResultV1(sessionId:string,assignmentId:string):ConversationEntry|null{
  const snapshot=getAssignmentKernelSnapshotV2(assignmentId);
- if(!snapshot?.terminal||!snapshot.quiescent||!snapshot.finished_at
-  ||snapshot.current_binding.session_id!==sessionId||!desktopExecutorOwnsAssignmentV2(snapshot)
+ if(!snapshot||snapshot.current_binding.session_id!==sessionId||!desktopExecutorOwnsAssignmentV2(snapshot))return null;
+ if(!snapshot.terminal&&requestMatchesAssignmentPrincipalId(snapshot.current_binding.principal_id,undefined,sessionId)){
+  const saved=savedProjectBeforeInterruptionV2(snapshot);
+  if(saved){
+   const folder=pathToFileURL(path.win32.dirname(saved.file),{windows:true}).href.replaceAll('(','%28').replaceAll(')','%29');
+   return {role:'assistant',message_id:`saved-checkpoint:${assignmentId}:${saved.observation_id}`,created_at:saved.created_at,
+    text:`Operator saved this project before the interruption. Later work still needs checking.\n\nSaved file: ${path.win32.basename(saved.file)}\n[Open its folder](${folder})`};
+  }
+ }
+ if(!snapshot.terminal||!snapshot.quiescent||!snapshot.finished_at
   ||snapshot.spec.requested_effect!=='read'||!snapshot.result_delivery
   ||!['complete','complete_with_issues','verified_noop'].includes(snapshot.outcome))return null;
  const text=deriveTerminalResultV2(snapshot).result_summary;
