@@ -90,6 +90,28 @@ test('native interactive accessory independent read settles through the existing
   const index=JSON.parse(codexAssignmentEvidenceContextV2(settled));
   const pending=index.pending_verification.find((entry:{operation_id:string})=>entry.operation_id===apply.operation_id);
   const verified = index.verified_postconditions.find((entry: {operation_id: string}) => entry.operation_id === apply.operation_id);
+  const placementContext = (state:typeof settled, operationId=apply.operation_id) =>
+    JSON.parse(codexAssignmentEvidenceContextV2(state,operationId));
+  const saveStep = placementContext(settled).requested_copy_step;
+  if (expected || variant==='large_remote_damage') {
+   assert.equal(saveStep?.subject_operation_id,apply.operation_id);
+   assert.equal(saveStep.read_operation_id,read.operation_id);
+   assert.deepEqual(saveStep.request,{method:'POST',path:'/revit/save-as',body:{overwrite:false,dryRun:false}});
+   assert.equal(saveStep.preservation_state,expected?'checked_in_recorded_scope':'not_established');
+   assert.equal(saveStep.authorization_granted,false);
+   assert.equal(placementContext(settled,read.operation_id).requested_copy_step,undefined);
+   if(variant==='correct')for(const testState of [
+    {...settled,spec:{...settled.spec,source_user_request:'Insert and check the accessory. Do not save a copy of the model.'}},
+    {...settled,spec:{...settled.spec,source_user_request:'Insert and check the accessory. Save a separate copy as C:/fixture-result.rvt after I approve.'}},
+    {...settled,execution_control:{...settled.execution_control,state:'paused'}},
+    {...settled,unresolved_unknown_operation_ids:['unknown']},
+    {...settled,pending_review_ids:['review']},
+    {...settled,pending_input_variable_ids:['request']},
+    {...settled,in_flight_operation_ids:['another-native-operation']},
+    {...settled,provider_usage_hold:{reason:'pending'}},
+    {...settled,input_invalidated_operation_ids:[read.operation_id]},
+   ])assert.equal(placementContext(testState as typeof settled).requested_copy_step,undefined);
+  }else assert.equal(saveStep,undefined);
   if (expected) {
    assert.equal(verified.check_state, 'verified_current');
    assert.match(verified.guidance, /fitted accessory, split run and reciprocal physical connections/);
@@ -122,6 +144,8 @@ test('native interactive accessory independent read settles through the existing
     classified_effect:'apply',target_tokens:['path:c:/fixture-result.rvt'],arguments:{method:'POST',path:'/revit/save-as',body:{filePath:'C:/fixture-result.rvt',overwrite:false,dryRun:false}},
     opened_at:'2026-10-29T12:00:05Z'});
    assert.equal(save.request_identity.path,'/revit/save-as','The existing route can save an authorized copy while content preservation stays open');
+   assert.equal(placementContext(getAssignmentKernelSnapshotV2(goal.id)!).requested_copy_step,undefined,
+    'An opened save attempt takes precedence over first-save guidance.');
   }
  });
 });
