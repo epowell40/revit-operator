@@ -30,7 +30,7 @@ import {validateSheetExportScope} from './sheet_export_scope.mjs';
 import { needsPrinterCapableLane, PRINT_EXECUTION_GUIDANCE, PDF_EXPORT_TOOL_GUIDANCE, waitForLocalArtifact } from "./print_execution_policy.mjs";
 import { createTaskRunRegistry } from "./task_runs.mjs";
 import { rejectedChatSubmissionAdmission } from "./public/chat_submission_admission.mjs";
-import { exactComputerTaskSource, excludesComputerUse } from "./public/composer_intake.mjs";
+import { exactComputerTaskSource, excludesComputerUse, MAX_COMPUTER_TASK_SOURCE_CHARACTERS } from "./public/composer_intake.mjs";
 import { parseTaskNavigation, readNavigationAssignment } from "./task_navigation.mjs";
 const taskRuns = createTaskRunRegistry();
 // Only an actual host-scoped retrieval can use the bounded selection relay.
@@ -650,6 +650,11 @@ const app = express();
 // They intentionally precede every browser parser, same-origin middleware, and static route.
 app.all(SAFE_READ_PREAUTHORIZE_PATH, handleSafeReadProxyRoute);
 app.all(SAFE_READ_AUTHORIZE_EXECUTION_PATH, handleSafeReadProxyRoute);
+// A UTF-16 unit can take six bytes in JSON (for example, a Unicode escape).
+// Reserve space for the full drafting brief independently of file bytes.
+app.post("/api/computer/run", express.json({
+  limit: `${MAX_DESKTOP_JSON_BYTES + 6 * MAX_COMPUTER_TASK_SOURCE_CHARACTERS}b`
+}));
 app.use(express.json({ limit: `${MAX_DESKTOP_JSON_BYTES}b` }));
 app.use((error, _req, res, next) => {
   if (error?.type !== 'entity.too.large') return next(error);

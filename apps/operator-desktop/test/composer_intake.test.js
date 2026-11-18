@@ -79,8 +79,9 @@ test('a file drop stages all references and keeps one submission and one task ow
   let i = 0;
   const context = {
     state, elements, window: { addEventListener() {} }, composerDraftRevision: 0,
+    document: { getElementById: () => null },
     renderAttachStrip() {}, updateControls() {}, setStatus() {}, renderMessages() {},
-    persistComposerDraft: async () => { persists++; },
+    persistComposerDraft: async () => { persists++; return true; },
     readFileAsDataUrl: () => i++ === 0 ? readGates[0] : readGates[1].promise,
   };
   runInNewContext(`${appBody('assertAttachmentTotalSize')}

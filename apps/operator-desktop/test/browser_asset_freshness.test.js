@@ -42,11 +42,15 @@ test('stale Send preserves draft, attachments and assignment before optimistic U
   const end = source.indexOf('\n});',start);
   assert.ok(start > 0 && end > start);
   let handler, status; let effects=0;
-  const state = { resetting:false, pendingAttachments:[{filename:'drawing.pdf'}], activeGoalId:'assignment-kept' };
+  const state = { resetting:false, pendingAttachments:[{filename:'drawing.pdf',sizeBytes:134}],
+    attachmentLimits:{maxTotalBytes:2048},activeGoalId:'assignment-kept' };
   const elements = { chatForm:{addEventListener(_event,work){handler=work;}}, promptInput:{value:'Do the next room'} };
   const directionStart=source.indexOf('function pausedTaskAcceptsDirection(');
   const directionPolicy=source.slice(directionStart,source.indexOf('\n}\n',directionStart)+2);
-  runInNewContext(directionPolicy+'\n'+source.slice(start,end+4), { elements,state,beginComposerSend,selectedGoal:()=>null,updateControls(){},loadedBrowserIdentity:'old', assertLoadedBrowserFresh:async()=>{throw Object.assign(new Error('Refresh before sending'),{code:'SIDECAR_BROWSER_STALE'});}, persistComposerDraft:async()=>true,showStaleComposerNotice:async()=>{status='Refresh before sending';},setStatus: text=>{status=text;},createChatSubmission(){effects++;},clearChatComposerForSubmission(){effects++;},beginOptimisticChatSubmission(){effects++;},sendPrompt(){effects++;} });
+  const totalStart=source.indexOf('function assertAttachmentTotalSize(');
+  assert.ok(totalStart >= 0);
+  const totalCheck=source.slice(totalStart,source.indexOf('\n}\n',totalStart)+2);
+  runInNewContext(totalCheck+'\n'+directionPolicy+'\n'+source.slice(start,end+4), { elements,state,beginComposerSend,selectedGoal:()=>null,updateControls(){},loadedBrowserIdentity:'old', assertLoadedBrowserFresh:async()=>{throw Object.assign(new Error('Refresh before sending'),{code:'SIDECAR_BROWSER_STALE'});}, persistComposerDraft:async()=>true,showStaleComposerNotice:async()=>{status='Refresh before sending';},setStatus: text=>{status=text;},createChatSubmission(){effects++;},clearChatComposerForSubmission(){effects++;},beginOptimisticChatSubmission(){effects++;},sendPrompt(){effects++;} });
   await handler({preventDefault(){}});
   assert.equal(effects,0); assert.equal(elements.promptInput.value,'Do the next room');
   assert.equal(state.pendingAttachments[0].filename,'drawing.pdf'); assert.equal(state.activeGoalId,'assignment-kept'); assert.match(status,/Refresh/);

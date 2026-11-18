@@ -14,7 +14,7 @@ Object.assign(process.env, {
   OPERATOR_DESKTOP_MAX_ATTACHMENTS: '3',
   OPERATOR_DESKTOP_MAX_ATTACHMENT_BYTES: String(256 * 1024)
 });
-const { app, sanitizePendingAttachments, toComputerInputMessage } = await import('../server.js');
+const { app, configureOperatorDesktopTestHooks, sanitizePendingAttachments, toComputerInputMessage } = await import('../server.js');
 const file = (name, mimeType = '', dataBase64 = 'YWJj') => ({ name, mimeType, dataBase64 });
 
 test('preserves every in-limit attachment in original order', () => {
@@ -67,6 +67,44 @@ test('oversized wire request yields a structured JSON admission error', async ()
     assert.equal(error.code, 'request_body_too_large');
     assert.match(error.error, /remove a reference/i);
   } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
+test('the desktop run fits an in-limit Unicode brief alongside the full attachment budget', async () => {
+  const pending_attachments = [file('first.txt', '', Buffer.alloc(262144).toString('base64')),
+    file('second.txt', '', Buffer.alloc(270330 - 262144).toString('base64'))];
+  const prefix = 'Use both reference files. ';
+  const tail = ' Keep the original model unchanged.';
+  const prompt = prefix + '参'.repeat(16_000 - prefix.length - tail.length) + tail;
+  const briefs = [];
+  configureOperatorDesktopTestHooks({computerRunTestHooks: {
+    enableSidecarAssignment: true,
+    buildHybridBackendContext: async ({bootstrapModelRequestText}) => {
+      briefs.push(bootstrapModelRequestText);
+      throw new Error('Fixture stops before backend intake');
+    },
+  }});
+  const server = app.listen(0, '127.0.0.1');
+  try {
+    await new Promise((resolve, reject) => { server.once('listening', resolve); server.once('error', reject); });
+    const run = body => fetch(`http://127.0.0.1:${server.address().port}/api/computer/run`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
+    });
+    const response = await run({prompt, pending_attachments});
+    assert.equal(response.status, 503);
+    assert.match((await response.json()).error, /Fixture stops before backend intake/);
+    assert.deepEqual(briefs, [prompt]);
+
+    const tooLong = await run({prompt: prompt + '参', pending_attachments});
+    assert.equal(tooLong.status, 400);
+    assert.match((await tooLong.json()).error, /16,000 characters/);
+    const tooLarge = await run({prompt, pending_attachments, padding: 'x'.repeat(100_000)});
+    assert.equal(tooLarge.status, 413);
+    assert.equal((await tooLarge.json()).code, 'request_body_too_large');
+    assert.deepEqual(briefs, [prompt]);
+  } finally {
+    configureOperatorDesktopTestHooks();
     await new Promise(resolve => server.close(resolve));
   }
 });
