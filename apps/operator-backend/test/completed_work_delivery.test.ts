@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';import fs from 'node:fs';import os from 
 import {storeEvidence} from '../src/evidence/evidence_store.js';
 import {verifiedChangePresentationV2} from '../src/assignments/verified_change_presentation_v2.js';
 import {deriveTerminalResultV2} from '../src/assignments/assignment_kernel_v2_terminal_result.js';
-import {savedCopyHandoffV2,savedProjectBeforeInterruptionV2,savedProjectCheckpointV2} from '../src/assignments/saved_copy_handoff_v2.js';
+import {modelSavedProjectCheckpointV1,savedCopyHandoffV2,savedProjectBeforeInterruptionV2,savedProjectCheckpointV2} from '../src/assignments/saved_copy_handoff_v2.js';
 import {finalCodexAssignmentMessageV2} from '../src/brains/codex_assignment_progress.js';
 import {generateWorkReturnFromKernelV2} from '../src/work_returns/assignment_kernel_v2_generator.js';
 import {workReturnTerminalPresentationV2} from '../src/work_returns/terminal_presentation.js';
@@ -131,5 +131,42 @@ test('the already verified project copy remains available while active work or P
    if(change==='wrong-digest')copy.observations[read.observation_ids[0]].raw_payload_hash='0'.repeat(64);
    assert.equal(savedProjectCheckpointV2(copy),null,change);
   }
+ }
+}));
+
+test('the native save response tells the actor which existing file check to reuse',()=>fixture('schedule-original',snapshot=>{
+ const save=Object.values(snapshot.operations).find((operation:any)=>operation.input.path==='/revit/save-as') as any;
+ const verificationId=save.verification_operation_ids[0];
+ const observation=snapshot.observations[save.observation_ids[0]];
+ Object.assign(snapshot,{terminal:false,outcome:'active',quiescent:true,execution_control:{state:'running'},
+  in_flight_operation_ids:[],in_flight_provider_call_ids:[],unresolved_unknown_operation_ids:[],
+  pending_input_variable_ids:[],pending_review_ids:[],provider_usage_hold:null});
+ const envelope={schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{
+  attempt_id:save.operation_id,evidence_id:observation.raw_payload_ref.slice(9),trust_level:'authoritative_native'
+ }]};
+ const result={success:true,contentItems:[{type:'inputText',text:JSON.stringify(envelope)}]};
+ const before=JSON.stringify([snapshot,result]);
+ const projected=modelSavedProjectCheckpointV1(snapshot,result);
+ assert.equal(projected?.file_inspection_operation_id,verificationId);
+ assert.equal(projected?.save_operation_id,save.operation_id);
+ assert.equal(projected?.file_name,path.win32.basename(save.result.native_artifact_receipt.save_document.after.path));
+ assert.equal(projected?.whole_task_verified,false);
+ assert.match(projected?.next_action??'',/Reuse this file check/);
+ assert.equal(JSON.stringify([snapshot,result]),before);
+ assert.ok(Buffer.byteLength(JSON.stringify(projected),'utf8')<1024);
+ for(const variant of ['failed','wrong-proof','wrong-operation','unrelated','read-missing','unknown','stale','foreign','paused','usage-hold'] as const){
+  const copy=structuredClone(snapshot),wire=structuredClone(result),payload=structuredClone(envelope);
+  if(variant==='failed')wire.success=false;
+  if(variant==='wrong-proof')payload.evidence_projections[0]!.evidence_id='other-saved-file';
+  if(variant==='wrong-operation')payload.evidence_projections[0]!.attempt_id=verificationId;
+  if(variant==='unrelated')payload.evidence_projections=[];
+  if(variant==='read-missing')copy.operations[verificationId].observation_ids=[];
+  if(variant==='unknown')copy.unresolved_unknown_operation_ids=['unproven'];
+  if(variant==='stale')copy.input_invalidated_operation_ids=[save.operation_id];
+  if(variant==='foreign')copy.current_binding.run_id='other-run';
+  if(variant==='paused')copy.execution_control.state='paused';
+  if(variant==='usage-hold')copy.provider_usage_hold={hold_id:'pending'};
+  wire.contentItems[0]!.text=JSON.stringify(payload);
+  assert.equal(modelSavedProjectCheckpointV1(copy,wire),null,variant);
  }
 }));

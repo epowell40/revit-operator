@@ -1,6 +1,7 @@
 import path from 'node:path';
 import {nativeDocumentCheckpointResultV2} from '@revitoperator/assignment-kernel-v2-contracts';
 import {payloadDigestV2} from '@revitoperator/payload-digest-v2';
+import {desktopResponseContinuationAllowed} from '../desktop_response_store.js';
 import {canonicalJsonV2,sameAssignmentBindingV2,verificationOperationHasVerifiedPostconditionV2,type AssignmentSnapshotV2,type OperationV2} from '../domain/assignment-kernel/index.js';
 import {readAuthoritativeEvidence,readEvidenceRef} from '../evidence/evidence_store.js';
 import {familySessionSavedV1} from '../verification/family_session_open_v1.js';
@@ -50,7 +51,7 @@ function latestSavedProject(snapshot:AssignmentSnapshotV2, eligible:(save:Operat
   const expected=path.win32.isAbsolute(body.filePath)?body.filePath:path.win32.resolve(path.win32.dirname(saved.before.path),body.filePath);
   if(normalized(expected)!==normalized(file)||normalized(output.path)!==normalized(file)||!eligible(op,file))continue;
   const id=nativePayload(snapshot,op,raw=>canonicalJsonV2(raw.artifact_receipt)===canonicalJsonV2(r.native_artifact_receipt));
-  if(id)return {file,copy:saved.document_path_changed,created_at:r.completed_at,observation_id:id};
+  if(id)return {file,copy:saved.document_path_changed,created_at:r.completed_at,observation_id:id,operation_id:op.operation_id};
  }
  return null;
 }
@@ -77,12 +78,13 @@ function localFile(pathname:unknown,extension:string):pathname is string{
 export function savedProjectCheckpointV2(snapshot:AssignmentSnapshotV2){
  if(snapshot.terminal||snapshot.outcome!=='active'||snapshot.spec.requested_effect!=='apply'
   ||snapshot.in_flight_operation_ids.length||snapshot.unresolved_unknown_operation_ids.length)return null;
- return latestSavedProject(snapshot,(save,file)=>{
+ let inspectionId:string|undefined;
+ const saved=latestSavedProject(snapshot,(save,file)=>{
   if(!localFile(file,'.rvt')||save.result?.native_artifact_receipt?.save_document?.document_path_changed!==true
    ||!save.settled_assignment_version)return false;
   if(Object.values(snapshot.operations).some(op=>op.operation_id!==save.operation_id&&op.persistent_effect!=='none'
     &&(!op.settled_assignment_version||op.settled_assignment_version>save.settled_assignment_version!)))return false;
-  return save.verification_operation_ids.some(id=>{
+  inspectionId=save.verification_operation_ids.find(id=>{
    const read=snapshot.operations[id],result=read?.result;
    return read?.verification_of_operation_id===save.operation_id&&result?.dispatch_state==='dispatched'
     &&result.result_schema_id==='operator-native/POST:/revit/inspect-exported-files/v2'
@@ -90,7 +92,32 @@ export function savedProjectCheckpointV2(snapshot:AssignmentSnapshotV2){
     &&Date.parse(read.opened_at)>=Date.parse(save.result!.completed_at)
     &&nativePayload(snapshot,read,raw=>savedDocumentPostconditionV2(save.input,save.result!.native_artifact_receipt,raw,read.input))!==null;
   });
+  return inspectionId!==undefined;
  });
+ return saved&&inspectionId?{...saved,file_inspection_operation_id:inspectionId}:null;
+}
+
+/** A checked save can settle its file step in the current actor response.
+ * The proof is the already verified checkpoint, not the save receipt alone. */
+export function modelSavedProjectCheckpointV1(snapshot:AssignmentSnapshotV2,result:unknown,saved=savedProjectCheckpointV2(snapshot)){
+ if(!saved||!desktopResponseContinuationAllowed(snapshot))return null;
+ const output=result as {success?:unknown;contentItems?:Array<{type?:unknown;text?:unknown}>}|null;
+ if(output?.success!==true||!Array.isArray(output.contentItems))return null;
+ const evidenceId=snapshot.observations[saved.observation_id]?.raw_payload_ref.slice(9);
+ if(!evidenceId)return null;
+ for(const item of output.contentItems){
+  if(item?.type!=='inputText'||typeof item.text!=='string'||item.text.length>32_768)continue;
+  let envelope;
+  try{envelope=JSON.parse(item.text);}catch{continue;}
+  if(envelope?.schema!=='revit-operator.model-evidence-envelope.v1'||!Array.isArray(envelope.evidence_projections))continue;
+  if(!envelope.evidence_projections.some((p:Record<string,unknown>|null)=>p?.attempt_id===saved.operation_id
+    &&p.evidence_id===evidenceId&&p.trust_level==='authoritative_native'))continue;
+  return {schema:'operator.saved-project-file-check.v1',file_name:path.win32.basename(saved.file),
+   save_operation_id:saved.operation_id,file_inspection_operation_id:saved.file_inspection_operation_id,
+   file_checked:true,whole_task_verified:false,
+   next_action:'Reuse this file check. Finish only the outstanding requested model or drawing checks and report the checked copy and any limits. Recheck the file after a later Save As.'};
+ }
+ return null;
 }
 
 function isolatedFamilyOpen(operation:OperationV2,body:Record<string,unknown>,savedFile:string):boolean {
