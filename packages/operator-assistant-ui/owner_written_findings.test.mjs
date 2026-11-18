@@ -37,3 +37,32 @@ test('host control refusal is retained, never retried or converted to completion
  let calls=0;await assert.rejects(submitWorkReportForReview(assignment,proposal,async()=>{calls++;return {ok:true,verification_policy:'strict',outcome:'active'};},
   {retainWrittenFindings:()=>{throw Error('assignment_execution_paused');}}),/paused/);assert.equal(calls,1);
 });
+
+test('a settled missing-outcome failure preserves current read findings as a draft',()=>{
+ const start={...snapshot(),spec:{requested_effect:'read'},operations:{}};
+ const report=retainOwnerWrittenFindings(binding,'EA-12 airflow is 275 CFM in the upload.',start);
+ const after={...terminal(structuredClone(start)),outcome:'failed',terminal_reason:'assignment_runtime_failed',
+  execution_failure_ids:['provider-stop'],execution_failures:{'provider-stop':{binding,code:'assignment_runtime_failed',
+   phase:'provider_turn',error_class:'runtime'}},
+  operations:{inspection:{requested_effect:'read',persistent_effect:'none'}}};
+ const error='task_outcome_required: No canonical outcome or question was retained.';
+ const original=JSON.stringify(after);
+ const fallback=ownerWrittenFindingsMessage(report,binding,after,error);
+ assert.match(fallback,/^Unverified draft findings from this run/);
+ assert.match(fallback,/EA-12 airflow is 275 CFM/);
+ assert.equal(JSON.stringify(after),original);
+ assert.equal(ownerWrittenFindingsMessage(report,binding,after,'unrelated failure'),'');
+ assert.equal(ownerWrittenFindingsMessage(structuredClone(report),binding,after,error),'');
+ for(const change of [
+  s=>s.spec.requested_effect='apply',
+  s=>s.operations.edit={requested_effect:'apply',persistent_effect:'applied'},
+  s=>s.unresolved_unknown_operation_ids=['unknown'],
+  s=>s.provider_usage_hold={reason:'pending'},
+  s=>s.pending_review_ids=['review'],
+  s=>s.execution_control.state='paused',
+  s=>s.input_invalidated_operation_ids=['inspection'],
+  s=>s.execution_failures['provider-stop'].binding.generation=2,
+  s=>s.execution_failure_ids.push('other'),
+  s=>s.result_delivery={items:[{}]},
+ ]) { const invalid=structuredClone(after);change(invalid);assert.equal(ownerWrittenFindingsMessage(report,binding,invalid,error),''); }
+});

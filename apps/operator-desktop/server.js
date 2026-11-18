@@ -13200,12 +13200,12 @@ async function readOwnerWritingSnapshot() {
   return validateSidecarAssignmentKernelPublication(sidecarAssignmentKernelPublicationFromResponse(response), assignment).snapshot;
 }
 
-async function retainedOwnerWritingMessage() {
+async function retainedOwnerWritingMessage(failureMessage) {
   if (!computerState.ownerWrittenFindings) return '';
   try {
     const assignment = computerState.sidecarAssignment;
     const binding = {assignment_id:assignment.goal_id || assignment.assignment_id,session_id:assignment.session_id,run_id:assignment.run_id,generation:assignment.generation};
-    return ownerWrittenFindingsMessage(computerState.ownerWrittenFindings,binding,await readOwnerWritingSnapshot());
+    return ownerWrittenFindingsMessage(computerState.ownerWrittenFindings,binding,await readOwnerWritingSnapshot(),failureMessage);
   } catch { return ''; }
 }
 
@@ -16158,8 +16158,8 @@ app.post("/api/computer/run", async (req, res) => {
       if(retainedStopped)addComputerMessage("assistant",retainedStopped);
     } else {
       addComputerEvent(`Computer-use run failed: ${computerState.error}`);
-      addComputerMessage("assistant", [executionFailureMessage(error, failureSettlement, computerState.sidecarAssignment, computerState.error),
-        await retainedOwnerWritingMessage()].filter(Boolean).join('\n\n'));
+      addComputerMessage("assistant", executionFailureMessage(error, failureSettlement, computerState.sidecarAssignment,
+        computerState.error, await retainedOwnerWritingMessage(computerState.error)));
     }
     if (!res.headersSent) {
       if (paused || stopped) res.json({ ok: true, desktopCaptureSuppressed: false, stopped: true, ...(paused ? {paused:true} : {}) });

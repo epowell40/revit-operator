@@ -23,3 +23,11 @@ test('diagnostic reference is bounded and does not alter other retained work',()
  assert(message.length<350);assert.doesNotMatch(message,/X\n/);
  assert.match(message,/lookup failure/);
 });
+
+test('draft findings appear before the expandable failure details',()=>{
+ const draft='Unverified draft findings from this run. The attachment reports 275 CFM.';
+ const message=executionFailureMessage(new Error('missing outcome'),settlement,assignment,'missing outcome',draft);
+ assert(message.indexOf(draft)>=0 && message.indexOf(draft)<message.indexOf('## Details'));
+ assert.match(message,/completion not verified/);
+ assert.equal(settlement.work_return.status,'failed');
+});
