@@ -98,6 +98,48 @@ function projectMcpContract(ref:EvidenceRefV1,raw:unknown,budget:number):ToolDoc
   return result;
 }
 
+function searchTerms(value: string): string[] {
+  return value.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/)
+    .filter(word => word.length >= 3).map(word => word.length > 3 ? word.replace(/s$/, "") : word);
+}
+
+/** Omitted schemas stay atomic. An exact property fragment can answer a focused
+ * lookup, but cannot describe conditional branches or certify a full request. */
+function addRequestSchemaSelection(result: ToolDocumentationProjection, rows: unknown[], search: boolean,
+  registry: boolean, query: unknown, budget: number): void {
+  const terms = new Set(search && typeof query === "string" ? searchTerms(query.slice(0, 256)) : []);
+  for (const [index, tool] of result.tools.entries()) {
+    if (Object.hasOwn(tool, "request_schema")) continue;
+    const schema = record(record(rows[index])!.request_schema);
+    const properties = record(schema?.properties);
+    if (!properties || Object.keys(properties).length === 0) continue;
+    const root = registry ? `payload.items[${index}]` : search ? `payload.matches[${index}]` : "payload";
+    const prefix = `${root}.request_schema.properties.`;
+    const selection: { complete: false; property_path_prefix: string; included_properties?: Record<string, unknown> } = {
+      complete: false, property_path_prefix: prefix,
+    };
+    const fits = () => bytes({ ...result,
+      tools: result.tools.map((row, i) => i === index ? { ...row, request_schema_selection: selection } : row),
+    }) <= budget;
+    if (!fits()) continue;
+    const matches = terms.size ? Object.entries(properties).filter(([name, value]) =>
+      /^[A-Za-z_][A-Za-z0-9_]{0,59}$/.test(name) && !["__proto__", "constructor", "prototype"].includes(name)
+      && (record(value) || typeof value === "boolean") && searchTerms(name).some(word => terms.has(word))) : [];
+    for (const [name, value] of matches.slice(0, 6)) {
+      const included = { ...selection.included_properties, [name]: value };
+      // Keep any advertised group retrievable through the existing owner limit.
+      if (bytes(Object.fromEntries(Object.entries(included).map(([key, schema]) => [prefix + key, schema]))) > 4096) continue;
+      const previous = selection.included_properties;
+      selection.included_properties = included;
+      if (!fits()) {
+        if (previous) selection.included_properties = previous;
+        else delete selection.included_properties;
+      }
+    }
+    tool.request_schema_selection = selection;
+  }
+}
+
 /** A navigation aid from the exact retained tool documentation, never a native
  * task result. Omitted fields remain explicit and independently retrievable. */
 export function projectToolDocumentation(ref: EvidenceRefV1, raw: unknown, budget: number): ToolDocumentationProjection | null {
@@ -158,6 +200,7 @@ export function projectToolDocumentation(ref: EvidenceRefV1, raw: unknown, budge
       if (bytes(candidate) <= budget) Object.assign(result, candidate);
     }
   }
+  addRequestSchemaSelection(result, rows, search, registry, payload.query, budget);
   result.complete = result.returned_tools === rows.length && result.omitted_paths.length === 0;
   return (result.tools.length > 0 || (registry && rows.length === 0)) && bytes(result) <= budget ? result : null;
 }
