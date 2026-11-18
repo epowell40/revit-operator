@@ -21,6 +21,8 @@ function requestedFileExport(userText: string, kind: "workbook" | "pdf" | "docum
     if (/\b(?:do not|don't|dont|never)\s+(?:\w+\s+){0,3}save\b[^.!?;\n]{0,60}\b(?:copy|as|model|project|document|rvt)\b/i.test(text)
         || /\bwithout\s+saving\b/i.test(text)) return false;
     return /(?:^|[.!?;]\s*|\bthen\s+)(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?save\s+(?:a\s+(?:separate\s+|new\s+)?copy|as)\b[^!?;\n]*\.rvt\b/i.test(text)
+      // A bare filename can itself be the distinct copy the user requested.
+      || /(?:^|[.!?;]\s*|\bthen\s+)(?:please\s+)?save\s+a\s+(?:separate|new)\s+["']?[\w -][^<>:"'/\\|?*.,;\r\n]{0,179}\.rvt["']?(?=\s*(?:[.!?;\r\n]|$)|\s+and\s+(?:send|share|return|deliver)\b)/i.test(text)
       // A destination commonly follows "at:" on the next line. This is an
       // explicit native document-copy file request, not element-edit authority.
       || /(?:^|[.!?;]\s*|\bthen\s+)(?:please\s+)?(?:create|make)\s+a\s+(?:(?:separate|new|reviewed)\s+){0,3}copy\s+of\s+(?:the\s+)?(?:(?:currently|current|active|open)\s+){0,3}(?:revit\s+)?(?:model|project|document)\s+(?:at|to)\s*:?\s*["']?(?:[a-z]:[\\/]|\\\\)[^!?;\r\n]{1,1024}\.rvt\b/i.test(text);

@@ -51,6 +51,19 @@ test("explicit native Save As remains separate from permission for other model e
     assert(!requestedArtifactExportPaths(text).includes("/revit/save-as"),text);
 });
 
+test("a separately named RVT is an explicit destination for the existing document-copy route", () => {
+  const prefix = "Recreate the walls and hosted doors on Base level from the attached Floor Plan.dwg. Align the drawing to the existing grids. Match the layout, wall widths and door locations, sizes and visible swings. Keep the existing grids and levels.";
+  const save = "Save a separate Autodesk DWG Layout Result.rvt and send me the saved file.";
+  assert.deepEqual(requestedArtifactExportPaths(prefix + " " + save), ["/revit/save-as"]);
+  assert.deepEqual(requestedArtifactExportPaths('Save a separate "Layout Result.rvt".'), ["/revit/save-as"]);
+  for (const text of [
+    "Do not " + save, "Explain how to " + save, save + " Do not save the model.",
+    "Save a separate Layout Result.rvt after I approve.", "Save a separate Layout Result.rvt later.",
+    "Review a separate Layout Result.rvt.", "Save a separate report.pdf and review the original Model.rvt.",
+    "Save a separate report.pdf. Inspect Model.rvt.", "Save a separate Layout Result.rvt as a PDF.",
+  ]) assert(!requestedArtifactExportPaths(text).includes("/revit/save-as"), text);
+});
+
 test("scoped workbook briefs retain file authority through normal admission and no-model-write guards", () => {
   for (const text of [
     "This is a software acceptance exercise using synthetic airflows, not a project HVAC design. For the 12 spaces below, prepare a source-checked input workbook, a proposed device quantity schedule, and a short missing-input/review schedule. Do not change Revit.",

@@ -17,6 +17,7 @@ import {parameterScheduleReadScopeV2} from '../verification/parameter_schedule_p
 import {nativeCommitProgressIdentityV2,observedNativeWorkTargetIdentitiesV1} from '../domain/assignment-kernel/progress/native_work_progress.js';
 import {qualifiedLargeInspectionDiscoveryV2} from '../assignments/large_inspection_discovery.js';
 import {authorizedArtifactExportPath} from '../artifact_export_intent.js';
+import {nativeProgramEffectStateV2} from '../verification/native_program_effect_postcondition_v2.js';
 
 /** A discoverable existing read contract, not an executed check or fuel grant.
  * Candidate identities come from native receipts, not program-return claims.
@@ -172,30 +173,41 @@ export function codexAssignmentEvidenceContextV2(snapshot: AssignmentSnapshotV2,
   });
   const pending_verification_projection={total_count:pendingOperations.length,returned_count:pendingVerification.length,
     complete:pendingOperations.length===pendingVerification.length};
-  // Carry the existing first-save contract with the placement result. It is
-  // advice for the current actor, never an admission or a retry of a save.
+  // Present the existing first-save contract only with the checked parent.
+  // This cue neither grants authority nor retries or completes any operation.
   const savePath='/revit/save-as';
-  const placement=operationId?snapshot.operations[operationId]:undefined;
-  const verifiedPlacement=verified_postconditions.find(row=>row.operation_id===operationId
-    &&snapshot.operations[row.read_operation_id]?.result?.result_schema_id==='operator-native/POST:/revit/get-connectors/v2');
-  const connectedBranch=pendingVerification.find(row=>row.operation_id===operationId)?.latest_check;
-  const branchChecked=connectedBranch?.state==='branch_connected';
-  const requestedCopyStep=operationId&&placement?.request_identity?.path==='/revit/place-mep-accessory-interactively'
-    &&placement.result?.result_schema_id==='operator-native/POST:/revit/place-mep-accessory-interactively/v2'
-    &&placement.result.native_transaction_state==='committed'
-    &&(verifiedPlacement||branchChecked)&&snapshot.outcome==='active'&&!snapshot.terminal
+  const subject=operationId?snapshot.operations[operationId]:undefined;
+  const verified=verified_postconditions.find(row=>row.operation_id===operationId);
+  const available=subject&&snapshot.outcome==='active'&&!snapshot.terminal&&!snapshot.completion_proposal
     &&snapshot.execution_control?.state!=='paused'&&!snapshot.provider_usage_hold
     &&!snapshot.in_flight_operation_ids.length&&!snapshot.unresolved_unknown_operation_ids.length
     &&!snapshot.pending_review_ids.length&&!snapshot.pending_input_variable_ids.length
     &&authorizedArtifactExportPath(snapshot.spec.source_user_request,savePath)
-    &&!Object.values(snapshot.operations).some(op=>op.input.path===savePath)
-    ? {requested_copy_step:{subject_operation_id:operationId,
-      read_operation_id:verifiedPlacement?.read_operation_id??connectedBranch.read_operation_id,
-      preservation_state:verifiedPlacement?'checked_in_recorded_scope':'not_established',
+    &&!Object.values(snapshot.operations).some(op=>op.input.path===savePath);
+  const checkedProgram=available&&verified
+    &&subject.capability_id==='operator_run_dynamic_revit_program'
+    &&!snapshot.spec.interpreted_scope?.scope.prerequisites.length
+    ? nativeProgramEffectStateV2(snapshot,subject) : null;
+  const addedBatch=checkedProgram?.scoped&&checkedProgram.footprintCounts.modified===0&&checkedProgram.footprintCounts.deleted===0
+    &&checkedProgram.footprintCounts.added===checkedProgram.targets.length
+    &&checkedProgram.targets.length===checkedProgram.footprint.length;
+  const accessory=available&&subject.request_identity?.path==='/revit/place-mep-accessory-interactively'
+    &&subject.result?.result_schema_id==='operator-native/POST:/revit/place-mep-accessory-interactively/v2'
+    &&subject.result.native_transaction_state==='committed';
+  const verifiedPlacement=accessory&&verified
+    &&snapshot.operations[verified.read_operation_id]?.result?.result_schema_id==='operator-native/POST:/revit/get-connectors/v2'?verified:null;
+  const connectedBranch=accessory?pendingVerification.find(row=>row.operation_id===operationId)?.latest_check:null;
+  const checked=addedBatch?verified:verifiedPlacement;
+  const readOperationId=checked?.read_operation_id??(connectedBranch?.state==='branch_connected'?connectedBranch.read_operation_id:undefined);
+  const requestedCopyStep=readOperationId
+    ? {requested_copy_step:{subject_operation_id:operationId,read_operation_id:readOperationId,
+      preservation_state:addedBatch?'checked_new_elements_only':checked?'checked_in_recorded_scope':'not_established',
       authorization_granted:false,
       request:{method:'POST',path:savePath,body:{overwrite:false,dryRun:false}},
       required_body_input:{filePath:'Use the exact distinct RVT destination from the current user request. A relative name resolves against the active model directory.'},
-      guidance:'After any remaining requested edits, use the existing native Revit call with this request and the requested filePath. Do not repeat the branch check or look up the same Save As schema first. Honor current admission, worksharing and any review-before-save instruction. Reuse the independent file inspection if it already verifies this save. Deliver the checked copy and state any outstanding preservation or visual review.'}}
+      guidance:addedBatch
+        ?'The separate native read checked persistence of this new batch. If it is usable, make the requested first Save As and check the saved file before spending more time on refinement. Honor any requested order or review-before-save requirement and current admission. Continue the remaining requested work and final checks. A checkpoint neither verifies drawing accuracy nor completes the task.'
+        :'After any remaining requested edits, use the existing native Revit call with this request and the requested filePath. Do not repeat the branch check or look up the same Save As schema first. Honor current admission, worksharing and any review-before-save instruction. Reuse the independent file inspection if it already verifies this save. Deliver the checked copy and state any outstanding preservation or visual review.'}}
     : {};
   if (advisoryVerificationV2(snapshot)) return JSON.stringify({ schema: "revit-operator.advisory-observation-index/v1",
     ...requestedCopyStep,...hostBudget,...continuationReadback,verified_postconditions,inspection_read_candidates,
