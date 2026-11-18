@@ -39,3 +39,23 @@ test('catalog without the general executor preserves legacy eager and already-de
  assert(!ordinary.some(t=>t.name==='native__'+program.name));
  assert.throws(()=>desktopNativeToolContract(supplemental,{tool:program.name}),/not_exposed/);
 });
+
+test('primary owner can select reportable document and view labels with the existing generic native read',()=>{
+ const context={name:'revit_get_context',description:'Get active doc/view info.',inputSchema:{type:'object',properties:{}}};
+ const caller={name:'revit_call_tool',description:'Generic Revit bridge call.',inputSchema:{type:'object',properties:{
+  method:{enum:['GET','POST']},path:{type:'string'},body:{}}}};
+ const exposed=desktopNativeModelTools([context,caller]);
+ const control=exposed.find(tool=>tool.name==='native__revit_get_context');
+ const report=exposed.find(tool=>tool.name==='native__revit_call_tool');
+ assert(control&&report);
+ assert.match(control.description,/control evidence/);
+ assert.match(control.description,/native__revit_call_tool/);
+ assert.match(report.description,/read-only.*asks for the current Revit model title or active view name/);
+ assert.match(report.description,/GET \/revit\/context/);
+ assert.match(report.description,/\["document","title"\].*\["document","activeView","name"\]/);
+ assert.match(report.description,/cannot establish model contents/);
+ assert.deepEqual(control.parameters,context.inputSchema);
+ assert.deepEqual(report.parameters,caller.inputSchema);
+ assert.equal(desktopNativeModelTools([context])[0]?.description,context.description);
+ assert.equal(desktopNativeModelTools([context,{...caller,deferLoading:true}])[0]?.description,context.description);
+});
