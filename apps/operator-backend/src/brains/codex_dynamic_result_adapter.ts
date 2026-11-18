@@ -1,5 +1,6 @@
 import { compactParameterReadResultForPrompt } from "../tool_result_compaction.js";
 import type { EvidenceProjectionV1 } from "../evidence/evidence_ref.js";
+import type { OperationResultStatusV2 } from "../domain/assignment-kernel/operation.js";
 import { getEvidenceContextBudget, modelEvidenceEnvelope } from "../evidence/model_context_budget.js";
 import { projectAssignmentStatusForModel } from "./assignment_status_projection.js";
 import { assignmentBudgetForPrompt } from "./assignment_budget_prompt.js";
@@ -123,7 +124,10 @@ function compactDynamicMcpTextForCodex(tool: unknown, rawArguments: unknown, tex
 
 export function adaptMcpToolCallResultToDynamicResponse(
   result: any,
-  context?: { tool?: unknown; arguments?: unknown; projections?: EvidenceProjectionV1[]; omitted?: number }
+  context?: {
+    tool?: unknown; arguments?: unknown; projections?: EvidenceProjectionV1[]; omitted?: number;
+    canonicalStatus?: OperationResultStatusV2;
+  }
 ): { contentItems: Array<{ type: "inputText"; text: string } | { type: "inputImage"; imageUrl: string }>; success: boolean } {
   const contentItems: Array<{ type: "inputText"; text: string } | { type: "inputImage"; imageUrl: string }> = [];
   const content = Array.isArray(result?.content) ? result.content : [];
@@ -179,5 +183,9 @@ export function adaptMcpToolCallResultToDynamicResponse(
     contentItems.push({ type: "inputText", text: result?.isError === true ? text : compactDynamicMcpTextForCodex(context?.tool, context?.arguments, text) });
   }
   if (contentItems.length === 0) contentItems.push({ type: "inputText", text: result?.isError ? "MCP tool failed without an error body." : "MCP tool completed without output." });
-  return { contentItems, success: result?.isError !== true };
+  // A successfully delivered MCP envelope can carry a refused native operation.
+  // Keep the evidence while using the host-settled status for the tool outcome.
+  const status = context?.canonicalStatus;
+  const canonicalSuccess = status === undefined || status === "succeeded" || status === "completed_without_native_dispatch";
+  return { contentItems, success: result?.isError !== true && canonicalSuccess };
 }

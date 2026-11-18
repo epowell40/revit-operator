@@ -590,7 +590,8 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
         tool: params.tool,
         arguments: boundArguments.arguments,
         projections: context.projections,
-        omitted: context.omitted
+        omitted: context.omitted,
+        canonicalStatus: settled.result.status
       });
       if (hostReadResponse) response.contentItems.push({ type:"inputText", text:
         "Host requested a separate bounded native readback. Its result and verification status are retained in the assignment context; the edit receipt itself is not proof." },
