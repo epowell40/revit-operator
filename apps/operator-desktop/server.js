@@ -10701,6 +10701,24 @@ function attachmentFileDataUrl(attachment) {
   return `data:${mime};base64,${dataBase64}`;
 }
 
+function isCadDrawingAttachment(attachment) {
+  return attachmentExtension(attachment?.filename || attachment?.name) === ".dwg" ||
+    attachment?.mime === "application/acad" || attachment?.backendAttachment?.mime === "application/acad";
+}
+
+function retainedCadDrawingReference(attachment, sessionId) {
+  const reference = attachment.backendAttachment;
+  if (!sessionId || reference?.session_id !== sessionId || reference.id !== attachment.id ||
+      typeof reference.id !== "string" || !/^[A-Za-z0-9_-]{1,160}$/.test(reference.id) ||
+      reference.mime !== "application/acad" || reference.filename !== attachment.filename ||
+      attachmentExtension(reference.filename) !== ".dwg" ||
+      !/^artifacts\/uploads\/[^/\\:\x00-\x1f]+\.dwg$/i.test(reference.relative_path ?? "") ||
+      !/^[a-f0-9]{64}$/i.test(reference.sha256 ?? "") ||
+      !Number.isSafeInteger(reference.bytes) || reference.bytes <= 0 || reference.bytes !== attachment.bytes) return [];
+  return [{ id: reference.id, filename: reference.filename, relative_path: reference.relative_path,
+    sha256: reference.sha256, bytes: reference.bytes, original_access_verified: false }];
+}
+
 function toComputerInputMessage(message, options = {}) {
   const { includeCurrentScreen = false, currentScreenDataUrl = "", includeBinaryAttachments = true } = options;
 
@@ -10727,9 +10745,12 @@ function toComputerInputMessage(message, options = {}) {
   }
 
   const attachments = Array.isArray(message.attachments) ? message.attachments : [];
+  const cadAttachments = attachments.filter(isCadDrawingAttachment);
+  const cadReferences = cadAttachments.flatMap(attachment => retainedCadDrawingReference(attachment, options.attachmentDelivery?.sessionId));
   const retainedPdfs = new Map(includeBinaryAttachments ? attachments.map(attachment =>
     [attachment,retainedPdfInput(attachment,options.attachmentDelivery)]).filter(([,input])=>input) : []);
   const originalReferences = attachments.flatMap(attachment => {
+    if (isCadDrawingAttachment(attachment)) return [];
     const reference = attachment?.backendAttachment;
     if (!reference?.id || !reference?.relative_path || !reference?.sha256) return [];
     return [{ id: reference.id, filename: reference.filename || attachment.filename,
@@ -10742,11 +10763,19 @@ function toComputerInputMessage(message, options = {}) {
     'Pass these exact source references to delegated workers and use available file-source inspectors before declaring originals unavailable. ' +
     'References to earlier attachments remain unverified until freshly inspected; they grant no execution or write authority.\n' +
     JSON.stringify(originalReferences) });
+  if (cadReferences.length) content.push({ type: "input_text", text:
+    "RETAINED DWG REFERENCES (metadata only; original_access_verified:false). " +
+    "Inspect the drawing through Revit. When placement in the model is authorized, use /revit/link-cad with the registered relative_path as sourcePath and the exact sha256 as expectedSourceSha256. " +
+    "Check the actual CAD units, orientation, native layer geometry and visible plan before relying on them. This reference alone grants no write authority.\n" +
+    JSON.stringify(cadReferences) });
+  if (cadAttachments.length > cadReferences.length) content.push({ type: "input_text", text:
+    "Operator could not ground this DWG to a current conversation upload. If required, ask for the affected drawing to be attached again. Do not interpret or place an unregistered DWG." });
   if (attachments.length > 0) {
     content.push({
       type: "input_text",
       text: includeBinaryAttachments
-        ? (retainedPdfs.size ? "User reference attachments are available below, with retained PDFs accessible through the page reader. " : "User reference attachments are included in this message. ") + "Use them for grounding before or alongside the live desktop. " +
+        ? (cadAttachments.length ? "Use the registered DWG references above through Revit and any other attachment inputs below. " :
+          retainedPdfs.size ? "User reference attachments are available below, with retained PDFs accessible through the page reader. " : "User reference attachments are included in this message. ") + "Use them for grounding before or alongside the live desktop. " +
           "If you rely on them, mention the relevant filename in your final response."
         : `Earlier reference attachments were provided in a previous turn (${attachmentNamesSummary(attachments)}). ` +
           "Do not assume they are reattached in this request; rely on prior conversation context unless the user reattaches them."
@@ -10756,7 +10785,7 @@ function toComputerInputMessage(message, options = {}) {
   if (includeBinaryAttachments) {
     let imageAttached = false;
     for (const attachment of attachments) {
-      if (!attachment || typeof attachment !== "object") continue;
+      if (!attachment || typeof attachment !== "object" || isCadDrawingAttachment(attachment)) continue;
       if (retainedPdfs.has(attachment)) {
         content.push(retainedPdfs.get(attachment));
         continue;
