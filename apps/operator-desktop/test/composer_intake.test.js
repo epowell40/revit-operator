@@ -72,7 +72,8 @@ test('a file drop stages all references and keeps one submission and one task ow
     persistComposerDraft: async () => { persists++; },
     readFileAsDataUrl: () => i++ === 0 ? readGates[0] : readGates[1].promise,
   };
-  runInNewContext(`${appBody('addSelectedFiles', true)}
+  runInNewContext(`${appBody('assertAttachmentTotalSize')}
+    ${appBody('addSelectedFiles', true)}
     ${appBody('isFileDrop')}
     function attachComposerFiles(files) { track(addSelectedFiles(files)); }
     ${source.slice(firstHandlers, lastHandlers)}`,
@@ -99,6 +100,19 @@ test('a file drop stages all references and keeps one submission and one task ow
   assert.equal(JSON.stringify(attachments.map(a => a.name)), JSON.stringify(files.map(f => f.name)));
   assert.equal(JSON.stringify(attachments.map(a => a.dataBase64)), '["YWJj","ZGVm"]');
   assert.notEqual(attachments[0].id, attachments[1].id);
+});
+
+test('the composer rejects a combined limit overflow before reading the files and keeps the draft', async () => {
+  const prior = {name: 'already attached.pdf', sizeBytes: 180};
+  const state = {attachmentLimits: {maxCount: 3, maxFileBytes: 300, maxTotalBytes: 400},
+    pendingAttachments: [prior], attachmentReadsPending: 0};
+  const add = runInNewContext(`${appBody('assertAttachmentTotalSize')}
+    ${appBody('addSelectedFiles', true)}
+    addSelectedFiles`, {state, formatBytes: size => `${size} bytes`,
+    readFileAsDataUrl() { throw new Error('must reject before reading'); }});
+  await assert.rejects(add([{name: 'second.pdf', size: 221}]), /combined attachment size.*400 bytes/);
+  assert.deepEqual(state.pendingAttachments, [prior]);
+  assert.equal(state.attachmentReadsPending, 0);
 });
 
 test('actual composer respects explicit API-only restriction before computer admission', async () => {
@@ -231,7 +245,7 @@ test('actual Send handler acknowledges synchronously, retains immutable click in
   const attachment = { filename: 'redline.pdf', data_base64: 'retained-file-bytes' };
   const state = { resetting: false, pendingAttachments: [attachment] };
   const elements = { chatForm: { addEventListener(_event, fn) { handler = fn; } }, promptInput: { value: 'Review these marks' }, sendButton: {} };
-  runInNewContext(directionPolicy + '\n' + source.slice(from, until + 4), { state, elements, beginComposerSend, loadedBrowserIdentity: 'current', selectedGoal: () => null,
+  runInNewContext(directionPolicy + '\n' + appBody('assertAttachmentTotalSize') + '\n' + source.slice(from, until + 4), { state, elements, beginComposerSend, loadedBrowserIdentity: 'current', selectedGoal: () => null,
     setStatus: text => { status = text; }, updateControls() { elements.sendButton.disabled = state.composerSubmissionPending; },
     persistComposerDraft: () => new Promise(resolve => { saveDone = resolve; }),
     assertLoadedBrowserFresh: () => { checks++; return new Promise(resolve => { freshDone = resolve; }); },
@@ -262,7 +276,7 @@ test('actual Send handler acknowledges synchronously, retains immutable click in
 test('reset during pending freshness prevents dispatch and releases intake controls', async () => {
   let handler, freshDone; let sends = 0;
   const state = { pendingAttachments: [] }; const elements = { chatForm: { addEventListener(_event, fn) { handler = fn; } }, promptInput: { value: 'Question' } };
-  runInNewContext(directionPolicy + '\n' + source.slice(from, until + 4), { state, elements, beginComposerSend, loadedBrowserIdentity: 'current', selectedGoal: () => null, setStatus() {}, updateControls() {},
+  runInNewContext(directionPolicy + '\n' + appBody('assertAttachmentTotalSize') + '\n' + source.slice(from, until + 4), { state, elements, beginComposerSend, loadedBrowserIdentity: 'current', selectedGoal: () => null, setStatus() {}, updateControls() {},
     persistComposerDraft: async () => true, assertLoadedBrowserFresh: () => new Promise(resolve => { freshDone = resolve; }),
     createChatSubmission() { sends++; }, clearChatComposerForSubmission() { sends++; }, beginOptimisticChatSubmission() { sends++; }, sendPrompt() { sends++; }
   });

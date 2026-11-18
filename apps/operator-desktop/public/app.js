@@ -3930,6 +3930,16 @@ function readFileAsDataUrl(file) {
   });
 }
 
+function assertAttachmentTotalSize(attachments, files = []) {
+  const limit = state.attachmentLimits?.maxTotalBytes;
+  if (!Number.isSafeInteger(limit) || limit <= 0) return;
+  const total = attachments.reduce((sum, file) => sum + (file.sizeBytes || 0), 0)
+    + files.reduce((sum, file) => sum + file.size, 0);
+  if (total > limit) {
+    throw new Error(`The combined attachment size exceeds ${formatBytes(limit)}. Remove a reference and try again.`);
+  }
+}
+
 async function addSelectedFiles(fileList) {
   const files = Array.from(fileList || []);
   if (!files.length) return;
@@ -3945,6 +3955,7 @@ async function addSelectedFiles(fileList) {
   if (oversized) {
     throw new Error(`${oversized.name} exceeds the ${limits.maxFileBytes}-byte limit.`);
   }
+  assertAttachmentTotalSize(state.pendingAttachments, files);
 
   const sessionId = state.sessionId;
   const navigationEpoch = state.taskNavigationEpoch;
@@ -3973,6 +3984,7 @@ async function addSelectedFiles(fileList) {
       throw new Error("The conversation changed while reading these files. Attach them again in the intended conversation.");
     }
     assertAttachmentCount();
+    assertAttachmentTotalSize(state.pendingAttachments, files);
     state.pendingAttachments = [...state.pendingAttachments, ...next];
     renderAttachStrip();
     composerDraftRevision++;
@@ -5689,6 +5701,7 @@ elements.chatForm.addEventListener("submit", async (event) => {
   updateControls();
   let submission;
   try {
+    assertAttachmentTotalSize(captured.attachments);
     await persistComposerDraft();
     await assertLoadedBrowserFresh(loadedBrowserIdentity);
     if (state.resetting) return;

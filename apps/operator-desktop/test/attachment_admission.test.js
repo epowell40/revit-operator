@@ -14,7 +14,7 @@ Object.assign(process.env, {
   OPERATOR_DESKTOP_MAX_ATTACHMENTS: '3',
   OPERATOR_DESKTOP_MAX_ATTACHMENT_BYTES: String(256 * 1024)
 });
-const { sanitizePendingAttachments, toComputerInputMessage } = await import('../server.js');
+const { app, sanitizePendingAttachments, toComputerInputMessage } = await import('../server.js');
 const file = (name, mimeType = '', dataBase64 = 'YWJj') => ({ name, mimeType, dataBase64 });
 
 test('preserves every in-limit attachment in original order', () => {
@@ -41,6 +41,34 @@ test('enforces the per-file byte ceiling at the boundary', () => {
   const limit = 256 * 1024;
   assert.equal(sanitizePendingAttachments([file('exact.txt', '', Buffer.alloc(limit).toString('base64'))])[0].bytes, limit);
   assert.throws(() => sanitizePendingAttachments([file('larger.txt', '', Buffer.alloc(limit + 1).toString('base64'))]), /exceeds the 262144-byte limit/);
+});
+
+test('enforces the aggregate file budget without taking away a maximum-size single file', () => {
+  const limit = 256 * 1024;
+  const maxCombined = 270330;
+  const sized = (name, bytes) => file(name, '', Buffer.alloc(bytes).toString('base64'));
+  const large = sized('large.txt', limit);
+  const rows = sanitizePendingAttachments([large, sized('second.txt', maxCombined - limit)]);
+  assert.equal(rows.reduce((sum, row) => sum + row.bytes, 0), maxCombined);
+  assert.throws(() => sanitizePendingAttachments([large, sized('second.txt', maxCombined - limit + 1)]), /combined attachment size/);
+});
+
+test('oversized wire request yields a structured JSON admission error', async () => {
+  const server = app.listen(0, '127.0.0.1');
+  try {
+    await new Promise((resolve, reject) => { server.once('listening', resolve); server.once('error', reject); });
+    const data = Buffer.alloc(160000).toString('base64');
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/chat/stream`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({prompt: 'Use both examples.', pending_attachments: [file('a.txt', '', data), file('b.txt', '', data)]}),
+    });
+    assert.equal(response.status, 413);
+    const error = await response.json();
+    assert.equal(error.code, 'request_body_too_large');
+    assert.match(error.error, /remove a reference/i);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
 });
 
 test('a single actor message preserves independently addressable references even with duplicate filenames', () => {

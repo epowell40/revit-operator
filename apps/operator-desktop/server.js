@@ -165,6 +165,11 @@ const MAX_ATTACHMENT_BYTES = Math.max(
   256 * 1024,
   Math.min(200 * 1024 * 1024, Number.parseInt(process.env.OPERATOR_DESKTOP_MAX_ATTACHMENT_BYTES || `${100 * 1024 * 1024}`, 10) || 100 * 1024 * 1024)
 );
+const MAX_DESKTOP_JSON_BYTES = Math.ceil(MAX_ATTACHMENT_BYTES * 1.5);
+// Base64 occupies four bytes per three file bytes. Leave room for the prompt,
+// attachment metadata and padding, including when a single file is at its cap.
+const MAX_ATTACHMENT_BATCH_BYTES = Math.max(MAX_ATTACHMENT_BYTES,
+  Math.floor((MAX_DESKTOP_JSON_BYTES - 32 * 1024) / 4) * 3 - 2 * MAX_ATTACHMENTS);
 const MAX_CONVERSATION_MESSAGES = Math.max(
   2,
   Number.parseInt(process.env.OPERATOR_DESKTOP_MAX_CONVERSATION_MESSAGES || "12", 10) || 12
@@ -645,7 +650,12 @@ const app = express();
 // They intentionally precede every browser parser, same-origin middleware, and static route.
 app.all(SAFE_READ_PREAUTHORIZE_PATH, handleSafeReadProxyRoute);
 app.all(SAFE_READ_AUTHORIZE_EXECUTION_PATH, handleSafeReadProxyRoute);
-app.use(express.json({ limit: `${Math.ceil(MAX_ATTACHMENT_BYTES * 1.5)}b` }));
+app.use(express.json({ limit: `${MAX_DESKTOP_JSON_BYTES}b` }));
+app.use((error, _req, res, next) => {
+  if (error?.type !== 'entity.too.large') return next(error);
+  res.status(413).json({ code: 'request_body_too_large',
+    error: 'This request is too large. Remove a reference or shorten the message and try again.' });
+});
 
 function isRuntimeIdentityLoopbackAddress(address) {
   const value = `${address || ""}`.trim().toLowerCase();
@@ -3017,6 +3027,7 @@ function sanitizePendingAttachments(rawAttachments = []) {
     throw new Error(`You can send at most ${MAX_ATTACHMENTS} attachments per message. Remove extra files and try again.`);
   }
 
+  let totalBytes = 0;
   return rawAttachments.map((attachment, index) => {
     const id = `${attachment?.id || ""}`.trim() || `${Date.now()}-${index}`;
     const filename = path.basename(`${attachment?.name || attachment?.filename || `attachment-${index + 1}`}`.trim());
@@ -3040,6 +3051,10 @@ function sanitizePendingAttachments(rawAttachments = []) {
     }
     if (bytes > MAX_ATTACHMENT_BYTES) {
       throw new Error(`Attachment ${index + 1} exceeds the ${MAX_ATTACHMENT_BYTES}-byte limit.`);
+    }
+    totalBytes += bytes;
+    if (totalBytes > MAX_ATTACHMENT_BATCH_BYTES) {
+      throw new Error(`The combined attachment size exceeds the ${MAX_ATTACHMENT_BATCH_BYTES}-byte limit. Remove a reference and try again.`);
     }
 
     return {
@@ -13769,7 +13784,7 @@ app.get("/api/config", async (_req, res) => {
       backendUrl: resolveBackendUrl(),
       backendAuthMode: authMode,
       backendLocal: isLocalBackendUrl(resolveBackendUrl()),
-      attachmentLimits: { maxCount: MAX_ATTACHMENTS, maxFileBytes: MAX_ATTACHMENT_BYTES },
+      attachmentLimits: { maxCount: MAX_ATTACHMENTS, maxFileBytes: MAX_ATTACHMENT_BYTES, maxTotalBytes: MAX_ATTACHMENT_BATCH_BYTES },
       inputEnabled: INPUT_ENABLED,
       shellEnabled: SHELL_ENABLED,
       computerUseAvailable: !!backendComputer.available,
