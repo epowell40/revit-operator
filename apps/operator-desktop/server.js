@@ -18,7 +18,7 @@ import {planSavedRevitModelOpen,readStableModelFileForOpen} from './saved_model_
 import { readNativeTargetReviewImage, consumeNativeTargetReviewImage, assertNativeReviewCaptureCapacity } from "./native_target_review_image.mjs";
 import { savedComputerBinding, savedAssignmentExecutor, assertComputerDispatchSnapshot,
   assertComputerResumeControl, savedComputerConversation, selectComputerConversationForInput,
-  acknowledgedComputerPause, isSavedComputerPaused } from "./saved_computer_assignment.mjs";
+  acknowledgedComputerPause, isSavedComputerPaused, browserComputerMessages } from "./saved_computer_assignment.mjs";
 import { providerContinuationInput, providerCompletedToolOutputs, COMPACTED_VISUAL_CONTINUATION } from "./provider_continuation.mjs";
 import { readRuntimeProfileWithTransportRetry, runtimeProfileForAccess, isLocalGeneralAgentHandshake } from "./runtime_profile_read.mjs";
 import {sidecarFeedbackDiagnostic} from './feedback_context.mjs';
@@ -15723,7 +15723,7 @@ app.get("/api/computer/state", (_req, res) => {
     assignmentBindingV2: browserComputerAssignmentBinding(),
     screenshotVersion: computerState.screenshotVersion,
     screen: computerState.screen,
-    messages: computerState.messages,
+    messages: browserComputerMessages(computerState.messages),
     events: computerState.events,
     performanceReceipts: computerState.performanceReceipts,
     modelCallReceipts: modelCallReceiptsSnapshot(),

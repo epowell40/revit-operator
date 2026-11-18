@@ -89,6 +89,10 @@ export function savedComputerConversation(goal,snapshot,history){
  return [context,...recent.map(m=>({role:m.role,text:m.text}))];
 }
 
+export function browserComputerMessages(messages){
+ return messages.filter(message=>!savedContexts.has(message));
+}
+
 /** Recent chat is windowed; current, host-restored task state is not chat.
  * Its original 80k context/64k history bounds and unverified labels remain.
  * This does not compact model reasoning or alter execution/usage controls. */
