@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import test from 'node:test';import {fileURLToPath} from 'node:url';
 import {storeEvidence} from '../src/evidence/evidence_store.js';
+import {payloadDigestV2} from '@revitoperator/payload-digest-v2';
 import {verifiedChangePresentationV2} from '../src/assignments/verified_change_presentation_v2.js';
 import {deriveTerminalResultV2} from '../src/assignments/assignment_kernel_v2_terminal_result.js';
 import {modelSavedProjectCheckpointV1,savedCopyHandoffV2,savedProjectBeforeInterruptionV2,savedProjectCheckpointV2} from '../src/assignments/saved_copy_handoff_v2.js';
@@ -8,8 +9,8 @@ import {generateWorkReturnFromKernelV2} from '../src/work_returns/assignment_ker
 import {workReturnTerminalPresentationV2} from '../src/work_returns/terminal_presentation.js';
 import {verifyWorkReturnHash} from '../src/work_returns/generator.js';
 const here=path.dirname(fileURLToPath(import.meta.url)),file=[path.join(here,'fixtures/completed-work-delivery-516.json'),path.join(here,'../../test/fixtures/completed-work-delivery-516.json')].find(fs.existsSync)!;
-function fixture(id:string,run:(s:any)=>void){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'operator-work-delivery-')),old=process.env.OPERATOR_WORKSPACE_ROOT;process.env.OPERATOR_WORKSPACE_ROOT=dir;
- try{const f=JSON.parse(fs.readFileSync(file,'utf8'))[id],s=f.snapshot;for(const [oid,payload]of Object.entries(f.payloads)){const o=s.observations[oid],stored=storeEvidence({scope:{...s.current_binding,attempt_id:o.operation_id},source:'assignment_kernel_v2:revit_call_tool',trust_level:'authoritative_native',raw:payload});o.raw_payload_ref='evidence:'+stored.ref.evidence_id;}run(s);}
+function fixture(id:string,run:(s:any,payloads:Record<string,any>)=>void){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'operator-work-delivery-')),old=process.env.OPERATOR_WORKSPACE_ROOT;process.env.OPERATOR_WORKSPACE_ROOT=dir;
+ try{const f=JSON.parse(fs.readFileSync(file,'utf8'))[id],s=f.snapshot;for(const [oid,payload]of Object.entries(f.payloads)){const o=s.observations[oid],stored=storeEvidence({scope:{...s.current_binding,attempt_id:o.operation_id},source:'assignment_kernel_v2:revit_call_tool',trust_level:'authoritative_native',raw:payload});o.raw_payload_ref='evidence:'+stored.ref.evidence_id;}run(s,f.payloads);}
  finally{if(old===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=old;assert.equal(path.dirname(dir),os.tmpdir());assert(path.basename(dir).startsWith('operator-work-delivery-'));fs.rmSync(dir,{recursive:true,force:true});}}
 for(const [id,summary]of [['schedule-original','Verified in Revit: 1 schedule.'],['mixed-original','Verified in Revit: 1 element with updated parameters.']]){
  test(`${id} native result and saved path survive bound Work Return projection without certifying task completion`,()=>fixture(id,s=>{
@@ -169,4 +170,48 @@ test('the native save response tells the actor which existing file check to reus
   wire.contentItems[0]!.text=JSON.stringify(payload);
   assert.equal(modelSavedProjectCheckpointV1(copy,wire),null,variant);
  }
+}));
+
+test('an explicit refresh of an earlier review copy uses the new file check even after Pause',()=>fixture('schedule-original',(snapshot,payloads)=>{
+ const firstSave=Object.values(snapshot.operations).find((operation:any)=>operation.input.path==='/revit/save-as') as any;
+ const firstRead=snapshot.operations[firstSave.verification_operation_ids[0]];
+ const save=structuredClone(firstSave),read=structuredClone(firstRead);
+ const receipt=save.result.native_artifact_receipt;
+ Object.assign(receipt.save_document,{before:receipt.save_document.after,document_path_changed:false,document_session_changed:false});
+ receipt.outputs[0].sha256='b'.repeat(64);
+ save.input.body.overwrite=true;
+ save.verification_operation_ids=['refresh-read'];
+ read.verification_of_operation_id='refresh-save';
+ read.opened_at='2099-01-01T00:00:02Z';
+ const payload=structuredClone(payloads[firstRead.observation_ids[0]]);
+ payload.files[0].sha256=receipt.outputs[0].sha256;
+ const operations=[
+  {op:save,id:'refresh-save',raw:{...payloads[firstSave.observation_ids[0]],artifact_receipt:receipt,overwrite:true},version:snapshot.assignment_version+2,completedAt:'2099-01-01T00:00:01Z'},
+  {op:read,id:'refresh-read',raw:payload,version:snapshot.assignment_version+4,completedAt:'2099-01-01T00:00:03Z'},
+ ];
+ for(const {op,id,raw,version,completedAt} of operations){
+  const observation=structuredClone(snapshot.observations[op.observation_ids[0]]),observationId=id+'-observation';
+  const digest=payloadDigestV2(raw).digest;
+  const stored=storeEvidence({scope:{...op.binding,attempt_id:id},source:'assignment_kernel_v2:revit_call_tool',trust_level:'authoritative_native',raw});
+  Object.assign(observation,{operation_id:id,observation_id:observationId,raw_payload_hash:digest,raw_payload_ref:'evidence:'+stored.ref.evidence_id});
+  Object.assign(op.result,{operation_id:id,raw_payload_hash:digest,completed_at:completedAt});
+  Object.assign(op,{operation_id:id,observation_ids:[observationId],settled_assignment_version:version});
+  snapshot.observations[observationId]=observation;
+  snapshot.operations[id]=op;
+ }
+ Object.assign(snapshot,{terminal:false,outcome:'active',execution_control:{state:'paused'},assignment_version:read.settled_assignment_version+1,
+  in_flight_operation_ids:[],unresolved_unknown_operation_ids:[]});
+ const fresh=savedProjectCheckpointV2(snapshot);
+ assert.equal(fresh?.operation_id,save.operation_id);
+ assert.equal(fresh?.file_inspection_operation_id,read.operation_id);
+
+ const original=structuredClone(snapshot);
+ delete original.operations[firstSave.operation_id];
+ assert.equal(savedProjectCheckpointV2(original),null,'Overwriting the source alone is not creating a review copy');
+ const foreign=structuredClone(snapshot);
+ foreign.operations[firstSave.operation_id].binding.run_id='other-run';
+ assert.equal(savedProjectCheckpointV2(foreign),null);
+ const unchecked=structuredClone(snapshot);
+ unchecked.operations[read.operation_id].observation_ids=[];
+ assert.equal(savedProjectCheckpointV2(unchecked),null,'Earlier file inspection cannot verify the latest bytes');
 }));

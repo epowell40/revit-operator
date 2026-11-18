@@ -72,6 +72,23 @@ function localFile(pathname:unknown,extension:string):pathname is string{
   &&!/[\u0000-\u001f]/.test(pathname)&&path.win32.extname(pathname).toLowerCase()===extension;
 }
 
+function savesSeparateReviewCopy(snapshot:AssignmentSnapshotV2,save:OperationV2,file:string):boolean {
+ const document=save.result?.native_artifact_receipt?.save_document;
+ if(document?.document_path_changed===true)return true;
+ const request=save.input.body as Record<string,unknown>;
+ const version=save.settled_assignment_version;
+ if(document?.document_path_changed!==false||request.overwrite!==true||!version
+  ||normalized(document.before.path)!==normalized(file))return false;
+
+ // An explicit refresh can keep the path once this assignment created the review copy.
+ return latestSavedProject(snapshot,(earlier,destination)=>{
+  const earlierVersion=earlier.settled_assignment_version;
+  return Boolean(earlierVersion&&earlierVersion<version
+   &&earlier.result?.native_artifact_receipt?.save_document?.document_path_changed===true
+   &&normalized(destination)===normalized(file));
+ })!==null;
+}
+
 /** An independently checked copy of the project at its saved checkpoint.
  * An outstanding model response cannot change these facts. Native work,
  * uncertain effects and a later committed edit can supersede the checkpoint. */
@@ -80,8 +97,7 @@ export function savedProjectCheckpointV2(snapshot:AssignmentSnapshotV2){
   ||snapshot.in_flight_operation_ids.length||snapshot.unresolved_unknown_operation_ids.length)return null;
  let inspectionId:string|undefined;
  const saved=latestSavedProject(snapshot,(save,file)=>{
-  if(!localFile(file,'.rvt')||save.result?.native_artifact_receipt?.save_document?.document_path_changed!==true
-   ||!save.settled_assignment_version)return false;
+  if(!localFile(file,'.rvt')||!save.settled_assignment_version)return false;
   if(Object.values(snapshot.operations).some(op=>op.operation_id!==save.operation_id&&op.persistent_effect!=='none'
     &&(!op.settled_assignment_version||op.settled_assignment_version>save.settled_assignment_version!)))return false;
   inspectionId=save.verification_operation_ids.find(id=>{
@@ -92,7 +108,7 @@ export function savedProjectCheckpointV2(snapshot:AssignmentSnapshotV2){
     &&Date.parse(read.opened_at)>=Date.parse(save.result!.completed_at)
     &&nativePayload(snapshot,read,raw=>savedDocumentPostconditionV2(save.input,save.result!.native_artifact_receipt,raw,read.input))!==null;
   });
-  return inspectionId!==undefined;
+  return inspectionId!==undefined&&savesSeparateReviewCopy(snapshot,save,file);
  });
  return saved&&inspectionId?{...saved,file_inspection_operation_id:inspectionId}:null;
 }
