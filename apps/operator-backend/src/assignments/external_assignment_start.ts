@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { assignmentKernelV2Enabled } from "../domain/assignment-kernel/index.js";
+import { assignmentKernelV2Enabled, type AssignmentSnapshotV2 } from "../domain/assignment-kernel/index.js";
 import type { GoalRecord } from "../goals/service.js";
 import { createAssignmentKernelForGoalV2 } from "./assignment_kernel_v2_factory.js";
 import { ensureAssignmentRunForTurn } from "./turn_journal.js";
@@ -8,6 +8,8 @@ import { assertConversationIntakeResolved, retainedIntakeDecision } from "../con
 import { preparePdfWorkAllowance, type PdfWorkAllowanceV1 } from "./pdf_work_allowance.js";
 import {getAssignmentKernelSnapshotV2} from './assignment_kernel_v2_store.js';
 import {canonicalAssignmentOutcomeForBinding} from './outcome_handoff.js';
+import {advanceAssignmentKernelProgressV2} from './assignment_kernel_v2_progress.js';
+import {desktopExecutorOwnsAssignmentV2} from './desktop_executor_owner.js';
 
 /** The controller sends the user's request; the backend owns its effect contract. */
 export function normalizeExternalAssignmentRequest(input: Record<string, unknown>): Record<string, unknown> {
@@ -36,13 +38,28 @@ export type ExternalAssignmentRunBinding = Readonly<{
   kernelVersion: 1 | 2;
 }>;
 
+function openInputCheckpoint(snapshot: AssignmentSnapshotV2 | null): snapshot is AssignmentSnapshotV2 {
+  return snapshot?.outcome === 'awaiting_user_input' && !snapshot.terminal && snapshot.quiescent
+    && snapshot.execution_control?.state !== 'paused' && !snapshot.provider_usage_hold
+    && snapshot.unresolved_unknown_operation_ids.length === 0;
+}
+
+/** Creation records required inputs. Retain the canonical questions before
+ * handing the new run to desktop execution, including an exact start retry. */
+function materializeDesktopStartupQuestions(snapshot: AssignmentSnapshotV2 | null) {
+  if (!openInputCheckpoint(snapshot) || snapshot.execution_failure_ids.length || snapshot.provider_call_ids.length
+      || Object.keys(snapshot.operations).length) return;
+  const asked = new Set(Object.values(snapshot.clarifications).filter(c => !c.resolved_at).map(c => c.variable_id));
+  if (snapshot.pending_input_variable_ids.some(id => !asked.has(id)) && desktopExecutorOwnsAssignmentV2(snapshot)) {
+    advanceAssignmentKernelProgressV2({binding: snapshot.current_binding});
+  }
+}
+
 /** A task may already be waiting for input when its first run is returned. */
 export function externalAssignmentInputHandoff(run: ExternalAssignmentRunBinding, sessionId: string) {
   if (run.kernelVersion !== 2) return {};
   const snapshot = getAssignmentKernelSnapshotV2(run.assignmentId);
-  if (snapshot?.outcome !== 'awaiting_user_input' || snapshot.terminal || !snapshot.quiescent
-      || snapshot.execution_control?.state === 'paused' || snapshot.provider_usage_hold
-      || snapshot.unresolved_unknown_operation_ids.length) return {};
+  if (!openInputCheckpoint(snapshot)) return {};
   const outcome = canonicalAssignmentOutcomeForBinding({
     session_id: sessionId, assignment_id: run.assignmentId, assignment_run_id: run.runId,
     assignment_generation: run.generation
@@ -60,8 +77,10 @@ export function retainedExternalAssignmentStart(input:Record<string,unknown>,cur
   const requested=typeof input.assignment_run_id==='string'?input.assignment_run_id.trim():'';
   const source=typeof input.objective==='string'?input.objective.trim():'';
   if(requested===snapshot.current_binding.run_id&&source===snapshot.spec.source_user_request
-    &&input.session_id===snapshot.current_binding.session_id)
+    &&input.session_id===snapshot.current_binding.session_id){
+    materializeDesktopStartupQuestions(snapshot);
     return {assignmentId:current.id,runId:snapshot.current_binding.run_id,generation:snapshot.current_binding.generation,kernelVersion:2};
+  }
   throw Object.assign(new Error('This conversation already has a saved task. Add direction or Resume that task; use New Chat for a separate task.'),
     {code:'external_assignment_requires_continuation'});
 }
@@ -87,6 +106,9 @@ export function startExternalAssignmentRun(input: Readonly<{
         ? input.goal.work_budget.document_fingerprint
         : undefined
     });
+    if (binding.session_id === input.sessionId && input.goal.work_budget?.mode === 'sidecar_computer') {
+      materializeDesktopStartupQuestions(getAssignmentKernelSnapshotV2(binding.assignment_id));
+    }
     return {
       assignmentId: binding.assignment_id,
       runId: binding.run_id,

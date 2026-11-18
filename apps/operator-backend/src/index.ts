@@ -1264,7 +1264,11 @@ const server = http.createServer(async (req, res) => {
       try {
         const current = getCurrentGoalForSession(sessionId);
         const retained=retainedExternalAssignmentStart(body as Record<string,unknown>,current);
-        if(retained)return writeJson(res,200,{ok:true,goal:current,assignment_run:{assignment_id:retained.assignmentId,run_id:retained.runId,generation:retained.generation,kernel_version:retained.kernelVersion},...externalAssignmentInputHandoff(retained,sessionId)});
+        if(retained){
+          const inputHandoff=externalAssignmentInputHandoff(retained,sessionId);
+          return writeJson(res,200,{ok:true,goal:inputHandoff.canonical_assignment_outcome?(getGoal(retained.assignmentId)??current):current,
+            assignment_run:{assignment_id:retained.assignmentId,run_id:retained.runId,generation:retained.generation,kernel_version:retained.kernelVersion},...inputHandoff});
+        }
         const {normalizedRequest,sourceAllowance}=await prepareExternalAssignmentRequest(body as Record<string,unknown>);
         const replaceBlockedSidecar = (body as any)?.replace_blocked_sidecar === true
           && current?.status === "blocked"
@@ -1287,10 +1291,12 @@ const server = http.createServer(async (req, res) => {
           const snapshot=getAssignmentKernelSnapshotV2(goal.id);
           if(snapshot)retainDesktopInitialConversationV1(snapshot.current_binding);
         }
-        appendNotification(sessionId, "goal.set", `Goal set: ${goal.title}`, { goal_id: goal.id, status: goal.status });
+        const inputHandoff=assignmentRun?externalAssignmentInputHandoff(assignmentRun,sessionId):{};
+        const responseGoal=inputHandoff.canonical_assignment_outcome?(getGoal(goal.id)??goal):goal;
+        appendNotification(sessionId, "goal.set", `Goal set: ${goal.title}`, { goal_id: goal.id, status: responseGoal.status });
         return writeJson(res, 200, {
           ok: true,
-          goal,
+          goal: responseGoal,
           ...(assignmentRun ? {
             assignment_run: {
               assignment_id: assignmentRun.assignmentId,
@@ -1298,7 +1304,7 @@ const server = http.createServer(async (req, res) => {
               generation: assignmentRun.generation,
               kernel_version: assignmentRun.kernelVersion
             },
-            ...externalAssignmentInputHandoff(assignmentRun,sessionId)
+            ...inputHandoff
           } : {})
         });
       } catch (error) {
