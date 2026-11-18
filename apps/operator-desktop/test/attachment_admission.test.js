@@ -134,6 +134,55 @@ test('a single actor message preserves independently addressable references even
   assert.ok(!input.content.some(item => item.type === 'input_file'));
 });
 
+test('short registered UTF-8 references reach the desktop actor without an eager file block', () => {
+  const sessionId = 'current-text-session';
+  const makeAttachment = (id, name, source) => {
+    const bytes = Buffer.from(source);
+    const [entry] = sanitizePendingAttachments([{ ...file(name, '', bytes.toString('base64')), id }]);
+    return { ...entry, backendAttachment: {
+      id, session_id: sessionId, filename: name, mime: entry.mime, bytes: bytes.length,
+      relative_path: `artifacts/uploads/${id}-${name}`,
+      sha256: createHash('sha256').update(bytes).digest('hex')
+    } };
+  };
+  const json = makeAttachment('example-one', 'schedule.json', '{"equipment":"ERV-12","supply_cfm":140}');
+  const csvBody = '室,CFM\n' + '東,140\n'.repeat(700);
+  const csv = makeAttachment('example-two', 'schedule.csv', csvBody);
+  const text = makeAttachment('example-three', 'notes.txt', 'Matching tag labels: 東 and West.\n');
+  const reader = { type: 'function', name: 'native__operator_read_attachment', parameters: {
+    type: 'object', required: ['attachment_id'], properties: {
+      attachment_id: { type: 'string' }, mode: { enum: ['overview', 'detail', 'text', 'vector'] },
+      start_char: { type: 'integer' }, max_text_bytes: { type: 'integer', maximum: 16384 }
+    }
+  } };
+  const delivery = { sessionId, tools: [reader] };
+  const message = { role: 'user', text: 'Read both schedule examples and the notes.', attachments: [json, csv, text] };
+  const render = (msg = message, attachmentDelivery = delivery, includeBinaryAttachments = true) =>
+    toComputerInputMessage(msg, { attachmentDelivery, includeBinaryAttachments }).content;
+  const fileNames = blocks => blocks.filter(block => block.type === 'input_file').map(block => block.filename);
+  const refs = blocks => blocks.filter(block => block.text?.startsWith('RETAINED TEXT'))
+    .map(block => JSON.parse(block.text.split('\n').at(-1)));
+  const rendered = render();
+  assert.equal(rendered[0].text, message.text);
+  assert.deepEqual(fileNames(rendered), []);
+  assert.deepEqual(refs(rendered).map(ref => ref.attachment_id), message.attachments.map(entry => entry.id));
+  assert.deepEqual(refs(rendered).map(ref => ref.sha256), message.attachments.map(entry => entry.backendAttachment.sha256));
+  assert.equal(refs(rendered)[0].text, '{"equipment":"ERV-12","supply_cfm":140}');
+  assert.equal(refs(rendered)[1].text, csvBody);
+  assert.equal(refs(rendered)[2].text, 'Matching tag labels: 東 and West.\n');
+  assert(refs(rendered).every(ref => ref.original_access_verified === false));
+
+  const mismatched = { ...json, dataBase64: Buffer.from('{"equipment":"ERV-12","supply_cfm":940}').toString('base64') };
+  assert.deepEqual(fileNames(render({ ...message, attachments: [mismatched, csv, text] })), ['schedule.json']);
+  const large = makeAttachment('large', 'large.csv', csvBody.repeat(2));
+  assert.deepEqual(fileNames(render({ ...message, attachments: [json, large] })), ['large.csv']);
+  const binary = makeAttachment('binary', 'binary.txt', Buffer.from([0xff, 0x00, 0x01]));
+  assert.deepEqual(fileNames(render({ ...message, attachments: [binary] })), ['binary.txt']);
+  assert.deepEqual(fileNames(render(message, { sessionId: 'foreign', tools: [reader] })), message.attachments.map(entry => entry.filename));
+  assert.deepEqual(fileNames(render(message, { sessionId, tools: [] })), message.attachments.map(entry => entry.filename));
+  assert.deepEqual(refs(render(message, delivery, false)), []);
+});
+
 test('the desktop actor receives the matching registered workbook inspector and keeps the file', () => {
   const sessionId = 'current-workbook-session';
   const filename = 'Circuit assignment.xlsx';
