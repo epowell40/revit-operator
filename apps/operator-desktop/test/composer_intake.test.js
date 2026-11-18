@@ -42,6 +42,65 @@ test('ordinary fresh local composer uses available computer owner and preserves 
   assert.equal(h.calls[0].submission.attachments[0].dataBase64, 'source-pixels');
 });
 
+test('a file drop stages all references and keeps one submission and one task owner', async () => {
+  const files = [{ name: 'Library example.pdf', type: 'application/pdf', size: 3 },
+    { name: 'Hospital example.pdf', type: 'application/pdf', size: 3 }];
+  const h = routingHarness();
+  const handlers = new Map();
+  const classes = new Set();
+  const chatPane = {
+    addEventListener: (type, listener) => handlers.set(type, listener),
+    contains: () => false,
+    classList: {
+      toggle: (name, enabled) => enabled ? classes.add(name) : classes.delete(name),
+      remove: name => classes.delete(name)
+    }
+  };
+  const elements = { chatPane, attachInput: { disabled: false } };
+  const state = { ...h.state, sessionId: '', taskNavigationEpoch: 1,
+    pendingAttachments: [], attachmentReadsPending: 0 };
+  const firstHandlers = source.indexOf('elements.chatPane.addEventListener("dragover"');
+  const lastHandlers = source.indexOf('elements.promptInput.addEventListener("paste"', firstHandlers);
+  assert.ok(firstHandlers >= 0 && lastHandlers > firstHandlers);
+  let reading;
+  let persists = 0;
+  const readGates = [Promise.resolve("data:application/pdf;base64,YWJj"), Promise.withResolvers()];
+  let i = 0;
+  const context = {
+    state, elements, window: { addEventListener() {} }, composerDraftRevision: 0,
+    renderAttachStrip() {}, updateControls() {}, setStatus() {}, renderMessages() {},
+    persistComposerDraft: async () => { persists++; },
+    readFileAsDataUrl: () => i++ === 0 ? readGates[0] : readGates[1].promise,
+  };
+  runInNewContext(`${appBody('addSelectedFiles', true)}
+    ${appBody('isFileDrop')}
+    function attachComposerFiles(files) { track(addSelectedFiles(files)); }
+    ${source.slice(firstHandlers, lastHandlers)}`,
+  { ...context, track: promise => { reading = promise; } });
+  let prevented = 0;
+  const event = { dataTransfer: { types: ['Files'], files }, preventDefault: () => { prevented++; } };
+  handlers.get('dragover')(event);
+  assert.equal(event.dataTransfer.dropEffect, 'copy');
+  assert.ok(classes.has('fileDropActive'));
+  handlers.get('drop')(event);
+  assert.equal(prevented, 2);
+  assert.ok(!classes.has('fileDropActive'));
+  assert.equal(state.attachmentReadsPending, 1);
+  assert.equal(state.pendingAttachments.length, 0);
+  assert.equal(h.calls.length, 0, 'dropping files cannot dispatch work');
+  readGates[1].resolve('data:application/pdf;base64,ZGVm');
+  await reading;
+  assert.equal(state.attachmentReadsPending, 0);
+  assert.equal(persists, 1);
+  await h.send(h.create('Copy the scheduling approach from these projects.', state.pendingAttachments));
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.calls[0].owner, 'computer');
+  const attachments = h.calls[0].submission.attachments;
+  assert.equal(JSON.stringify(attachments.map(a => a.name)), JSON.stringify(files.map(f => f.name)));
+  assert.equal(JSON.stringify(attachments.map(a => a.dataBase64)), '["YWJj","ZGVm"]');
+  assert.notEqual(attachments[0].id, attachments[1].id);
+});
+
 test('actual composer respects explicit API-only restriction before computer admission', async () => {
   for (const localExecutorChoice of [localExecutor, null]) {
     const h = routingHarness({ localExecutor: localExecutorChoice });

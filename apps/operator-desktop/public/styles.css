@@ -500,6 +500,11 @@ select {
   display: none;
 }
 
+.chatPane.fileDropActive .composer {
+  outline: 2px dashed var(--accent, #346fdf);
+  outline-offset: -2px;
+}
+
 .attachStrip {
   display: flex;
   flex-wrap: wrap;

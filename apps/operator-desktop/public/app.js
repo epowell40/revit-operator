@@ -70,6 +70,7 @@ const state = {
   shellEnabled: false,
   pendingAttachments: [],
   attachmentLimits: null,
+  attachmentReadsPending: 0,
   screenTimer: null,
   computerStateTimer: null,
   notificationsTimer: null,
@@ -694,6 +695,7 @@ async function consumeAuthoritativeBackendSse(reader, onEvent) {
 
 const elements = {
   messages: document.querySelector("#messages"),
+  chatPane: document.querySelector("#chatPane"),
   chatScroll: document.querySelector("#chatScroll"),
   events: document.querySelector("#events"),
   statusText: document.querySelector("#statusText"),
@@ -1992,7 +1994,7 @@ function updateControls() {
   const captureActive = !!state.captureState.mode;
   const captureBusy = state.captureState.busy || state.resetting || state.composerSubmissionPending || state.assignmentResumePending;
   const backendSubmissionActive = state.streaming && state.activeRunKind === "backend";
-  elements.sendButton.disabled = captureBusy;
+  elements.sendButton.disabled = captureBusy || state.attachmentReadsPending > 0;
   elements.sendButton.textContent = state.composerSubmissionPending
     ? "Sending…"
     : backendSubmissionActive || state.streaming && state.activeRunKind === "computer"
@@ -3944,29 +3946,55 @@ async function addSelectedFiles(fileList) {
     throw new Error(`${oversized.name} exceeds the ${limits.maxFileBytes}-byte limit.`);
   }
 
-  const next = [];
-  for (const file of files) {
-    const dataUrl = await readFileAsDataUrl(file);
-    const commaIndex = dataUrl.indexOf(",");
-    if (commaIndex === -1) {
-      throw new Error(`Failed to encode ${file.name}.`);
+  const sessionId = state.sessionId;
+  const navigationEpoch = state.taskNavigationEpoch;
+  state.attachmentReadsPending++;
+  updateControls();
+  try {
+    const next = [];
+    for (const file of files) {
+      const dataUrl = await readFileAsDataUrl(file);
+      const commaIndex = dataUrl.indexOf(",");
+      if (commaIndex === -1 || commaIndex === dataUrl.length - 1) {
+        throw new Error(`Could not read ${file.name} as an attachment.`);
+      }
+
+      next.push({
+        id: globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        name: file.name,
+        mimeType: file.type || "",
+        sizeBytes: file.size || 0,
+        dataBase64: dataUrl.slice(commaIndex + 1)
+      });
     }
 
-    next.push({
-      id: globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      name: file.name,
-      mimeType: file.type || "",
-      sizeBytes: file.size || 0,
-      dataBase64: dataUrl.slice(commaIndex + 1)
-    });
+    // File reads can outlive the original conversation or a second selection.
+    if (state.sessionId !== sessionId || state.taskNavigationEpoch !== navigationEpoch) {
+      throw new Error("The conversation changed while reading these files. Attach them again in the intended conversation.");
+    }
+    assertAttachmentCount();
+    state.pendingAttachments = [...state.pendingAttachments, ...next];
+    renderAttachStrip();
+    composerDraftRevision++;
+    await persistComposerDraft();
+  } finally {
+    state.attachmentReadsPending--;
+    updateControls();
   }
+}
 
-  // Another picker or paste can finish while these files are being read.
-  assertAttachmentCount();
-  state.pendingAttachments = [...state.pendingAttachments, ...next];
-  renderAttachStrip();
-  composerDraftRevision++;
-  await persistComposerDraft();
+async function attachComposerFiles(fileList) {
+  try {
+    await addSelectedFiles(fileList);
+  } catch (error) {
+    state.computerMessages.push({ role: "error", text: error.message || String(error), attachments: [] });
+    renderMessages();
+    setStatus("Attachment failed.");
+  }
+}
+
+function isFileDrop(event) {
+  return Array.from(event.dataTransfer?.types || []).includes("Files");
 }
 
 async function addClipboardItems(items) {
@@ -5653,6 +5681,7 @@ function handleChatSubmissionFailure(error, submission) {
 
 elements.chatForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (state.attachmentReadsPending > 0) return;
   if (state.streaming && state.activeRunKind === "backend" || pausedTaskAcceptsDirection()) { await submitTaskDirection(); return; }
   const captured = beginComposerSend(state, elements.promptInput.value);
   if (!captured) return;
@@ -6024,15 +6053,33 @@ elements.speakButton?.addEventListener("click", async () => {
 elements.attachButton.addEventListener("click", () => elements.attachInput.click());
 elements.attachInput.addEventListener("change", async (event) => {
   try {
-    await addSelectedFiles(event.target.files);
-  } catch (error) {
-    state.computerMessages.push({ role: "error", text: error.message || String(error), attachments: [] });
-    renderMessages();
-    setStatus("Failed.");
+    await attachComposerFiles(event.target.files);
   } finally {
     event.target.value = "";
   }
 });
+elements.chatPane.addEventListener("dragover", (event) => {
+  if (!isFileDrop(event)) return;
+  event.preventDefault();
+  const allowed = !elements.attachInput.disabled;
+  event.dataTransfer.dropEffect = allowed ? "copy" : "none";
+  elements.chatPane.classList.toggle("fileDropActive", allowed);
+});
+elements.chatPane.addEventListener("dragleave", (event) => {
+  if (!elements.chatPane.contains(event.relatedTarget)) elements.chatPane.classList.remove("fileDropActive");
+});
+elements.chatPane.addEventListener("drop", (event) => {
+  elements.chatPane.classList.remove("fileDropActive");
+  if (!isFileDrop(event)) return;
+  event.preventDefault();
+  if (!elements.attachInput.disabled) void attachComposerFiles(event.dataTransfer.files);
+});
+// A file dropped outside the conversation must never navigate away from the draft.
+for (const name of ["dragover", "drop"]) {
+  window.addEventListener(name, (event) => {
+    if (isFileDrop(event)) event.preventDefault();
+  });
+}
 elements.promptInput.addEventListener("paste", async (event) => {
   try {
     await handlePasteAttachments(event);

@@ -174,6 +174,53 @@ test('attachment socket failure restores a fresh draft, attempted model-task dis
   const taskFailure=await(await post({...body,message_id:'task-response-lost',pending_attachments:[]})).text();
   assert.equal(tasks,1);assert.equal(taskFailure.includes('submission_admission'),false);
 });
+
+test('one chat dispatch carries both uploaded project PDFs', async t => {
+  const uploads = [];
+  const tasks = [];
+  const backend = await listen(async (request, response) => {
+    const reply = body => response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(body));
+    if (request.url === '/chat/intake') return reply({ route: 'task', routing_status: 'accepted' });
+    if (request.url === '/desktop/computer/config') return reply({ sidecar_agent_profile: generalAgentLaboratoryProfile() });
+    if (request.url !== '/attachments/upload' && request.url !== '/chat/stream' && request.url !== '/chat/context-policy') return reply({});
+    let raw = '';
+    for await (const part of request) raw += part;
+    const body = JSON.parse(raw);
+    if (request.url === '/chat/context-policy') return reply({
+      schema: 'revit-operator.chat-context-policy.v1', session_id: body.session_id, message_id: body.message_id,
+      requires_revit_context: false
+    });
+    if (request.url === '/attachments/upload') {
+      uploads.push(body);
+      return reply({ attachment: { id: body.id, filename: body.filename, mime: body.mime,
+        relative_path: `artifacts/uploads/${body.id}.pdf`, session_id: body.session_id } });
+    }
+    tasks.push(body);
+    return response.writeHead(200, { 'content-type': 'text/event-stream' }).end(
+      'event: assistant.done\ndata: {"text":"Both examples are available."}\n\nevent: actions\ndata: {"actions":[]}\n\nevent: done\ndata: {}\n\n');
+  });
+  t.after(() => close(backend.server));
+  const desktop = await loadDesktop(t, { OPERATOR_BACKEND_URL: backend.url,
+    REVIT_OPERATOR_MODE: 'development', OPERATOR_TOOL_EXPOSURE_PROFILE: 'laboratory' });
+  desktop.configureOperatorDesktopTestHooks({ chatRunTestHooks: { readSimpleRevitContext: async () => ({ ok: false }) } });
+  const server = desktop.app.listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(() => close(server));
+  const body = { version: 'operator.backend.v1', session_id: 'project-reference-session', message_id: 'multi-reference-task',
+    user_text: 'Use these two project examples to guide the scheduling work.',
+    pending_attachments: [{ id: 'library', filename: 'Library.pdf', dataBase64: 'JVBERi0xLjQ=' },
+      { id: 'clinic', filename: 'Clinic.pdf', dataBase64: 'JVBERi0xLjU=' }] };
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/chat/stream`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body)
+  });
+  assert.equal(response.status, 200);
+  assert.match(await response.text(), /Both examples are available/);
+  assert.deepEqual(uploads.map(a => [a.id, a.session_id, a.data_base64]),
+    body.pending_attachments.map(a => [a.id, body.session_id, a.dataBase64]));
+  assert.equal(tasks.length, 1);
+  assert.equal(tasks[0].user_text, body.user_text);
+  assert.deepEqual(tasks[0].user_attachments.map(a => [a.id, a.filename, a.relative_path]),
+    body.pending_attachments.map(a => [a.id, a.filename, `artifacts/uploads/${a.id}.pdf`]));
+});
 test("Stop forwards the exact conversation and message without a test-hook scope error", async (t) => {
   let forwarded;
   const backend = await listen(async (request, response) => {
