@@ -97,6 +97,23 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void ConnectorPublicationRequiresAnExplicitScheduleScopeOnlyForTheInlineMode()
+        {
+            var properties = new Dictionary<string, object> { ["includeNativePlacementState"] = new { type = "boolean" } };
+            var root = new Dictionary<string, object> { ["type"] = "object", ["properties"] = properties, ["additionalProperties"] = false };
+            OperatorConditionalRequestContracts.ApplyMepFragments("/revit/get-connectors", root);
+            using var document = JsonDocument.Parse(JsonSerializer.Serialize(root));
+            var schema = document.RootElement;
+            var modes = schema.GetProperty("allOf")[0].GetProperty("anyOf");
+            Assert.False(schema.GetProperty("additionalProperties").GetBoolean());
+            Assert.True(schema.GetProperty("properties").TryGetProperty("includeNativePlacementState", out _));
+            Assert.False(modes[0].TryGetProperty("required", out _));
+            Assert.False(modes[0].GetProperty("properties").GetProperty("includeInlineAccessoryState").GetProperty("enum")[0].GetBoolean());
+            Assert.Contains(modes[1].GetProperty("required").EnumerateArray(), field => field.GetString() == "preservationScheduleIds");
+            Assert.Equal(5, modes[1].GetProperty("properties").GetProperty("elementIds").GetProperty("maxItems").GetInt32());
+        }
+
+        [Fact]
         public void UnknownMepFragmentCannotSilentlyPublishAnOpenSchema()
         {
             Assert.Throws<InvalidOperationException>(() => OperatorConditionalRequestContracts.Fragment("missing"));

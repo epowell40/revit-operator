@@ -1,4 +1,27 @@
 {
+  "inline_accessory_inspection": {
+    "description": "For ordinary connectivity, omit includeInlineAccessoryState. If true, pass the exact schedule scope explicitly. An empty array observes no schedules.",
+    "anyOf": [
+      {
+        "properties": {
+          "includeInlineAccessoryState": { "type": "boolean", "enum": [false] }
+        }
+      },
+      {
+        "type": "object",
+        "required": ["includeInlineAccessoryState", "elementIds", "preservationScheduleIds"],
+        "properties": {
+          "includeInlineAccessoryState": { "type": "boolean", "enum": [true] },
+          "elementIds": { "type": "array", "minItems": 1, "maxItems": 5, "uniqueItems": true, "items": { "type": "integer", "minimum": 1 } },
+          "preservationScheduleIds": { "type": "array", "maxItems": 32, "uniqueItems": true, "items": { "type": "integer", "minimum": 1 } },
+          "includeAllRefs": { "enum": [true] },
+          "includeCoordinateSystem": { "enum": [true] },
+          "includeFlexGeometry": { "enum": [true] },
+          "onlyOpenPhysicalConnectors": { "enum": [false] }
+        }
+      }
+    ]
+  },
   "mep_curve_endpoints": {
     "allOf": [
       {

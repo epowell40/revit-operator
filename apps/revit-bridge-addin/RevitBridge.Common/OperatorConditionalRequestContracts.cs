@@ -23,6 +23,8 @@ namespace RevitBridge.Common
         {
             if (path == "/revit/create-duct" || path == "/revit/create-pipe")
                 schema["allOf"] = new[] { Fragment("mep_curve_endpoints") };
+            else if (path == "/revit/get-connectors")
+                schema["allOf"] = new[] { Fragment("inline_accessory_inspection") };
             else if (path == "/revit/repair-mep-connectors")
                 ((Dictionary<string, object>)schema["properties"])["repair"] = Fragment("mep_repair_operation");
             else throw new ArgumentException("No MEP fragments for path.", nameof(path));

@@ -26,9 +26,18 @@ namespace RevitBridge.Common
                     if (value.ValueKind != JsonValueKind.Number || !value.TryGetInt64(out var id) || id <= 0 || !seen.Add(id)) return false;
                 return true;
             }
-            if (!Ids("elementIds", 1, 5, out var owners) || !Ids("preservationScheduleIds", 0, 32, out var schedules)
-                || owners.Overlaps(schedules))
-            { error = "Inline state requires 1-5 exact physical owners and 0-32 disjoint schedules."; return false; }
+            var validOwners = Ids("elementIds", 1, 5, out var owners);
+            var validSchedules = Ids("preservationScheduleIds", 0, 32, out var schedules);
+            if (!validOwners || !validSchedules)
+            {
+                var issues = new List<string>();
+                if (!validOwners) issues.Add("elementIds must contain 1-5 unique positive physical owner IDs.");
+                if (!validSchedules) issues.Add("preservationScheduleIds is required with includeInlineAccessoryState=true and must contain 0-32 unique positive schedule IDs. Use [] for an empty schedule scope.");
+                error = string.Join(" ", issues);
+                return false;
+            }
+            if (owners.Overlaps(schedules))
+            { error = "elementIds and preservationScheduleIds must be disjoint."; return false; }
             foreach (var name in new[] { "includeAllRefs", "includeCoordinateSystem", "includeFlexGeometry" })
                 if (body.TryGetProperty(name, out var required) && required.ValueKind != JsonValueKind.True)
                 { error = "Inline state requires " + name + "=true."; return false; }

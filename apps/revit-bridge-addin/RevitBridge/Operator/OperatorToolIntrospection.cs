@@ -479,7 +479,7 @@ namespace RevitBridge.Operator
                     return schema;
                 }
 
-                if (p == "/revit/create-duct" || p == "/revit/create-pipe" || p == "/revit/repair-mep-connectors")
+                if (p == "/revit/create-duct" || p == "/revit/create-pipe" || p == "/revit/repair-mep-connectors" || p == "/revit/get-connectors")
                 {
                     var schema = (Dictionary<string, object>)SchemaFromType(RequestTypesByPath[p], 0);
                     OperatorConditionalRequestContracts.ApplyMepFragments(p, schema);
