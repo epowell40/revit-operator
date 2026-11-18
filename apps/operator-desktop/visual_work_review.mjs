@@ -206,8 +206,12 @@ export async function readVisualReviewUiIdentityV1(fetchIdentity){
  * before/after an edit, and never elevate supporting pixels into native proof. */
 export function visualReviewImageEvidenceOptions(metadata){
   const f=metadata?.capture_frame,role=metadata?.capture_role;
+  const supportedRole=['review_capture','during_review_recheck','resolution_attempt'].includes(role)
+    ||role==='sheet_context'&&metadata.capture_mode==='target_view'
+      &&f?.schema==='operator.visual_review_target_capture.v1'&&f.kind==='native_target_view'
+      &&f.selection_authority==='authorized_native_target_export'&&f.view_type==='DrawingSheet'&&f.export_mode==='full_view';
   if(!isNativeReviewMode(metadata?.capture_mode)||!positive(f?.view_id)||!bounded(f?.document_session_id,160)
-    ||!['review_capture','during_review_recheck','resolution_attempt'].includes(role))throw Error('visual_review_image_provenance_invalid');
+    ||!supportedRole)throw Error('visual_review_image_provenance_invalid');
   const label=(v,max)=>typeof v==='string'?v.replace(/[\u0000-\u001f\u007f]/g,' ').replace(/\s+/g,' ').trim().slice(0,max):'';
   const name=label(f.view_name,120),sheet=label(f.sheet_number,40),unique=label(f.view_unique_id,100);
   return {targetScope:[`view_id:${f.view_id}`,`document_session:${f.document_session_id}`,`capture_role:${role}`,
