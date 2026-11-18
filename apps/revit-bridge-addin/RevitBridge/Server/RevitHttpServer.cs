@@ -1099,7 +1099,8 @@ namespace RevitBridge.Server
                                 },
                                 localDeadline.Token,
                                 correlationId,
-                                "http:" + effectiveMethod + ":" + path);
+                                "http:" + effectiveMethod + ":" + path,
+                                externalEventOnly: RevitEventService.RequiresExternalEvent(effectiveMethod, path));
                         }
                         catch (OperationCanceledException ex) when (localDeadline.IsCancellationRequested)
                         {

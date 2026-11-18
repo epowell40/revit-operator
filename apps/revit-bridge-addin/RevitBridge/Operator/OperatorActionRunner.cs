@@ -467,7 +467,8 @@ namespace RevitBridge.Operator
                     }
 
                     return handlerResult;
-                }, localDeadline.Token, correlationId, "courier:" + method + ":" + path).ConfigureAwait(false);
+                }, localDeadline.Token, correlationId, "courier:" + method + ":" + path,
+                    externalEventOnly: RevitEventService.RequiresExternalEvent(method, path)).ConfigureAwait(false);
             }
             catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested && localDeadline.IsCancellationRequested)
             {

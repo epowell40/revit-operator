@@ -190,6 +190,8 @@ namespace RevitBridge.Common
                 return familySaveSettlement ?? OperatorAttemptSettlement.Unknown(effect, method, path, "native_family_save_unverified", "native_host");
             if (OperatorFamilyReloadReceipt.TrySettlement(root, effect, method, path, out var familyReloadSettlement))
                 return familyReloadSettlement ?? OperatorAttemptSettlement.Unknown(effect, method, path, "native_family_reload_unverified", "native_host");
+            if (OperatorDocumentActivationReceipt.TrySettlement(root, effect, method, path, out var documentActivation))
+                return documentActivation ?? OperatorAttemptSettlement.Unknown(effect, method, path, "native_document_activation_unverified");
             if (OperatorFamilySessionReceipt.TrySettlement(root, effect, method, path, out var familySessionSettlement))
                 return familySessionSettlement ?? OperatorAttemptSettlement.Unknown(effect, method, path, "native_family_session_unverified", "native_host");
             if (OperatorNativeArtifactReceipt.TrySettlement(root, effect, method, path, out var artifactSettlement))

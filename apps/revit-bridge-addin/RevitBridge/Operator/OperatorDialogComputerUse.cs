@@ -46,7 +46,7 @@ namespace RevitBridge.Operator
 
         internal static void RequireReadyForNativeModelOpen(string method, string path)
         {
-            if (method != "POST" || !string.Equals(path, "/revit/open-model", StringComparison.OrdinalIgnoreCase)) return;
+            if (!RevitEventService.RequiresExternalEvent(method, path)) return;
 
             // The last Revit UI callback identifies the main window. Read its current
             // Win32 state without asking the blocked UI thread to service an ExternalEvent.
