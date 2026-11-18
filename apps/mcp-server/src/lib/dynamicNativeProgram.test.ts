@@ -392,6 +392,51 @@ test("native failure locations are bounded diagnostic observations, with unknown
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test("a joined-wall insert rollback guides bounded recovery from the current wall", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "joined-wall-rollback-"));
+  try {
+    const supervisor = path.join(root, "supervisor.exe"), worker = path.join(root, "worker"), token = path.join(root, "token");
+    fs.writeFileSync(supervisor, "stub"); fs.mkdirSync(worker); fs.writeFileSync(token, "0123456789abcdef");
+    const runtime = { ...process.env, ...env, OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH: supervisor,
+      OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY: worker, OPERATOR_TOKEN_FILE: token };
+    const definition = "7240576f-66ca-40e7-bc79-be5af5f891f5";
+    const cases = [
+      { state: "rolled_back", definition, ids: [571265, 571317], cue: true },
+      { state: "pending", definition, ids: [571265, 571317], cue: false },
+      { state: "committed", definition, ids: [571265, 571317], cue: false },
+      { state: "rolled_back", definition, ids: [571265, "571317"], cue: false },
+      { state: "rolled_back", definition: "abcdefab-66ca-40e7-bc79-be5af5f891f5", ids: [571265, 571317], cue: false }
+    ];
+    for (const entry of cases) {
+      const committed = entry.state === "committed";
+      const evidence = fixture("apply", entry.state, committed), receipt = JSON.parse(evidence.nativeExecutionReceipt);
+      receipt.native_failures = [{ severity: "warning", message: "Insert conflicts with joined Wall.",
+        elementIds: entry.ids, failureDefinitionId: entry.definition }];
+      evidence.nativeExecutionReceipt = JSON.stringify(receipt);
+      authenticate(evidence);
+      await runWithAssignmentKernelV2(metadata("apply"), async () => {
+        const result = await runDynamicRevitProgram({ source, mode: "apply", native_program: { entry_type: "Query", allow_create: true,
+          allowed_existing_unique_ids: [], max_affected_elements: 20 } }, runtime, async (_exe, args) => {
+          fs.writeFileSync(JSON.parse(fs.readFileSync(args[1]!, "utf8")).evidencePath, JSON.stringify(evidence));
+          return { exitCode: committed ? 0 : 1, stdout: "", stderr: "" };
+        });
+        const visible: any = presentDynamicProgramResult(result);
+        if (entry.cue) {
+          assert.match(visible.guidance, /separate bounded batches/);
+          assert.match(visible.guidance, /full opening width/);
+          assert.match(visible.guidance, /attempt-time IDs/);
+          assert.doesNotMatch(visible.guidance, /For a curve correction/);
+        } else {
+          assert.doesNotMatch(visible.guidance, /separate bounded batches/);
+        }
+        assert.equal(result.iteration.retryable, false);
+        assert.equal(visible.native_outcome.task_verified, false);
+        assert.equal((result.evidence as RecordValue).nativeExecutionReceipt, evidence.nativeExecutionReceipt);
+      });
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test("native correction guidance never turns unknown, committed, missing or read outcomes into rollback recovery", () => {
   for (const [mode, state, effect] of [["apply", "unknown", "unknown"], ["apply", "committed", "applied"],
     ["apply", "rolled_back", "unknown"], ["read", "not_started", "none"], ["apply", "not_started", "none"]]) {
