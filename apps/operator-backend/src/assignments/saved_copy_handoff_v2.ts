@@ -1,9 +1,10 @@
 import path from 'node:path';
 import {nativeDocumentCheckpointResultV2} from '@revitoperator/assignment-kernel-v2-contracts';
 import {payloadDigestV2} from '@revitoperator/payload-digest-v2';
-import {canonicalJsonV2,sameAssignmentBindingV2,type AssignmentSnapshotV2,type OperationV2} from '../domain/assignment-kernel/index.js';
+import {canonicalJsonV2,sameAssignmentBindingV2,verificationOperationHasVerifiedPostconditionV2,type AssignmentSnapshotV2,type OperationV2} from '../domain/assignment-kernel/index.js';
 import {readAuthoritativeEvidence,readEvidenceRef} from '../evidence/evidence_store.js';
 import {familySessionSavedV1} from '../verification/family_session_open_v1.js';
+import {savedDocumentPostconditionV2} from '../verification/saved_document_postcondition_v2.js';
 
 const normalized=(value:string)=>path.win32.normalize(value).replaceAll('\\','/').toLowerCase();
 const hash=(value:unknown)=>typeof value==='string'&&/^[a-f0-9]{64}$/i.test(value);
@@ -68,6 +69,28 @@ export function savedCopyHandoffV2(snapshot:AssignmentSnapshotV2):null|{text:str
 function localFile(pathname:unknown,extension:string):pathname is string{
  return typeof pathname==='string'&&pathname.length<=2000&&/^[a-z]:[\\/]/i.test(pathname)
   &&!/[\u0000-\u001f]/.test(pathname)&&path.win32.extname(pathname).toLowerCase()===extension;
+}
+
+/** An independently checked copy of the project at its saved checkpoint.
+ * An outstanding model response cannot change these facts. Native work,
+ * uncertain effects and a later committed edit can supersede the checkpoint. */
+export function savedProjectCheckpointV2(snapshot:AssignmentSnapshotV2){
+ if(snapshot.terminal||snapshot.outcome!=='active'||snapshot.spec.requested_effect!=='apply'
+  ||snapshot.in_flight_operation_ids.length||snapshot.unresolved_unknown_operation_ids.length)return null;
+ return latestSavedProject(snapshot,(save,file)=>{
+  if(!localFile(file,'.rvt')||save.result?.native_artifact_receipt?.save_document?.document_path_changed!==true
+   ||!save.settled_assignment_version)return false;
+  if(Object.values(snapshot.operations).some(op=>op.operation_id!==save.operation_id&&op.persistent_effect!=='none'
+    &&(!op.settled_assignment_version||op.settled_assignment_version>save.settled_assignment_version!)))return false;
+  return save.verification_operation_ids.some(id=>{
+   const read=snapshot.operations[id],result=read?.result;
+   return read?.verification_of_operation_id===save.operation_id&&result?.dispatch_state==='dispatched'
+    &&result.result_schema_id==='operator-native/POST:/revit/inspect-exported-files/v2'
+    &&boundNativeOperation(snapshot,read)&&verificationOperationHasVerifiedPostconditionV2(snapshot,id)
+    &&Date.parse(read.opened_at)>=Date.parse(save.result!.completed_at)
+    &&nativePayload(snapshot,read,raw=>savedDocumentPostconditionV2(save.input,save.result!.native_artifact_receipt,raw,read.input))!==null;
+  });
+ });
 }
 
 function isolatedFamilyOpen(operation:OperationV2,body:Record<string,unknown>,savedFile:string):boolean {

@@ -9,7 +9,7 @@ import {appendMessage} from '../session_store.js';
 import {conversationDisplay} from '../conversation_history.js';
 import {getConversationTurn,type ConversationEntry} from '../memory/sqlite_store.js';
 import {deriveTerminalResultV2} from './assignment_kernel_v2_terminal_result.js';
-import {savedProjectBeforeInterruptionV2} from './saved_copy_handoff_v2.js';
+import {savedProjectBeforeInterruptionV2,savedProjectCheckpointV2} from './saved_copy_handoff_v2.js';
 import {requestMatchesAssignmentPrincipalId} from '../request_context.js';
 
 /** Restore the selected task's evidence-backed result after reconnecting. */
@@ -17,11 +17,13 @@ export function desktopConversationResultV1(sessionId:string,assignmentId:string
  const snapshot=getAssignmentKernelSnapshotV2(assignmentId);
  if(!snapshot||snapshot.current_binding.session_id!==sessionId||!desktopExecutorOwnsAssignmentV2(snapshot))return null;
  if(!snapshot.terminal&&requestMatchesAssignmentPrincipalId(snapshot.current_binding.principal_id,undefined,sessionId)){
-  const saved=savedProjectBeforeInterruptionV2(snapshot);
+  const checked=savedProjectCheckpointV2(snapshot);
+  const saved=checked??savedProjectBeforeInterruptionV2(snapshot);
   if(saved){
    const folder=pathToFileURL(path.win32.dirname(saved.file),{windows:true}).href.replaceAll('(','%28').replaceAll(')','%29');
    return {role:'assistant',message_id:`saved-checkpoint:${assignmentId}:${saved.observation_id}`,created_at:saved.created_at,
-    text:`Operator saved this project before the interruption. Later work still needs checking.\n\nSaved file: ${path.win32.basename(saved.file)}\n[Open its folder](${folder})`};
+    text:`${checked?'Operator saved and checked this review copy. Final model checks may still be open.'
+     :'Operator saved this project before the interruption. Later work still needs checking.'}\n\nSaved file: ${path.win32.basename(saved.file)}\n[Open its folder](${folder})`};
   }
  }
  if(!snapshot.terminal||!snapshot.quiescent||!snapshot.finished_at

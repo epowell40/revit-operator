@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';import fs from 'node:fs';import os from 
 import {storeEvidence} from '../src/evidence/evidence_store.js';
 import {verifiedChangePresentationV2} from '../src/assignments/verified_change_presentation_v2.js';
 import {deriveTerminalResultV2} from '../src/assignments/assignment_kernel_v2_terminal_result.js';
-import {savedCopyHandoffV2,savedProjectBeforeInterruptionV2} from '../src/assignments/saved_copy_handoff_v2.js';
+import {savedCopyHandoffV2,savedProjectBeforeInterruptionV2,savedProjectCheckpointV2} from '../src/assignments/saved_copy_handoff_v2.js';
 import {finalCodexAssignmentMessageV2} from '../src/brains/codex_assignment_progress.js';
 import {generateWorkReturnFromKernelV2} from '../src/work_returns/assignment_kernel_v2_generator.js';
 import {workReturnTerminalPresentationV2} from '../src/work_returns/terminal_presentation.js';
@@ -103,4 +103,33 @@ test('a project save remains available as a historical checkpoint during a separ
   assert.equal(savedProjectBeforeInterruptionV2(copy),null,mode);
  }
  assert.equal(JSON.stringify(snapshot),before);
+}));
+
+test('the already verified project copy remains available while active work or Pause awaits provider settlement',()=>fixture('schedule-original',snapshot=>{
+ const save=Object.values(snapshot.operations).find((operation:any)=>operation.input.path==='/revit/save-as') as any;
+ const verification=snapshot.operations[save.verification_operation_ids[0]];
+ const file=save.result.native_artifact_receipt.save_document.after.path;
+ assert.equal(verification.input.path,'/revit/inspect-exported-files');
+ for(const control of ['running','paused']){
+  const retained=structuredClone(snapshot);
+  Object.assign(retained,{terminal:false,outcome:'active',execution_control:{state:control,command_id:'owned'},
+   unresolved_unknown_operation_ids:[],in_flight_operation_ids:[],in_flight_provider_call_ids:['finishing-response']});
+  const before=JSON.stringify(retained);
+  assert.equal(savedProjectCheckpointV2(retained)?.file,file);
+  assert.equal(JSON.stringify(retained),before);
+  for(const change of ['unknown','in-flight-edit','later-edit','stale-save','foreign-read','missing-read','wrong-file','wrong-digest']){
+   const copy=structuredClone(retained);
+   const read=copy.operations[verification.operation_id];
+   if(change==='unknown')copy.unresolved_unknown_operation_ids=['uncertain'];
+   if(change==='in-flight-edit')copy.in_flight_operation_ids=['still-writing'];
+   if(change==='later-edit')copy.operations.later={...save,operation_id:'later',input:{path:'/revit/set-parameter'},
+    settled_assignment_version:save.settled_assignment_version+1};
+   if(change==='stale-save')copy.input_invalidated_operation_ids=[save.operation_id];
+   if(change==='foreign-read')read.result.binding={...read.result.binding,run_id:'unrelated'};
+   if(change==='missing-read')read.observation_ids=[];
+   if(change==='wrong-file')read.input.body.paths=['C:\\Other\\Unrelated.rvt'];
+   if(change==='wrong-digest')copy.observations[read.observation_ids[0]].raw_payload_hash='0'.repeat(64);
+   assert.equal(savedProjectCheckpointV2(copy),null,change);
+  }
+ }
 }));
