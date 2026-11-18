@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Threading;
 using Autodesk.Revit.UI;
 using RevitBridge.Common;
 
@@ -13,6 +14,9 @@ namespace RevitBridge.Services
         private static readonly OperatorUiContextSnapshotStore Store = new OperatorUiContextSnapshotStore();
         // Accessed only by Revit UI callbacks. Background readers see serialized values only.
         private static UIApplication? _uiApplication;
+        private static long _mainWindowHandle;
+
+        internal static IntPtr MainWindowHandle => new IntPtr(Interlocked.Read(ref _mainWindowHandle));
 
         [StructLayout(LayoutKind.Sequential)]
         private struct WindowRect { public int Left, Top, Right, Bottom; }
@@ -26,6 +30,7 @@ namespace RevitBridge.Services
             try
             {
                 var window = application.MainWindowHandle;
+                Interlocked.Exchange(ref _mainWindowHandle, window.ToInt64());
                 if (window == IntPtr.Zero || !GetWindowRect(window, out var main)) return null;
                 object? viewRectangle = null;
                 try
@@ -111,6 +116,7 @@ namespace RevitBridge.Services
         public static void Shutdown()
         {
             _uiApplication = null;
+            Interlocked.Exchange(ref _mainWindowHandle, 0);
             Store.Invalidate("revit_shutdown");
         }
     }

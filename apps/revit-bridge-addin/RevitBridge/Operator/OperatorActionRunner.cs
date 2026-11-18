@@ -365,6 +365,7 @@ namespace RevitBridge.Operator
                 return AttachSettlement(action, directResult, requestedEffect, method, path);
             }
 
+            OperatorDialogComputerUse.RequireReadyForNativeModelOpen(method, path);
             var dialogComputerUse = App.Instance?.DialogComputerUse;
             var dialogEventCursor = dialogComputerUse?.CaptureEventCursor() ?? 0;
             var autoGuardArmed = ShouldAutoArmRetryableDialogGuard(method, path, jsonBody) && dialogComputerUse != null;

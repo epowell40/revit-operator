@@ -13,6 +13,7 @@ using System.Windows.Threading;
 using Autodesk.Revit.UI;
 using Autodesk.Revit.UI.Events;
 using RevitBridge.Common;
+using RevitBridge.Services;
 
 namespace RevitBridge.Operator
 {
@@ -41,6 +42,36 @@ namespace RevitBridge.Operator
         {
             _application = application ?? throw new ArgumentNullException(nameof(application));
             _dispatcher = Dispatcher.CurrentDispatcher;
+        }
+
+        internal static void RequireReadyForNativeModelOpen(string method, string path)
+        {
+            if (method != "POST" || !string.Equals(path, "/revit/open-model", StringComparison.OrdinalIgnoreCase)) return;
+
+            // The last Revit UI callback identifies the main window. Read its current
+            // Win32 state without asking the blocked UI thread to service an ExternalEvent.
+            var window = RevitUiContextSnapshot.MainWindowHandle;
+            if (window == IntPtr.Zero) return;
+            using var process = Process.GetCurrentProcess();
+            if (GetWindowThreadProcessId(window, out var ownerPid) != 0
+                && ownerPid == process.Id
+                && !IsWindowEnabled(window))
+            {
+                throw new NativeModelOpenBlockedException();
+            }
+        }
+
+        private sealed class NativeModelOpenBlockedException : InvalidOperationException, IOperatorRevitFailureMetadata
+        {
+            public NativeModelOpenBlockedException()
+                : base("The Revit main window is blocked by a dialog. Inspect the current Revit dialog and close it safely before retrying the native file-open request. No file-open action was dispatched.") { }
+
+            public string Code => "revit_model_open_blocked_by_dialog";
+            public bool Retryable => true;
+            public string Phase => "pre_dispatch";
+            public string HostHealth => "degraded";
+            public bool OpensCircuit => false;
+            public bool OutcomeUnknown => false;
         }
 
         public object Observe(UIApplication? app, ObserveParams? request)
