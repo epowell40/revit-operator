@@ -2,7 +2,7 @@ import { drawingWorkGuidance } from "../src/goals/drawing_work_guidance.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { projectWorkPlan, boundedWorkPlanPage } from "../src/assignments/work_plan_projection.js";
-import type { AssignmentWorkPlanV2 } from "../src/domain/assignment-kernel/work_plan.js";
+import { declareWorkPlanV2, type AssignmentWorkPlanV2 } from "../src/domain/assignment-kernel/work_plan.js";
 import { retainAdvisoryFollowupsV2, dispositionAdvisoryFollowupV2 } from "../src/domain/assignment-kernel/advisory_followups.js";
 import { projectAdvisoryFollowupsV2, advisoryFollowupsHandoffV2 } from "../src/assignments/advisory_followups_projection.js";
 import type { AssignmentSnapshotV2 } from "../src/domain/assignment-kernel/snapshot.js";
@@ -56,6 +56,33 @@ test("broad drawing guidance establishes source-detail and batch-verification st
  const text=drawingWorkGuidance("Reconstruct all HVAC from the PDF",true);
  assert.match(text,/closer attachment crops/);assert.match(text,/Register source positions/);assert.match(text,/get-parameters.*get-connectors/);assert.match(text,/open ends/i);
  assert.equal(drawingWorkGuidance("Can you see the model?",false),"");assert.equal(drawingWorkGuidance("Audit every room name",true),"");
+});
+
+test("a legal many-sheet inspection cannot return an empty page with the same cursor", () => {
+  const at = "2026-11-17T21:00:00Z";
+  const parts = Array.from({ length: 60 }, (_, i) => ({
+    item_id: `sheet_${i}_${"a".repeat(60)}`, description: `Update sheet ${i}`, source_basis: "Marked package"
+  }));
+  const snapshot = { spec: { requested_effect: "apply" }, operations: {} } as AssignmentSnapshotV2;
+  const plan = declareWorkPlanV2(snapshot, { assumptions: [], items: [
+    ...parts,
+    { item_id: "final_review", kind: "inspection", description: "Review the revised sheets",
+      source_basis: "Marked package", depends_on: parts.map(p => p.item_id) },
+    { item_id: "deliver", description: "Deliver the updated file", source_basis: "User request" }
+  ] }, at);
+  const frozen = JSON.stringify(plan);
+  const page = projectWorkPlan(plan, parts.length)!.scope;
+  assert.deepEqual(page.items.map(row => row.item_id), ["final_review", "deliver"]);
+  assert.equal(page.next_start, null);
+  assert.ok(Buffer.byteLength(JSON.stringify(page.items), "utf8") <= 4000);
+  const review = page.items[0]!;
+  assert.ok("detail_is_partial" in review);
+  assert.equal(review.detail_is_partial, true);
+  assert.equal(review.total_dependencies, parts.length);
+  assert.equal(review.total_waiting_on, parts.length);
+  assert.ok(review.waiting_on.length < review.total_waiting_on);
+  assert.equal(review.completed_at, null);
+  assert.equal(JSON.stringify(plan), frozen);
 });
 
 test("advisory exact-text provenance survives deferral, omission and reopening without changing its original identity", () => {

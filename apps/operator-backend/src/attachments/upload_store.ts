@@ -203,9 +203,9 @@ export function storeAttachmentUpload(input: AttachmentUploadInput): StoredAttac
   const rawName = sanitizeFileName(input.filename || relativeHintName || "upload");
   const ext = ensureAllowedExtension(rawName, input.mime);
   const finalName = path.extname(rawName) ? rawName : `${path.basename(rawName)}${ext}`;
-  // Some systems label DWG image/vnd.dwg. Keep it a binary CAD reference,
-  // never a raster image sent to the visual model.
-  const mime = ext === ".dwg" ? "application/acad" : (input.mime ?? "").trim() || mimeFromExtension(ext);
+  // Client MIME is a fallback for extensionless names. The validated extension
+  // determines the format used to route the stored bytes for inspection.
+  const mime = mimeFromExtension(ext);
   const sha = sha256Hex(bytes);
 
   const expectedSha = (input.sha256 ?? "").trim().toLowerCase();

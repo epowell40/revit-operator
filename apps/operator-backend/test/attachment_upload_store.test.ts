@@ -42,6 +42,14 @@ test("attachment upload store: persists upload + index record", () => {
   assert.equal(latest.some(x => x.id === "att_1" && x.relative_path === rec.relative_path && x.session_id === "session-a"), true);
 });
 
+test("attachment upload store derives the media type from the supported extension", () => {
+  process.env.OPERATOR_WORKSPACE_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator_ws_"));
+  const bytes = Buffer.from("%PDF-1.4 synthetic fixture");
+  const rec = storeAttachmentUpload({ filename: "sheet.pdf", mime: "image/png", data_base64: bytes.toString("base64") });
+  assert.equal(rec.mime, "application/pdf");
+  assert.deepEqual(fs.readFileSync(path.join(process.env.OPERATOR_WORKSPACE_ROOT, rec.relative_path)), bytes);
+});
+
 test("attachment upload store: rejects unsupported type", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator_ws_"));
   process.env.OPERATOR_WORKSPACE_ROOT = root;

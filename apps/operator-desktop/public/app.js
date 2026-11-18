@@ -69,6 +69,7 @@ const state = {
   backendConfigStatus: "unknown",
   shellEnabled: false,
   pendingAttachments: [],
+  attachmentLimits: null,
   screenTimer: null,
   computerStateTimer: null,
   notificationsTimer: null,
@@ -3931,6 +3932,18 @@ async function addSelectedFiles(fileList) {
   const files = Array.from(fileList || []);
   if (!files.length) return;
 
+  const limits = state.attachmentLimits;
+  const assertAttachmentCount = () => {
+    if (limits && state.pendingAttachments.length + files.length > limits.maxCount) {
+      throw new Error(`You can send at most ${limits.maxCount} attachments per message. Remove extra files and try again.`);
+    }
+  };
+  assertAttachmentCount();
+  const oversized = limits && files.find(file => file.size > limits.maxFileBytes);
+  if (oversized) {
+    throw new Error(`${oversized.name} exceeds the ${limits.maxFileBytes}-byte limit.`);
+  }
+
   const next = [];
   for (const file of files) {
     const dataUrl = await readFileAsDataUrl(file);
@@ -3948,6 +3961,8 @@ async function addSelectedFiles(fileList) {
     });
   }
 
+  // Another picker or paste can finish while these files are being read.
+  assertAttachmentCount();
   state.pendingAttachments = [...state.pendingAttachments, ...next];
   renderAttachStrip();
   composerDraftRevision++;
@@ -5519,6 +5534,7 @@ async function sendPrompt(input, attachments = [], { browserFreshnessChecked = f
 }
 
 function applySidecarConfig(config = {}) {
+  state.attachmentLimits = config.attachmentLimits || null;
   state.backendUrl = config.backendUrl || "";
   state.backendLocal = !!config.backendLocal;
   state.backendAuthMode = config.backendAuthMode || "unknown";

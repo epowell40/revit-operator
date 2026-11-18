@@ -265,33 +265,22 @@ const SHELL_BLOCKED_PATTERNS = [
   /\b(?:del|erase|rmdir|rd)\b/i
 ];
 
-const SUPPORTED_ATTACHMENT_MIME_TYPES = new Set([
-  "application/json",
-  "application/msword",
-  "application/pdf",
-  "application/vnd.ms-excel",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "image/jpeg",
-  "image/jpg",
-  "image/png",
-  "text/csv",
-  "text/plain"
+const ATTACHMENT_MIME_BY_EXTENSION = new Map([
+  [".csv", "text/csv"],
+  [".dwg", "application/acad"],
+  [".docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+  [".jpeg", "image/jpeg"],
+  [".jpg", "image/jpeg"],
+  [".json", "application/json"],
+  [".pdf", "application/pdf"],
+  [".png", "image/png"],
+  [".txt", "text/plain"],
+  [".xls", "application/vnd.ms-excel"],
+  [".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"]
 ]);
-
-const SUPPORTED_ATTACHMENT_EXTENSIONS = new Set([
-  ".csv",
-  ".dwg",
-  ".docx",
-  ".jpeg",
-  ".jpg",
-  ".json",
-  ".pdf",
-  ".png",
-  ".txt",
-  ".xls",
-  ".xlsx"
-]);
+const EXTENSIONLESS_ATTACHMENT_MIME_TYPES = new Set(ATTACHMENT_MIME_BY_EXTENSION.values());
+// DWG source binding requires a named file with a .dwg extension.
+EXTENSIONLESS_ATTACHMENT_MIME_TYPES.delete("application/acad");
 
 const CERTIFIED_READ_STATUSES = new Set(["off", "configured", "available", "degraded", "unknown"]);
 const CERTIFIED_READ_LIFECYCLES = new Set([
@@ -3014,32 +3003,21 @@ function attachmentExtension(name) {
 }
 
 function normalizeAttachmentMimeType(name, mimeType) {
-  if (attachmentExtension(name) === ".dwg") return "application/acad";
+  const inferredMime = ATTACHMENT_MIME_BY_EXTENSION.get(attachmentExtension(name));
+  if (inferredMime) return inferredMime;
   const rawMime = `${mimeType || ""}`.trim().toLowerCase();
-  if (rawMime) {
-    if (rawMime === "image/jpg") return "image/jpeg";
-    return rawMime;
-  }
-
-  const ext = attachmentExtension(name);
-  if (ext === ".pdf") return "application/pdf";
-  if (ext === ".docx") return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-  if (ext === ".xlsx") return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-  if (ext === ".xls") return "application/vnd.ms-excel";
-  if (ext === ".csv") return "text/csv";
-  if (ext === ".txt") return "text/plain";
-  if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
-  if (ext === ".png") return "image/png";
-  if (ext === ".json") return "application/json";
-  return "";
+  return rawMime === "image/jpg" ? "image/jpeg" : rawMime;
 }
 
 function sanitizePendingAttachments(rawAttachments = []) {
   if (!Array.isArray(rawAttachments)) {
     throw new Error("Attachments must be an array.");
   }
+  if (rawAttachments.length > MAX_ATTACHMENTS) {
+    throw new Error(`You can send at most ${MAX_ATTACHMENTS} attachments per message. Remove extra files and try again.`);
+  }
 
-  return rawAttachments.slice(0, MAX_ATTACHMENTS).map((attachment, index) => {
+  return rawAttachments.map((attachment, index) => {
     const id = `${attachment?.id || ""}`.trim() || `${Date.now()}-${index}`;
     const filename = path.basename(`${attachment?.name || attachment?.filename || `attachment-${index + 1}`}`.trim());
     const mime = normalizeAttachmentMimeType(filename, attachment?.mimeType || attachment?.mime);
@@ -3052,7 +3030,7 @@ function sanitizePendingAttachments(rawAttachments = []) {
     if (!dataBase64) {
       throw new Error(`Attachment ${index + 1} is empty.`);
     }
-    if (!SUPPORTED_ATTACHMENT_EXTENSIONS.has(ext) && !SUPPORTED_ATTACHMENT_MIME_TYPES.has(mime)) {
+    if (!(ext ? ATTACHMENT_MIME_BY_EXTENSION.has(ext) : EXTENSIONLESS_ATTACHMENT_MIME_TYPES.has(mime))) {
       throw new Error(`Attachment ${index + 1} has an unsupported type.`);
     }
 
@@ -13791,6 +13769,7 @@ app.get("/api/config", async (_req, res) => {
       backendUrl: resolveBackendUrl(),
       backendAuthMode: authMode,
       backendLocal: isLocalBackendUrl(resolveBackendUrl()),
+      attachmentLimits: { maxCount: MAX_ATTACHMENTS, maxFileBytes: MAX_ATTACHMENT_BYTES },
       inputEnabled: INPUT_ENABLED,
       shellEnabled: SHELL_ENABLED,
       computerUseAvailable: !!backendComputer.available,

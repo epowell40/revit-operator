@@ -96,19 +96,34 @@ export function projectWorkPlan(plan: AssignmentWorkPlanV2 | undefined, start?: 
     return !dependency || workPlanItemDeferredV2(dependency) || !current(dependency) && !claimed(id);
   });
   const ready=plan.items.filter(item=>!current(item) && !claimed(item.item_id) && !workPlanItemDeferredV2(item) && waiting(item).length===0);
+  const scopeBudget = 4000;
+  const scopeRows = plan.items.map((item,index) => {
+    const row = { item_id: item.item_id, review_ref:`R${index+1}`,
+      ...(workPlanItemDeferredV2(item)?{question_ref:`Q${index+1}`} : {}), description: item.location_history?.at(-1)?.drafting?item.description.slice(0,160):item.description,
+      source_basis: item.location_history?.at(-1)?.drafting?item.source_basis.slice(0,160):item.source_basis, kind: item.kind ?? "edit", depends_on: item.depends_on ?? [], waiting_on: waiting(item),
+      ...(item.location_history?.length ? {location_hint:projectCompactWorkPlanLocationV2(item,snapshot)} : {}),
+      deferred: workPlanItemDeferredV2(item), deferral: item.deferrals?.at(-1) ?? null, claimed_unverified: claimed(item.item_id),
+      completed_at: current(item) ? item.completed_at : null, verified_operation_count: item.operation_ids.length };
+    if (Buffer.byteLength(JSON.stringify([row]), "utf8") <= scopeBudget) return row;
+    // A valid item can depend on up to 128 other items. Keep it reachable even
+    // when its full projection cannot fit, and retain the exact graph as-is.
+    const preview = (text: string) => Array.from(text).slice(0, 96).join("");
+    return { ...row, description: preview(row.description), source_basis: preview(row.source_basis),
+      depends_on: row.depends_on.slice(0, 2), waiting_on: row.waiting_on.slice(0, 2),
+      total_dependencies: row.depends_on.length, total_waiting_on: row.waiting_on.length,
+      location_hint: undefined, detail_is_partial: true,
+      deferral: row.deferral ? { reason: preview(row.deferral.reason), deferred_at: row.deferral.deferred_at,
+        resumed_at: row.deferral.resumed_at } : null };
+  });
+  const scope = boundedWorkPlanPage(scopeRows, start ?? Math.max(0, firstPending), scopeBudget);
   return { schema: plan.schema, scope_is_assistant_interpretation: true,
     next_native_inspection: projectNextNativeInspectionV2(snapshot),
     scheduling_is_advisory: true,
     ready_items: boundedWorkPlanPage(ready.map(item=>item.item_id),0,1500),
     deferred_count: plan.items.filter(workPlanItemDeferredV2).length,
     scheduling_notice: "Work on ready independent items. Collect deferred questions for a consolidated handoff. Advisory claims are unverified: read back prerequisite results before dependent edits. This queue does not authorize native execution or clear unknown effects.",
-    completed_count: plan.items.filter(item => current(item)).length, total_count: plan.items.length,
-    scope: boundedWorkPlanPage(plan.items.map((item,index) => ({ item_id: item.item_id, review_ref:`R${index+1}`,
-      ...(workPlanItemDeferredV2(item)?{question_ref:`Q${index+1}`} : {}), description: item.location_history?.at(-1)?.drafting?item.description.slice(0,160):item.description,
-      source_basis: item.location_history?.at(-1)?.drafting?item.source_basis.slice(0,160):item.source_basis, kind: item.kind ?? "edit", depends_on: item.depends_on ?? [], waiting_on: waiting(item),
-      ...(item.location_history?.length ? {location_hint:projectCompactWorkPlanLocationV2(item,snapshot)} : {}),
-      deferred: workPlanItemDeferredV2(item), deferral: item.deferrals?.at(-1) ?? null, claimed_unverified: claimed(item.item_id),
-      completed_at: current(item) ? item.completed_at : null, verified_operation_count: item.operation_ids.length })), start ?? Math.max(0, firstPending), 4000),
+    completed_count: plan.items.filter(item => current(item)).length, total_count: plan.items.length, scope,
+    ...(scope.items.some(item => "detail_is_partial" in item) ? { scope_details_notice: "A large item is shown in summary. Dependency previews are partial; wait counts and the ready queue use the full retained plan." } : {}),
     assumptions: boundedWorkPlanPage(plan.assumptions, assumptionStart, 1000),
     pagination_tool: "operator_manage_work_plan action=status with start/assumptionStart; completed scope remains retained. action=locate with itemId/locationHint saves source page/crop and candidate model view for restart; revalidate before editing." };
 }
