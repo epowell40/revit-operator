@@ -5,10 +5,58 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { runDynamicRevitProgram } from "./dynamicRevitProgramRunner.js";
+import { ASSIGNMENT_KERNEL_OPERATION_CONTEXT_V2_SCHEMA, ASSIGNMENT_KERNEL_V2_META_KEY, runWithAssignmentKernelV2 } from "./assignmentKernelV2.js";
 import { getWorkspaceRoot } from "./workspace.js";
 
 const sha256 = (value: string) => `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
 const emptyDiagnosticBundle = sha256("dynamic-revit-worker-diagnostics/v1\n");
+
+test("a native preparation mismatch tells the bound actor how to restore the original project", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dynamic-preparation-refusal-"));
+  const previous = process.env.OPERATOR_WORKSPACE_ROOT;
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  try {
+    const supervisor = path.join(root, "supervisor.exe"), token = path.join(root, "token"), worker = path.join(root, "worker");
+    fs.writeFileSync(supervisor, "stub"); fs.writeFileSync(token, "0123456789abcdef"); fs.mkdirSync(worker);
+    const env = { ...process.env, REVIT_OPERATOR_MODE: "development", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory",
+      OPERATOR_REVIT_TRANSPORT: "direct", OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH: supervisor,
+      OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY: worker, OPERATOR_TOKEN_FILE: token };
+    const capability = "operator_run_dynamic_revit_program";
+    const binding = { assignment_id: "assignment", run_id: "run", session_id: "session", generation: 1,
+      principal_id: "principal", document_fingerprint: sha256("original project") };
+    const evidence = { schema: "dynamic-revit-phase2-live-evidence/v0", ok: false, workerStarted: false, workerOutput: null,
+      failure: "Native preparation document differs from the requested model.", hostAuthenticationReceipts: ['{"schema":"dynamic-revit-bootstrap-receipt/v0","ok":true}'] };
+    const run = (mode: "read" | "apply", extra: Record<string, unknown> = {}) => {
+      let launches = 0;
+      return runWithAssignmentKernelV2({ [ASSIGNMENT_KERNEL_V2_META_KEY]: {
+        schema: ASSIGNMENT_KERNEL_OPERATION_CONTEXT_V2_SCHEMA, assignment_id: binding.assignment_id, binding,
+        operation_id: "operation", capability_id: capability, requested_effect: mode,
+        purpose: "work", fulfillment_role: "delegated_task_execution", delegation_authority_id: "delegation:operation",
+        eligible_criterion_ids: [], opened_at: "2026-11-17T00:00:00Z", deadline_at: "2026-11-17T00:04:00Z",
+        request_identity: { capability_id: capability, request_signature: "request" }
+      } }, () => runDynamicRevitProgram({ source: "public class ReadProbe {}", mode,
+        native_program: { entry_type: "ReadProbe", ...(mode === "apply" ? { effect_scope: "active_document" as const } : {}) } },
+      env, async (_file, args) => {
+        assert.equal(++launches, 1, "a preparation refusal must not trigger another call");
+        const config = JSON.parse(fs.readFileSync(args[1]!, "utf8"));
+        assert.equal(config.expectedDocumentFingerprint, binding.document_fingerprint);
+        fs.writeFileSync(config.evidencePath, JSON.stringify({ ...evidence, ...extra }));
+        return { exitCode: 1, stdout: "", stderr: "" };
+      }));
+    };
+    for (const mode of ["read", "apply"] as const) {
+      await assert.rejects(run(mode), /REVIT_PREPARATION_DOCUMENT_MISMATCH:.*GET \/revit\/context.*original project tab.*Reconcile any prior writes/);
+    }
+    for (const neighbor of [{ workerStarted: true }, { failure: "Unknown transport error" }, { applyReceipt: "unclassified apply" },
+      { hostAuthenticationReceipts: [] }]) {
+      await assert.rejects(run("read", neighbor), /assignment_dynamic_result_document_mismatch/);
+    }
+  } finally {
+    if (previous === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previous;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("bounded bootstrap contention retains a useful read retry receipt without authorizing a mutation replay", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "dynamic-bootstrap-busy-"));

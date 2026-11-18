@@ -8,6 +8,19 @@ namespace RevitOperator.DynamicRevitSandboxSupervisor.Tests;
 public sealed class NativeProgramCallerTests
 {
     [Theory]
+    [InlineData(500, "Native preparation document differs from the requested model.", "System.InvalidOperationException", true)]
+    [InlineData(403, "Native preparation document differs from the requested model.", "System.InvalidOperationException", false)]
+    [InlineData(500, "Authenticated native preparation does not match the requested document, source, target or effect scope.", "System.InvalidOperationException", false)]
+    [InlineData(500, "Native preparation document differs from the requested model.", "System.ArgumentException", false)]
+    public void OnlyTheExactBridgePreparationRejectionDescribesDocumentMismatch(int status, string error, string type, bool recognized)
+    {
+        var body = JsonSerializer.Serialize(new { error, type, stack = "native preparation handler stack" });
+        Assert.Equal(recognized, Program.IsNativePreparationDocumentMismatch(new HttpPostResult(false,status,body)));
+        Assert.False(Program.IsNativePreparationDocumentMismatch(new HttpPostResult(true,status,body)));
+        Assert.False(Program.IsNativePreparationDocumentMismatch(new HttpPostResult(false,status,body[..^1])));
+    }
+
+    [Theory]
     [InlineData("local","general",true)][InlineData("self_hosted","general",true)]
     [InlineData("development","laboratory",true)][InlineData("hosted","general",false)]
     [InlineData("production","general",false)][InlineData("Local","general",false)]

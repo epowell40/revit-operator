@@ -6,6 +6,9 @@ namespace RevitOperator.DynamicRevitSandboxSupervisor;
 
 internal static partial class Program
 {
+    private const string NativePreparationPath = "/revit/dynamic-runtime/native-program-prepare-v1";
+    private const string NativePreparationMismatch = "Native preparation document differs from the requested model.";
+
     internal static void ValidateNativeLane(LiveTaskConfig config)
     {
         if(config.NativeProgram==null)return;
@@ -32,7 +35,7 @@ internal static partial class Program
     private static bool IsNativeHash(string value)=>value!=null && value.Length==71 && value.StartsWith("sha256:",StringComparison.Ordinal) && value[7..].All(c=>c is >= '0' and <= '9' or >= 'a' and <= 'f');
     private static string NativeSourceHash(string source)=>DynamicWire.Sha256(source.Replace("\r\n","\n").Replace("\r","\n"));
 
-    private static async Task<(DynamicNativeProgramPreparationV1 Preparation,string Raw)> PrepareNativeProgram(LiveTaskConfig config,string source,string runtimeId,
+    private static async Task<(DynamicNativeProgramPreparationV1 Preparation,string Raw)?> PrepareNativeProgram(LiveTaskConfig config,string source,string runtimeId,
         byte[] key,string token,string writeGrant,List<string> authentications)
     {
         var sourceHash=NativeSourceHash(source);var program=config.NativeProgram!;var expectedDocumentFingerprint=config.ExpectedDocumentFingerprint!;
@@ -41,9 +44,35 @@ internal static partial class Program
         var request=JsonSerializer.Serialize(new{runtimeInstanceId=runtimeId,correlationId,authExpiresUnixSeconds,
             requestMac=DynamicWire.SignSessionMessage(key,"native-program-prepare",runtimeId,correlationId,authExpiresUnixSeconds,DynamicWire.Sha256(core)),
             sourceHash,expectedDocumentFingerprint,program},WireJson);
-        var envelope=await Post(config.BridgeUrl,"/revit/dynamic-runtime/native-program-prepare-v1",token,writeGrant,request,correlationId);
-        var raw=UnwrapAuthenticated(envelope,key,runtimeId,"native-program-prepare-receipt",out var authentication);authentications.Add(authentication);
+        var response=await SendPost(config.BridgeUrl,NativePreparationPath,token,writeGrant,request,correlationId);
+        if (!response.Success)
+        {
+            if (IsNativePreparationDocumentMismatch(response)) return null;
+            throw new InvalidOperationException("Bridge " + NativePreparationPath + " returned " + response.StatusCode + ": " + response.Body);
+        }
+        var raw=UnwrapAuthenticated(response.Body,key,runtimeId,"native-program-prepare-receipt",out var authentication);authentications.Add(authentication);
         return DecodeNativePreparation(config,sourceHash,raw);
+    }
+
+    // Called only for the response to the signed preparation request, before
+    // creating a worker or sending an execute request. Do not use this to
+    // interpret execution errors or settle unknown effects.
+    internal static bool IsNativePreparationDocumentMismatch(HttpPostResult response)
+    {
+        if (response.Success || response.StatusCode != 500 || response.Body.Length > 16_384) return false;
+        try
+        {
+            using var document = JsonDocument.Parse(response.Body);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return false;
+            var fields = root.EnumerateObject().ToLookup(property => property.Name, StringComparer.Ordinal);
+            return fields["error"].Count() == 1 && fields["type"].Count() == 1
+                && fields["error"].Single().Value.ValueKind == JsonValueKind.String
+                && fields["error"].Single().Value.GetString() == NativePreparationMismatch
+                && fields["type"].Single().Value.ValueKind == JsonValueKind.String
+                && fields["type"].Single().Value.GetString() == "System.InvalidOperationException";
+        }
+        catch (JsonException) { return false; }
     }
 
     internal static (DynamicNativeProgramPreparationV1 Preparation,string Raw) DecodeNativePreparation(LiveTaskConfig config,string sourceHash,string raw)

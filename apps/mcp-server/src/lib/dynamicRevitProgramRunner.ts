@@ -160,6 +160,11 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
   const evidenceSha256 = sha256(evidenceBytes);
   const evidence = JSON.parse(evidenceBytes.toString("utf8")) as Record<string, unknown>;
   const nativeEvidence = native ? readNativeProgramEvidence(evidence, sourceHash, input.mode, native.expectedDocumentFingerprint) : null;
+  if (native && execution.exitCode === 1 && !execution.stderr.trim() && isNativePreparationDocumentMismatch(evidence)) {
+    // Preparation has no bound native result. Preserve the evidence on disk
+    // and the existing dispatch/settlement rules by surfacing a refusal.
+    throw new Error("REVIT_PREPARATION_DOCUMENT_MISMATCH: The active document differs from the assignment's Revit project. Use GET /revit/context to check the active document. If a family editor or another model is active, return to the original project tab without saving or closing other documents. Confirm the project identity before looking up its view or element IDs. Reconcile any prior writes before continuing. If the original project cannot be restored, report the context blocker.");
+  }
   if (!native && evidence.nativeExecutionReceipt) throw new Error("Native C# evidence cannot replace a snapshot/graph execution.");
   if (activeCheckpoint) validateCheckpointEcho(evidence, activeCheckpoint.receipt);
   const executionStatus = evidence.schema === "dynamic-revit-needs-facts-evidence/v1"
@@ -737,6 +742,16 @@ function selectorCovers(current: NormalizedSelector, requested: Record<string, u
     covers(current.elementUniqueIds, requested.elementUniqueIds) && covers(current.categoryStableIds, requested.categoryStableIds) &&
     covers(current.kinds, requested.kinds) && covers(current.parameterNames, requested.parameterNames) &&
     (requested.includeTypeParameters !== true || current.includeTypeParameters === true);
+}
+
+function isNativePreparationDocumentMismatch(evidence: Record<string, unknown>): boolean {
+  return evidence.schema === "dynamic-revit-phase2-live-evidence/v0" && evidence.ok === false
+    && evidence.failure === "Native preparation document differs from the requested model."
+    && evidence.workerStarted === false && evidence.workerOutput === null
+    && !evidence.nativeExecutionReceipt && !evidence.registrationReceipt && !evidence.snapshotReceipt && !evidence.previewReceipt
+    && !evidence.admission && !evidence.v1Admission && !evidence.applyReceipt && !evidence.applyAuthorizationReceipt
+    && Array.isArray(evidence.hostAuthenticationReceipts) && evidence.hostAuthenticationReceipts.length === 1
+    && typeof evidence.hostAuthenticationReceipts[0] === "string";
 }
 
 function diagnosticsFromEvidence(evidence: Record<string, unknown>, stderr: string, authenticatedNativeFailure = false): StructuredDiagnostic[] {
