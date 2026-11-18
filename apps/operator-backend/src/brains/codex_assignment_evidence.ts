@@ -89,6 +89,11 @@ function verifiedPostconditions(snapshot:AssignmentSnapshotV2){
     ||!requested.every(id=>Number.isSafeInteger(id)&&Number(id)>0&&op.result!.affected_target_identities?.includes('element_id:'+id))))return [];
   const deliverable=observation.facts.find(f=>f.fact_id==='verification.deliverable_target_identities')?.value;
   const targets=Array.isArray(deliverable)&&deliverable.length<=32&&deliverable.every(id=>typeof id==='string'&&/^element_id:[1-9]\d*$/.test(id))?deliverable:undefined;
+  const verifiedInlineAccessory = op.request_identity?.path === '/revit/place-mep-accessory-interactively'
+    && op.result?.result_schema_id === 'operator-native/POST:/revit/place-mep-accessory-interactively/v2'
+    && op.result?.native_transaction_state === 'committed'
+    && read.request_identity?.path === '/revit/get-connectors'
+    && read.result.result_schema_id === 'operator-native/POST:/revit/get-connectors/v2';
   const schedulePreservation=regularSchedulePresentationCheckedScopeV2(snapshot,op,read);
   const parameterPreservation=op.request_identity?.path==='/revit/set-parameter'?parameterScheduleReadScopeV2(snapshot,op,read):null;
   return [{operation_id:op.operation_id,request_path:op.request_identity?.path,check_state:'verified_current',
@@ -100,6 +105,7 @@ function verifiedPostconditions(snapshot:AssignmentSnapshotV2){
    guidance:parameterPreservation?'The current independent native read checked the requested parameter values and the listed collateral schedules against actual native pre-edit flat definition/table/parameter snapshots. Do not mentally re-compare those raw arrays. For inspection after SaveAs, reuse the exact target elementIds and preservationScheduleIds in one fresh get-parameters read. This is not whole-model or visual proof; other obligations remain separate.'
     :schedulePreservation?'The current independent native comparison checked the listed target schedule content, host member identities, cell styles and placement anchors, plus the supported field/configuration postcondition and the listed unrequested schedules. Do not mentally re-compare those raw arrays. Geometric reflow, visual readability/clearance, other requested save and delivery obligations remain separate; existing controls apply.'
     :requested?'The host comparison already checked the listed schedule preservation obligations. Do not re-compare their raw arrays or request authorization solely to repeat that accepted check. Continue other already-requested visual, save and delivery obligations under existing controls.'
+    :verifiedInlineAccessory?'The current independent native check verified the fitted accessory, split run and reciprocal physical connections in its recorded scope. Use this result directly without re-reading the same evidence. If the user requested a separate RVT and the output is still outstanding, carry out the authorized Save As and verify the saved file. Report any remaining unchecked scope.'
     :'This supported native check is current. Other requested inspections, save and delivery obligations remain separate; existing controls still apply.'}];
  });
 }

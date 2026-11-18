@@ -89,6 +89,15 @@ test('native interactive accessory independent read settles through the existing
   assert.equal(appliedOperationHasVerifiedPostconditionV2(settled,apply.operation_id),expected,kind+':'+variant);
   const index=JSON.parse(codexAssignmentEvidenceContextV2(settled));
   const pending=index.pending_verification.find((entry:{operation_id:string})=>entry.operation_id===apply.operation_id);
+  const verified = index.verified_postconditions.find((entry: {operation_id: string}) => entry.operation_id === apply.operation_id);
+  if (expected) {
+   assert.equal(verified.check_state, 'verified_current');
+   assert.match(verified.guidance, /fitted accessory, split run and reciprocal physical connections/);
+   assert.match(verified.guidance, /If the user requested a separate RVT.*authorized Save As/);
+   assert.equal(verified.read_operation_id, read.operation_id);
+  } else {
+   assert.equal(verified, undefined, 'A pending, stale or untrusted read cannot present verified placement guidance.');
+  }
   if(variant==='large_remote_damage'){
    assert.equal(pending.latest_check.state,'branch_connected');
    assert.equal(pending.latest_check.preservation_state,'not_established');
