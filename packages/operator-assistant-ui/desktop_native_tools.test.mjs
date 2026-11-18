@@ -1,6 +1,18 @@
 import assert from 'node:assert/strict';import test from 'node:test';
 import {installDesktopNativeTools,invokeDesktopNativeTool,desktopNativeBinding,singleExecutionInstructions} from './desktop_native_tools.mjs';
 const assignment={kernel_version:2,session_id:'s',goal_id:'a',run_id:'r',generation:1};
+test('the unified owner checkpoints a requested separate RVT before opening the family editor for refinement',()=>{
+ for(const mode of [undefined,'single_actor_review_v1']){
+  const text=singleExecutionInstructions('base','native',mode);
+  const guidance=text.split('\n').find(line=>line.startsWith('For a drawing reconstruction with a requested separate RVT'));
+  assert.ok(guidance,'The instruction must be present in the model-facing prompt');
+  assert.match(guidance,/native readback of the first usable batch.*Save As.*before opening or creating a family/);
+  assert.match(guidance,/Honor review-before-save and no-save instructions/);
+  assert.match(guidance,/still requires its own native verification/);
+  assert.match(guidance,/Do not save while effects are unknown/);
+  assert.match(guidance,/Continue required corrections/);
+ }
+});
 test('same-owner documentation is delivered as context without adding native success or executing a tool',async()=>{
  const contract={schema:'operator.desktop-native-tool-contract.v1',completion_eligible:false,authorizationGranted:false,
   tool:{name:'operator_run_dynamic_revit_program',description:'Exact SDK guide',inputSchema:{type:'object'}}};
