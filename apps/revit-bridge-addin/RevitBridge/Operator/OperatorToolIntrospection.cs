@@ -475,7 +475,7 @@ namespace RevitBridge.Operator
                 if (p == "/revit/configure-schedule")
                 {
                     var schema = (Dictionary<string, object>)SchemaFromType(RequestTypesByPath[p], 0);
-                    OperatorConditionalRequestContracts.ApplyScheduleCombinedFragment(schema);
+                    OperatorConditionalRequestContracts.ApplyScheduleFragments(schema);
                     return schema;
                 }
 

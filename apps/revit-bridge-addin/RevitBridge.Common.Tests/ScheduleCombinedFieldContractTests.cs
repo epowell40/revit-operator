@@ -34,7 +34,7 @@ namespace RevitBridge.Common.Tests
         {
             var root = new Dictionary<string, object> { ["type"]="object", ["additionalProperties"]=false,
                 ["properties"]=new Dictionary<string, object> { ["query"]=new { type="string" }, ["combinedField"]=new {} } };
-            OperatorConditionalRequestContracts.ApplyScheduleCombinedFragment(root);
+            OperatorConditionalRequestContracts.ApplyScheduleFragments(root);
             using var document=JsonDocument.Parse(JsonSerializer.Serialize(root));
             var value=document.RootElement; var legacy=value.GetProperty("oneOf")[0]; var combined=value.GetProperty("oneOf")[1];
             Assert.False(value.GetProperty("additionalProperties").GetBoolean());
@@ -45,6 +45,47 @@ namespace RevitBridge.Common.Tests
             Assert.False(combined.GetProperty("properties").TryGetProperty("query",out _));
             var fields=combined.GetProperty("properties").GetProperty("combinedField").GetProperty("properties").GetProperty("sourceFieldIds");
             Assert.True(fields.GetProperty("uniqueItems").GetBoolean()); Assert.Equal(8,fields.GetProperty("maxItems").GetInt32());
+        }
+
+        [Fact]
+        public void PublishedFilterPropertyDocumentsCanonicalOperatorsWithoutRestrictingAcceptedSpellings()
+        {
+            var op = new Dictionary<string, object>
+            {
+                ["oneOf"] = new[] { new { type = "null" }, new { type = "string" } }
+            };
+            var filterArray = new Dictionary<string, object>
+            {
+                ["type"] = "array",
+                ["items"] = new Dictionary<string, object>
+                {
+                    ["properties"] = new Dictionary<string, object> { ["op"] = op }
+                }
+            };
+            var root = new Dictionary<string, object>
+            {
+                ["properties"] = new Dictionary<string, object>
+                {
+                    ["filters"] = new Dictionary<string, object>
+                    {
+                        ["oneOf"] = new object[] { new { type = "null" }, filterArray }
+                    },
+                    ["combinedField"] = new { }
+                }
+            };
+            OperatorConditionalRequestContracts.ApplyScheduleFragments(root);
+            using var doc = JsonDocument.Parse(JsonSerializer.Serialize(root));
+            JsonElement FilterOperator(JsonElement schema) => schema.GetProperty("properties")
+                .GetProperty("filters").GetProperty("oneOf")[1].GetProperty("items")
+                .GetProperty("properties").GetProperty("op");
+            var property = FilterOperator(doc.RootElement);
+            var guidance = property.GetProperty("description").GetString();
+            Assert.Contains("equals, not_equals, contains, not_contains, begins_with, ends_with, has_value, has_no_value", guidance);
+            Assert.Contains("Omit for equals", guidance);
+            Assert.False(property.TryGetProperty("enum", out _));
+            Assert.Equal("null", property.GetProperty("oneOf")[0].GetProperty("type").GetString());
+            Assert.Equal("string", property.GetProperty("oneOf")[1].GetProperty("type").GetString());
+            Assert.Equal(property.GetRawText(), FilterOperator(doc.RootElement.GetProperty("oneOf")[0]).GetRawText());
         }
     }
 }
