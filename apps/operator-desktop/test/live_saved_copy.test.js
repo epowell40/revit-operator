@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import {once} from 'node:events';
-import {mkdtemp,rm,writeFile} from 'node:fs/promises';
+import {mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import {runInNewContext} from 'node:vm';
 
 test('the running conversation can show a checked copy while a model response is outstanding', {timeout:10000}, async t=>{
  const temp=await mkdtemp(path.join(os.tmpdir(),'operator-live-copy-'));
@@ -87,4 +88,30 @@ test('the running conversation can show a checked copy while a model response is
   await new Promise(resolve=>setTimeout(resolve,10));
  }
  assert.fail('The synthetic run did not settle.');
+});
+
+test('the live copy survives passive computer actions and clears before other desktop input', async () => {
+ const source = (await readFile(new URL('../server.js', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+ const loop = source.indexOf('async function executeComputerLoop(');
+ const first = source.indexOf('if (item.type === "computer_call") {', loop);
+ const afterFence = source.indexOf('        if (actions.some((action) => action?.type !== "screenshot")) {', first);
+ const actionStart = source.indexOf('function getComputerActions(');
+ const actionEnd = source.indexOf('\n}\n', actionStart) + 2;
+ assert(loop >= 0 && first > loop && afterFence > first && actionStart >= 0 && actionEnd > actionStart);
+ const enter = runInNewContext(source.slice(actionStart, actionEnd)
+  + '\n(item,computerState)=>{' + source.slice(first, afterFence) + '\n}}');
+ const checkedProjectCopy = { message: { text: 'Saved file: CAD Ranch Milestone Result.rvt' } };
+ for (const [label, message, remains] of [
+  ['exact retained wait', {action:{type:'wait'}}, true],
+  ['screenshot', {actions:[{type:'screenshot'}]}, true],
+  ['passive series', {actions:[{type:'wait'},{type:'screenshot'}]}, true],
+  ['empty', {actions:[]}, true],
+  ['click', {action:{type:'click'}}, false],
+  ['mixed', {actions:[{type:'wait'},{type:'type'}]}, false],
+  ['unknown', {actions:[{}]}, false],
+ ]) {
+  const state = {checkedProjectCopy};
+  enter({...message,type:'computer_call'}, state);
+  assert.equal(state.checkedProjectCopy, remains ? checkedProjectCopy : null, label);
+ }
 });

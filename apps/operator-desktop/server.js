@@ -13500,8 +13500,11 @@ async function executeComputerLoop(options = {}) {
         throw new Error("Stopped by user.");
       }
       if (item.type === "computer_call") {
-        computerState.checkedProjectCopy = null;
         const actions = getComputerActions(item);
+        // Keep the checked file visible while the actor waits or observes.
+        if (actions.some(action => action?.type !== "wait" && action?.type !== "screenshot")) {
+          computerState.checkedProjectCopy = null;
+        }
         if (actions.some((action) => action?.type !== "screenshot")) {
           transientGatewayRetrySafe = false;
         }
