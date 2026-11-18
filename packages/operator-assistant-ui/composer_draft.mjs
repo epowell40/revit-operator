@@ -1,20 +1,54 @@
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
-const MAX_ENCODED_BYTES = 144 * 1024 * 1024;
+// The Sidecar allows at most a 200 MiB configured file cap and a combined
+// payload smaller than 225 MiB. Store raw bytes within that envelope.
+const MAX_FILE_BYTES = 200 * 1024 * 1024;
+const MAX_ATTACHMENT_BYTES = 225 * 1024 * 1024;
 
-function normalizedDraft(value) {
+function normalizedDraft(value, binary = false) {
   if (!value || typeof value.text !== 'string' || value.text.length > 100_000
     || !Array.isArray(value.attachments) || value.attachments.length > 8) throw new Error('Draft exceeds local recovery limits.');
-  let bytes = value.text.length * 2;
+  let bytes = 0;
   const attachments = value.attachments.map(item => {
     if (!item || typeof item.id !== 'string' || item.id.length > 240
       || typeof item.name !== 'string' || item.name.length > 512
       || typeof item.mimeType !== 'string' || item.mimeType.length > 160
-      || typeof item.dataBase64 !== 'string' || !Number.isSafeInteger(item.sizeBytes) || item.sizeBytes < 0) throw new Error('Draft attachment is invalid.');
-    bytes += item.dataBase64.length * 2;
-    if (bytes > MAX_ENCODED_BYTES) throw new Error('Draft exceeds local recovery limits.');
-    return { id: item.id, name: item.name, mimeType: item.mimeType, sizeBytes: item.sizeBytes, dataBase64: item.dataBase64 };
+      || !Number.isSafeInteger(item.sizeBytes) || item.sizeBytes < 0 || item.sizeBytes > MAX_FILE_BYTES
+      || (binary ? !(item.payload instanceof Blob) || item.payload.size !== item.sizeBytes
+        : typeof item.dataBase64 !== 'string' || item.dataBase64.length !== 4 * Math.ceil(item.sizeBytes / 3))) {
+      throw new Error('Draft attachment is invalid.');
+    }
+    bytes += item.sizeBytes;
+    if (bytes > MAX_ATTACHMENT_BYTES) throw new Error('Draft exceeds local recovery limits.');
+    const { id, name, mimeType, sizeBytes } = item;
+    return { id, name, mimeType, sizeBytes, ...(binary ? {payload:item.payload} : {dataBase64:item.dataBase64}) };
   });
   return { text: value.text, attachments, sessionId: typeof value.sessionId === 'string' ? value.sessionId.slice(0, 240) : '' };
+}
+
+// Chunk the fallback on a Base64 boundary for older WebView2 versions.
+function attachmentBlob(encoded, size) {
+  let payload;
+  if (typeof Uint8Array.fromBase64 === 'function') {
+    payload = new Blob([Uint8Array.fromBase64(encoded)]);
+  } else {
+    const parts = [];
+    for (let offset = 0; offset < encoded.length; offset += 32_768) {
+      parts.push(Uint8Array.from(atob(encoded.slice(offset, offset + 32_768)), char => char.charCodeAt(0)));
+    }
+    payload = new Blob(parts);
+  }
+  if (payload.size !== size) throw new Error('Draft attachment bytes do not match its size.');
+  return payload;
+}
+
+async function base64ForAttachment(payload) {
+  const bytes = new Uint8Array(await payload.arrayBuffer());
+  if (typeof bytes.toBase64 === 'function') return bytes.toBase64();
+  const parts = [];
+  for (let offset = 0; offset < bytes.length; offset += 24_576) {
+    parts.push(btoa(String.fromCharCode(...bytes.subarray(offset, offset + 24_576))));
+  }
+  return parts.join('');
 }
 
 /** IndexedDB is local to this origin. Each tab gets a separate recovery key. */
@@ -55,6 +89,7 @@ export function indexedDbDraftStorage(indexedDB = globalThis.indexedDB) {
 /** Serialize saves and clears so a slow write cannot resurrect a sent draft. */
 export function createComposerDraftStore({ storage = indexedDbDraftStorage(), now = Date.now } = {}) {
   let pending = Promise.resolve();
+  const payloads = new WeakMap();
   const enqueue = operation => {
     const result = pending.catch(() => {}).then(operation);
     pending = result;
@@ -68,9 +103,18 @@ export function createComposerDraftStore({ storage = indexedDbDraftStorage(), no
     save(key, value) {
       try {
         validKey(key);
-        const draft = normalizedDraft(value);
+        const normalized = normalizedDraft(value);
+        const attachments = normalized.attachments.map(({dataBase64,...metadata}, index) => {
+          const item = value.attachments[index];
+          const cached = payloads.get(item);
+          const payload = cached?.encoded === dataBase64 && cached.payload.size === metadata.sizeBytes
+            ? cached.payload : attachmentBlob(dataBase64, metadata.sizeBytes);
+          payloads.set(item, {encoded:dataBase64,payload});
+          return {...metadata,payload};
+        });
+        const draft = {...normalized,attachments};
         return enqueue(() => !draft.text && !draft.attachments.length
-          ? storage.delete(key) : storage.put(key, { version: 1, savedAt: now(), ...draft }));
+          ? storage.delete(key) : storage.put(key, { version: 2, savedAt: now(), ...draft }));
       } catch (error) { return Promise.reject(error); }
     },
     load(key) {
@@ -79,10 +123,20 @@ export function createComposerDraftStore({ storage = indexedDbDraftStorage(), no
         await storage.prune?.(now());
         const value = await storage.get(key);
         if (!value) return null;
+        let draft;
         try {
-          if (value.version !== 1 || !Number.isFinite(value.savedAt) || now() - value.savedAt > MAX_AGE_MS || value.savedAt > now() + 60_000) throw new Error('Expired draft');
-          return normalizedDraft(value);
+          if (![1,2].includes(value.version) || !Number.isFinite(value.savedAt) || now() - value.savedAt > MAX_AGE_MS || value.savedAt > now() + 60_000) throw new Error('Expired draft');
+          draft = normalizedDraft(value, value.version === 2);
         } catch { await storage.delete(key); return null; }
+        if (value.version === 1) return draft;
+        const attachments = [];
+        for (const {payload,...metadata} of draft.attachments) {
+          const dataBase64 = await base64ForAttachment(payload);
+          const item = {...metadata,dataBase64};
+          payloads.set(item, {encoded:dataBase64,payload});
+          attachments.push(item);
+        }
+        return {...draft,attachments};
       });
     },
     clear(key) { validKey(key); return enqueue(() => storage.delete(key)); }

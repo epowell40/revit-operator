@@ -950,7 +950,7 @@ async function persistComposerDraft() {
   if (composerDraftTimer) clearTimeout(composerDraftTimer);
   composerDraftTimer = null;
   try {
-    const draft = { text: elements.promptInput.value, attachments: state.pendingAttachments.map(item => ({ ...item })), sessionId: state.sessionId };
+    const draft = { text: elements.promptInput.value, attachments: [...state.pendingAttachments], sessionId: state.sessionId };
     const key = await taskDraftKey(composerDraftKey, draft.sessionId);
     await composerDraftStore.save(key, draft);
     return true;
@@ -3998,7 +3998,12 @@ async function addSelectedFiles(fileList) {
     state.pendingAttachments = [...state.pendingAttachments, ...next];
     renderAttachStrip();
     composerDraftRevision++;
-    await persistComposerDraft();
+    const recoveryWarning = 'Attachments are available in this tab. Keep the original files before refreshing because local draft recovery is unavailable.';
+    if (!await persistComposerDraft()) {
+      showComposerNotice(recoveryWarning);
+    } else if (document.getElementById('composerNotice')?.textContent === recoveryWarning) {
+      showComposerNotice('');
+    }
   } finally {
     state.attachmentReadsPending--;
     updateControls();
