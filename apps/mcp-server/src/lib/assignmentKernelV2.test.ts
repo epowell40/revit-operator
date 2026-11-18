@@ -74,6 +74,41 @@ test("open-model explicit refusal is a failed operation with separately authorit
   }
 });
 
+test("a known family-editor refusal preserves recovery guidance without proving task work", async () => {
+  const route = "/revit/open-family-doc", body = { elementId: 42, allowNonTitleblock: true };
+  const code = "family_session_project_document_required";
+  const hint = "Select the original project tab and use GET /revit/context to confirm it is active before continuing.";
+  for (const effect of ["none", "unknown"] as const) {
+    const payload = {
+      ok: false,
+      code: effect === "none" ? code : "revit_bridge_http_error",
+      ...(effect === "none" ? { hint, family_session_receipt: {
+        schema: "revit-operator.family-session-open.v1", status: "project_document_required", active_document_kind: "family",
+        native_open_started: false, retained_sessions_unchanged: true, model_write_performed: false, file_write_performed: false
+      } } : { error: "Active document is a family document. Open a project document (.rvt)." }),
+      canonical_attempt_settlement: {
+        schema: "revit-operator.native-attempt-settlement.v1", requested_effect: "apply", method: "POST", path: route,
+        request_dispatched: true, effect_state: effect,
+        effect_authority: effect === "none" ? "native_receipt" : "native_host",
+        effect_reason: effect === "none" ? code : "native_handler_failed_after_dispatch"
+      }
+    };
+    const decorated: any = await runWithAssignmentKernelV2(meta("apply", "work", { method: "POST", path: route, body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", route, body, { classified_effect: "apply" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", route, payload, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [{ type: "text", text: JSON.stringify(payload) }] }, "revit_call_tool");
+    });
+    const { operation_result_v2: result, observation } = decorated.structuredContent;
+    assert.equal(result.status, "failed_after_dispatch");
+    assert.equal(result.dispatch_state, "dispatched");
+    assert.equal(result.persistent_effect, effect);
+    assert.equal(result.error_code, payload.code);
+    assert.equal(observation.raw_payload.hint, effect === "none" ? hint : undefined);
+    assert.equal(observation.semantic_facts.some((fact: any) => fact.fact_id === "task.result_available"), false);
+  }
+});
+
 test("parent completion ineligibility alone preserves a successful native child operation", async () => {
   const route="/revit/set-family-label-style",body={familyDocumentId:"a".repeat(32),labelTypeId:10,style:{underline:true},dryRun:false};
   const decorated:any=await runWithAssignmentKernelV2(meta("apply","work",{method:"POST",path:route,body}),async()=>{

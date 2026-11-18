@@ -23,7 +23,7 @@ namespace RevitBridge.Logic.Handlers
             var uidoc = app.ActiveUIDocument;
             if (uidoc == null) throw new InvalidOperationException("No active UI document.");
             var doc = uidoc.Document;
-            if (doc.IsFamilyDocument) throw new InvalidOperationException("Active document is a family document. Open a project document (.rvt).");
+            if (doc.IsFamilyDocument) return Task.FromResult(OperatorFamilySessionReceipt.ProjectDocumentRefusal());
 
             var el = doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(p.elementId));
             if (el == null) throw new InvalidOperationException($"Element {p.elementId} not found.");
