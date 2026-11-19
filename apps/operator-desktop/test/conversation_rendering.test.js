@@ -87,7 +87,7 @@ test('actual SSE handler presents progress separately and final text supersedes 
 test('actual message renderer uses blocks for assistant prose and keeps user input literal',()=>{
  const document={createTextNode:text=>({tag:'text',textContent:text}),createElement:tag=>({tag,children:[],ownerDocument:document,textContent:'',appendChild(child){this.children.push(child);},replaceChildren(){this.children=[];}})};
  const messages=document.createElement('section');
- const render=runInNewContext(fn('renderMessages')+';renderMessages',{document,elements:{messages},activeMessages:()=>[
+ const render=runInNewContext(fn('renderMessages')+';renderMessages',{state:{checkedProjectCopy:null,sessionId:"",taskNavigationEpoch:0},document,elements:{messages},activeMessages:()=>[
   {role:'user',text:'## Please inspect this'}, {role:'assistant',text:'## Findings\n- **Page 3:** red marks.\n- <img onerror=run()>\n\n## Model evidence\n- [1] Retained row value.'}],
   renderSessionStartScreen(){},splitAssistantControlText:text=>({text}),renderAssistantBlocks,renderLinkedText:appendInlineText,updateFeedbackBarVisibility(){},scrollMessagesToBottom(){}});
  render();
@@ -102,7 +102,7 @@ test('C55 short review stays three bullets through message rendering and restore
  const document={createTextNode:text=>({tag:'text',textContent:text}),createElement:tag=>({tag,children:[],ownerDocument:document,textContent:'',appendChild(child){this.children.push(child);},replaceChildren(){this.children=[];}})};
  const messages=document.createElement('section');
  const text='- Project and levels: HVAC, Parking through Roof.\n- Mechanical sheets: 17.\n- Not verified: design loads and whether R1 needs a plan.\n\n## Details\nSupporting view inventory.\n\n### Scope and limitations\nLinked model not inspected.\n\n### Model evidence\n- [1] Sheet count: 17';
- const render=runInNewContext(fn('renderMessages')+';renderMessages',{document,elements:{messages},activeMessages:()=>[{role:'assistant',text}],
+ const render=runInNewContext(fn('renderMessages')+';renderMessages',{state:{checkedProjectCopy:null,sessionId:"",taskNavigationEpoch:0},document,elements:{messages},activeMessages:()=>[{role:'assistant',text}],
   renderSessionStartScreen(){},splitAssistantControlText:text=>({text}),renderAssistantBlocks,renderLinkedText:appendInlineText,updateFeedbackBarVisibility(){},scrollMessagesToBottom(){}});
  for(let restore=0;restore<2;restore++){
   render();const answer=messages.children[0].children[1];
@@ -117,7 +117,7 @@ test('retained desktop report keeps its full qualified evidence in closed Detail
  const text=retainedWorkReportMessage({name:'report_work_for_review'},{output:JSON.stringify({ok:true,verification_policy:'advisory',completion_proposal:{review_id:'review',verified:false,claimed_completed:[claim],remaining_work:['Check the layout.'],uncertainties:['Whole-project scope not checked.']}})});
  const document={createTextNode:text=>({tag:'text',textContent:text}),createElement:tag=>({tag,children:[],ownerDocument:document,textContent:'',appendChild(child){this.children.push(child);},replaceChildren(){this.children=[];}})};
  const messages=document.createElement('section');
- const render=runInNewContext(fn('renderMessages')+';renderMessages',{document,elements:{messages},activeMessages:()=>[{role:'assistant',text}],renderSessionStartScreen(){},splitAssistantControlText:text=>({text}),renderAssistantBlocks,renderLinkedText:appendInlineText,updateFeedbackBarVisibility(){},scrollMessagesToBottom(){}});
+ const render=runInNewContext(fn('renderMessages')+';renderMessages',{state:{checkedProjectCopy:null,sessionId:"",taskNavigationEpoch:0},document,elements:{messages},activeMessages:()=>[{role:'assistant',text}],renderSessionStartScreen(){},splitAssistantControlText:text=>({text}),renderAssistantBlocks,renderLinkedText:appendInlineText,updateFeedbackBarVisibility(){},scrollMessagesToBottom(){}});
  const flatten=n=>[n,...n.children?.flatMap(flatten)??[]];
  for(let restore=0;restore<2;restore++){
   render();const answer=messages.children[0].children[1];const details=answer.children.find(n=>n.tag==='details');
@@ -132,7 +132,7 @@ test('actual restored answer displays the reported duct table instead of pipe-de
  const document={createTextNode:text=>({tag:'text',textContent:text}),createElement:tag=>({tag,children:[],ownerDocument:document,textContent:'',set innerHTML(value){assert.equal(value,'');this.children=[];},appendChild(child){this.children.push(child);},replaceChildren(){this.children=[];}})};
  const messages=document.createElement('section');
  const answer='| Duct type | Count |\n|---|---:|\n| Mitered Elbows / Taps | 2 |\n| Taps | 8 |\n| Tees | 10 |\n| **Total** | **20** |';
- const render=runInNewContext(fn('renderMessages')+';renderMessages',{document,elements:{messages},activeMessages:()=>[{role:'assistant',text:answer}],
+ const render=runInNewContext(fn('renderMessages')+';renderMessages',{state:{checkedProjectCopy:null,sessionId:"",taskNavigationEpoch:0},document,elements:{messages},activeMessages:()=>[{role:'assistant',text:answer}],
   renderSessionStartScreen(){},splitAssistantControlText:text=>({text}),renderAssistantBlocks,renderLinkedText:appendInlineText,updateFeedbackBarVisibility(){},scrollMessagesToBottom(){}});
  render();
  const flatten=n=>[n,...n.children?.flatMap(flatten)??[]],nodes=flatten(messages);
