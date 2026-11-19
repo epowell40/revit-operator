@@ -74,8 +74,8 @@ test("metadata and native discovery bypass the Revit event queue while actions p
     assert.match(server, new RegExp(`/revit/${route}`));
   }
   assert.match(runner, /OperatorActionDeadlinePolicy\.Resolve/);
-  assert.match(runner, /},\s*localDeadline\.Token,\s*correlationId,\s*"courier:" \+ method \+ ":" \+ path\)\.ConfigureAwait\(false\)/);
-  assert.match(server, /localDeadline\.Token,\s*correlationId,\s*"http:" \+ effectiveMethod \+ ":" \+ path/);
+  assert.match(runner, /},\s*localDeadline\.Token,\s*correlationId,\s*"courier:" \+ method \+ ":" \+ path,\s*externalEventOnly:\s*RevitEventService\.RequiresExternalEvent\(method, path\)\)\.ConfigureAwait\(false\)/);
+  assert.match(server, /localDeadline\.Token,\s*correlationId,\s*"http:" \+ effectiveMethod \+ ":" \+ path,\s*externalEventOnly:\s*RevitEventService\.RequiresExternalEvent\(effectiveMethod, path\)/);
   assert.match(server, /X-Operator-Correlation-Id/);
   for (const boundary of [server, runner, courier]) {
     assert.match(boundary, /catch \(OperationCanceledException ex\)/);

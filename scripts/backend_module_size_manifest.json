@@ -128,8 +128,8 @@
     },
     {
       "path": "assignments/assignment_kernel_v2_execution.ts",
-      "max_lines": 1242,
-      "reason": "The accumulated generic runtime adds explicit existing comparator dispatch for inline accessories, takeoffs, vector/detail reads, family sessions and native observed targets. Validation and effect settlement remain in their extracted contracts/comparators. This exact composition limit has no spare lines; historical two-boundary coverage remains required."
+      "max_lines": 1248,
+      "reason": "The accumulated generic runtime adds explicit existing comparator dispatch for inline accessories, takeoffs, vector/detail reads, family sessions and native observed targets. Validation and effect settlement remain in their extracted contracts/comparators. This exact composition limit has no spare lines; historical two-boundary coverage remains required. The six reviewed lines carry a native-bound accessory branch observation through the existing commit envelope. Producer claims still cannot supply this fact."
     }
   ]
 }
