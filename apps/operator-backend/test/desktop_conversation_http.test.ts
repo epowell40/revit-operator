@@ -26,8 +26,8 @@ test('actual HTTP task creation and review persist the human conversation across
  const first=await start();
  const created=await fetch(base+'/api/agent-goal',{method:'POST',headers,body:JSON.stringify({session_id:session,title:text,objective:text,acceptance_criteria:['Correct and inspect the schedule.'],work_budget:{requested_effect:'apply',document_fingerprint:'synthetic-history-model',conversation_message_id:message,source_user_request:text,mode:'sidecar_computer',source:'operator_desktop',execution_substrate:'operator_desktop_outer_agent'},start_assignment_run:true,assignment_run_id:'desktop-history-run',assignment_run_actor:'operator_desktop_outer_agent'})});
  const goal:any=await created.json();assert.equal(created.status,200,JSON.stringify(goal));assert.equal(goal.assignment_run.kernel_version,2);
- const history=async()=>{const response=await fetch(base+'/session/history?session_id='+session,{headers});assert.equal(response.status,200);return (await response.json() as any).messages;};
- assert.deepEqual((await history()).map((m:any)=>m.text),[text]);
+ const history=async(assignmentId?:string)=>{const query=new URLSearchParams({session_id:session});if(assignmentId)query.set('assignment_id',assignmentId);const response=await fetch(base+'/session/history?'+query,{headers});assert.equal(response.status,200);return (await response.json() as any).messages;};
+ assert.deepEqual((await history(goal.goal.id)).map((m:any)=>m.text),[text],'an active task does not supply a terminal answer');
  __testOnlyResetGoalListCache();const snapshot=getAssignmentKernelSnapshotV2(goal.goal.id)!,binding=snapshot.current_binding;
  const repeatBody={session_id:session,title:text,objective:text,start_assignment_run:true,assignment_run_id:binding.run_id,assignment_run_actor:'operator_desktop_outer_agent'};
  const repeat=await fetch(base+'/api/agent-goal',{method:'POST',headers,body:JSON.stringify(repeatBody)});
@@ -41,7 +41,9 @@ test('actual HTTP task creation and review persist the human conversation across
  assert.deepEqual((await history()).map((m:any)=>m.text),[text]);
  const report=await fetch(base+'/api/assignments/v2/work-plan',{method:'POST',headers,body:JSON.stringify({...binding,action:'propose_completion',completion_proposal:{claimed_completed:['Corrected and inspected the requested schedule.'],remaining_work:[],uncertainties:['Actor report only.']}})});assert.equal(report.status,200,await report.text());
  const warm=await history();assert.equal(warm.length,2);assert.match(warm[1].text,/not independently verified/);assert.match(warm[1].text,/Corrected and inspected/);
- await stop(first);await start();assert.deepEqual(await history(),warm);
+ await stop(first);await start();assert.deepEqual(await history(goal.goal.id),warm,'a review proposal is not relabeled as terminal');
+ assert.deepEqual(await history('unknown-assignment'),warm);
+ assert.equal((await fetch(base+'/session/history?session_id='+session+'&assignment_id=..%2Fother',{headers})).status,400);
  assert.equal((await fetch(base+'/session/history?session_id='+session)).status,401,'ordinary session authentication remains required');
  assert.equal(fs.existsSync(path.join(root,'.codex','goals_1.sqlite')),false,'the HTTP fixture must not launch a real CLI or create its goal database');
 });

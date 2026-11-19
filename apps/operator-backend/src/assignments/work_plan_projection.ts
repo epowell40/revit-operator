@@ -6,6 +6,7 @@ import type { AssignmentWorkPlanV2 } from "../domain/assignment-kernel/work_plan
 import { appliedOperationHasVerifiedPostconditionV2, verificationOperationHasVerifiedPostconditionV2 } from '../domain/assignment-kernel/outcome.js';
 import { verifiedNativeWorkTargetIdentitiesV2 } from '../domain/assignment-kernel/verified_work_targets.js';
 import { sameAssignmentBindingV2 } from '../domain/assignment-kernel/identity.js';
+import { deletionRequestV2 } from '../verification/deletion_contract_v2.js';
 
 /** Actionable pointers derived from verified dependencies, never inspection
  * proof. Keep the final semantic/preservation comparison and owner review. */
@@ -36,6 +37,7 @@ export function projectNextNativeInspectionV2(snapshot?: AssignmentSnapshotV2) {
   const times = Object.values(snapshot.operations).filter(o => o.persistent_effect === 'applied').map(o => Date.parse(o.result?.completed_at ?? ''));
   const latest = Math.max(Date.parse(item.declared_at),0,...times);
   if (!Number.isFinite(latest)) return null;
+  const includesDeletion = edits.some(id => deletionRequestV2(snapshot.operations[id]?.input) !== null);
   const modelReadCandidates = Object.values(snapshot.operations).filter(op => {
     const r=op.result,body=op.input.body as Record<string,unknown>|undefined,requested=body?.elementIds??body?.ids;
     // The existing inspection consumer also accepts exact typed note reads.
@@ -44,7 +46,9 @@ export function projectNextNativeInspectionV2(snapshot?: AssignmentSnapshotV2) {
     // native bytes, identity coverage, freshness and paired artifact evidence.
     const typedNotes=op.input.path === '/revit/find-text-notes' && Array.isArray(body?.elementIds)
       && body.elementId == null && body.ids == null && body.docId == null && body.familyDocumentId == null;
-    return ids.length > 0 && (op.input.path === '/revit/get-element-summary' || typedNotes) && op.input.method === 'POST'
+    const matchingRead = includesDeletion ? op.input.path === '/revit/get-element-summary' && body?.includeNativeProgramEffectState === true
+      : op.input.path === '/revit/get-element-summary' || typedNotes;
+    return ids.length > 0 && matchingRead && op.input.method === 'POST'
       && op.requested_effect === 'read' && op.persistent_effect === 'none' && op.settlement_state === 'settled'
       && r?.authority === 'native-host' && r.status === 'succeeded' && r.dispatch_state === 'dispatched'
       && sameAssignmentBindingV2(op.binding,snapshot.current_binding) && sameAssignmentBindingV2(r.binding,op.binding)
@@ -61,7 +65,8 @@ export function projectNextNativeInspectionV2(snapshot?: AssignmentSnapshotV2) {
       && !snapshot.input_invalidated_operation_ids?.includes(id) && verificationOperationHasVerifiedPostconditionV2(snapshot,id);
   });
   return {item_id:item.item_id, required_target_ids:targets,
-    element_summary_read:ids.length ? {method:'POST',path:'/revit/get-element-summary',body:{elementIds:ids}} : null,
+    element_summary_read:ids.length ? {method:'POST',path:'/revit/get-element-summary',body:{elementIds:ids,
+      ...(includesDeletion?{includeNativeProgramEffectState:true}:{})}} : null,
     existing_element_read_candidates:modelReadCandidates,
     paired_artifact_read_candidates:[...new Set(paired)].sort(), validation_required:true, coverage_only:true,
     notice:'Exact dependency targets and candidate read metadata, not inspection proof. Validate existing candidates through the normal checklist consumer first; if missing or incomplete use a supported fresh complete identity read after the latest edit (including SaveAs). Pair file reads for artifact targets. Keep requested preservation comparisons and final visual review; do not repeat edits, saves or unrelated discovery to obtain coverage.'};
@@ -96,19 +101,34 @@ export function projectWorkPlan(plan: AssignmentWorkPlanV2 | undefined, start?: 
     return !dependency || workPlanItemDeferredV2(dependency) || !current(dependency) && !claimed(id);
   });
   const ready=plan.items.filter(item=>!current(item) && !claimed(item.item_id) && !workPlanItemDeferredV2(item) && waiting(item).length===0);
+  const scopeBudget = 4000;
+  const scopeRows = plan.items.map((item,index) => {
+    const row = { item_id: item.item_id, review_ref:`R${index+1}`,
+      ...(workPlanItemDeferredV2(item)?{question_ref:`Q${index+1}`} : {}), description: item.location_history?.at(-1)?.drafting?item.description.slice(0,160):item.description,
+      source_basis: item.location_history?.at(-1)?.drafting?item.source_basis.slice(0,160):item.source_basis, kind: item.kind ?? "edit", depends_on: item.depends_on ?? [], waiting_on: waiting(item),
+      ...(item.location_history?.length ? {location_hint:projectCompactWorkPlanLocationV2(item,snapshot)} : {}),
+      deferred: workPlanItemDeferredV2(item), deferral: item.deferrals?.at(-1) ?? null, claimed_unverified: claimed(item.item_id),
+      completed_at: current(item) ? item.completed_at : null, verified_operation_count: item.operation_ids.length };
+    if (Buffer.byteLength(JSON.stringify([row]), "utf8") <= scopeBudget) return row;
+    // A valid item can depend on up to 128 other items. Keep it reachable even
+    // when its full projection cannot fit, and retain the exact graph as-is.
+    const preview = (text: string) => Array.from(text).slice(0, 96).join("");
+    return { ...row, description: preview(row.description), source_basis: preview(row.source_basis),
+      depends_on: row.depends_on.slice(0, 2), waiting_on: row.waiting_on.slice(0, 2),
+      total_dependencies: row.depends_on.length, total_waiting_on: row.waiting_on.length,
+      location_hint: undefined, detail_is_partial: true,
+      deferral: row.deferral ? { reason: preview(row.deferral.reason), deferred_at: row.deferral.deferred_at,
+        resumed_at: row.deferral.resumed_at } : null };
+  });
+  const scope = boundedWorkPlanPage(scopeRows, start ?? Math.max(0, firstPending), scopeBudget);
   return { schema: plan.schema, scope_is_assistant_interpretation: true,
     next_native_inspection: projectNextNativeInspectionV2(snapshot),
     scheduling_is_advisory: true,
     ready_items: boundedWorkPlanPage(ready.map(item=>item.item_id),0,1500),
     deferred_count: plan.items.filter(workPlanItemDeferredV2).length,
     scheduling_notice: "Work on ready independent items. Collect deferred questions for a consolidated handoff. Advisory claims are unverified: read back prerequisite results before dependent edits. This queue does not authorize native execution or clear unknown effects.",
-    completed_count: plan.items.filter(item => current(item)).length, total_count: plan.items.length,
-    scope: boundedWorkPlanPage(plan.items.map((item,index) => ({ item_id: item.item_id, review_ref:`R${index+1}`,
-      ...(workPlanItemDeferredV2(item)?{question_ref:`Q${index+1}`} : {}), description: item.location_history?.at(-1)?.drafting?item.description.slice(0,160):item.description,
-      source_basis: item.location_history?.at(-1)?.drafting?item.source_basis.slice(0,160):item.source_basis, kind: item.kind ?? "edit", depends_on: item.depends_on ?? [], waiting_on: waiting(item),
-      ...(item.location_history?.length ? {location_hint:projectCompactWorkPlanLocationV2(item,snapshot)} : {}),
-      deferred: workPlanItemDeferredV2(item), deferral: item.deferrals?.at(-1) ?? null, claimed_unverified: claimed(item.item_id),
-      completed_at: current(item) ? item.completed_at : null, verified_operation_count: item.operation_ids.length })), start ?? Math.max(0, firstPending), 4000),
+    completed_count: plan.items.filter(item => current(item)).length, total_count: plan.items.length, scope,
+    ...(scope.items.some(item => "detail_is_partial" in item) ? { scope_details_notice: "A large item is shown in summary. Dependency previews are partial; wait counts and the ready queue use the full retained plan." } : {}),
     assumptions: boundedWorkPlanPage(plan.assumptions, assumptionStart, 1000),
     pagination_tool: "operator_manage_work_plan action=status with start/assumptionStart; completed scope remains retained. action=locate with itemId/locationHint saves source page/crop and candidate model view for restart; revalidate before editing." };
 }

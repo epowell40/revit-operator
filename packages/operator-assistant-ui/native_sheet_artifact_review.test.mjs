@@ -2,7 +2,7 @@ import test from 'node:test';
 const modelText = output => Array.isArray(output) ? output.find(item => item.type === 'input_text').text : output;
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {reviewCurrentWork,visualWorkReviewModelOutput,normalizeVisualReviewRequest,VISUAL_WORK_REVIEW_TOOL} from './visual_work_review.mjs';
+import {reviewCurrentWork,visualWorkReviewModelOutput,normalizeVisualReviewRequest,visualReviewImageEvidenceOptions,VISUAL_WORK_REVIEW_TOOL} from './visual_work_review.mjs';
 import {reviewTestPng} from './fixtures/visual-review-image.mjs';
 import {nativeSheetRenderState,sameNativeSheetRendering} from './native_sheet_render_state.mjs';
 const names=['ExplodedView','PreviewFamilyVisibility','RevealConstraints','RevealHiddenElements','TemporaryHideIsolate','TemporaryViewProperties','WorksharingDisplay'];
@@ -36,6 +36,56 @@ for(const mode of ['target_view','native_visible_region'])test(mode+' reviews on
  const out=visualWorkReviewModelOutput({output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{evidence_id:'ev_review'}]})},r,'ev_review');
  assert.match(modelText(out.output),/immutable_native_sheet_artifact_with_current_native_revision_and_render_state/);
  assert(!modelText(out.output).includes('"native_postcondition_verified":true'));
+});
+
+function inactiveSheetFixture() {
+ const f=fixture(),read=f.host.readTargetContext,capture=f.host.captureTarget;
+ f.host.readTargetContext=async()=>{
+  const context=await read();
+  const other=render();
+  other.viewId=42;
+  other.viewUniqueId='other-sheet';
+  other.views[0]={...other.views[0],viewId:42,viewUniqueId:'other-sheet'};
+  context.document.activeView={id:42,name:'Other sheet',type:'DrawingSheet',sheetRenderState:other};
+  return context;
+ };
+ f.host.captureTarget=async(...args)=>{
+  const result=await capture(...args);
+  result.native_result.activeViewId=42;
+  return result;
+ };
+ return f;
+}
+
+test('an inactive native sheet with complete render inputs requests activation before spending a reviewer call',async()=>{
+ const f=inactiveSheetFixture(),result=await reviewCurrentWork(f.request,f.host);
+ assert.equal(result.state,'unavailable');
+ assert.equal(result.reason,'visual_review_activate_sheet_for_assessment');
+ assert.equal(result.location.view_id,41);
+ assert.equal(result.location.active_view_id,42);
+ assert.match(result.guidance,/Activate.*41.*native_visible_region/);
+ assert.equal(result.reviewer_response_id,null);
+ assert.equal(result.native_postcondition_verified,false);
+ assert.equal(result.whole_task_verified,false);
+ assert.equal(f.paid(),false);
+ assert.equal(f.captures(),1);
+ assert.equal(f.images.length,1);
+ const output=visualWorkReviewModelOutput({output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',
+  evidence_projections:[{evidence_id:'review'}]})},result,'review');
+ const feedback=JSON.parse(modelText(output.output)).evidence_projections[0].visual_work_review;
+ assert.equal(feedback.reason_code,'visual_review_activate_sheet_for_assessment');
+ assert.match(feedback.guidance,/Activate.*41/);
+});
+
+test('the same inactive native sheet can still deliver its current pixels for primary observation',async()=>{
+ const f=inactiveSheetFixture();
+ const result=await reviewCurrentWork({...f.request,review_mode:'observe'},f.host);
+ assert.equal(result.state,'observed');
+ assert.equal(result.location.view_id,41);
+ assert.equal(result.location.active_view_id,42);
+ assert.equal(result.whole_task_verified,false);
+ assert.equal(f.paid(),false);
+ assert.equal(f.captures(),1);
 });
 
 const negatives={
@@ -100,6 +150,11 @@ test('one image carries all requested visual checks without sending the host ren
 test('explicit detail and sheet context use one reviewer call with two independently bound current images',async()=>{
  const f=fixture('native_visible_region');let calls=0;
  f.request.include_sheet_context=true;
+ const retain=f.host.retainImage,labels=[];
+ f.host.retainImage=async(image,metadata)=>{
+  labels.push(visualReviewImageEvidenceOptions(metadata));
+  return retain(image);
+ };
  f.host.requestResponse=async body=>{
   calls++;const content=body.input[0].content,metadata=JSON.parse(content[0].text);
   assert.equal(content.filter(x=>x.type==='input_image').length,2);
@@ -113,6 +168,8 @@ test('explicit detail and sheet context use one reviewer call with two independe
  };
  const result=await reviewCurrentWork(f.request,f.host);
  assert.equal(result.state,'matched');assert.equal(calls,1);assert.equal(f.captures(),2);assert.equal(f.images.length,2);
+ assert(labels[0].targetScope.includes('capture_role:review_capture'));
+ assert(labels[1].targetScope.includes('capture_role:sheet_context'));
  assert.equal(result.sheet_context.frame.view_id,41);assert.equal(result.sheet_context.frame.pixel_to_model_mapping,false);
  assert.equal(result.native_postcondition_verified,false);assert.equal(result.whole_task_verified,false);
  const projected=visualWorkReviewModelOutput({output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{evidence_id:'review'}]})},result,'review');

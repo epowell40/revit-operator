@@ -39,14 +39,17 @@ namespace RevitBridge.Services
             public const int Started = 1;
             public const int CancelledBeforeStart = 2;
 
-            public QueueItem(Func<UIApplication, object> action, TaskCompletionSource<object> completion, CancellationToken cancellationToken, string? correlationId)
+            public QueueItem(Func<UIApplication, object> action, TaskCompletionSource<object> completion, CancellationToken cancellationToken,
+                string? correlationId, bool externalEventOnly)
             {
                 Action = action;
                 Completion = completion;
                 CancellationToken = cancellationToken;
                 CorrelationId = correlationId;
+                ExternalEventOnly = externalEventOnly;
             }
 
+            public bool ExternalEventOnly { get; }
             public Func<UIApplication, object> Action { get; }
             public TaskCompletionSource<object> Completion { get; }
             public CancellationToken CancellationToken { get; }
@@ -56,6 +59,7 @@ namespace RevitBridge.Services
         }
 
         private readonly ConcurrentQueue<QueueItem> _queue = new ConcurrentQueue<QueueItem>();
+        private readonly object _queueTakeGate = new object();
         private readonly ExternalEvent _externalEvent;
         private int _inFlight;
         private readonly Action<string>? _diagnosticSink;
@@ -106,7 +110,11 @@ namespace RevitBridge.Services
         public Task<T> Run<T>(Func<UIApplication, T> action, CancellationToken cancellationToken)
             => Run(action, cancellationToken, null);
 
-        public Task<T> Run<T>(Func<UIApplication, T> action, CancellationToken cancellationToken, string? correlationId, string? source = null)
+        internal static bool RequiresExternalEvent(string method, string path)
+            => method == "POST" && string.Equals(path, "/revit/open-model", StringComparison.OrdinalIgnoreCase);
+
+        public Task<T> Run<T>(Func<UIApplication, T> action, CancellationToken cancellationToken, string? correlationId, string? source = null,
+            bool externalEventOnly = false)
         {
             var diagnostic = new OperatorRevitQueueDiagnostic(correlationId,
                 source ?? action.Method.DeclaringType?.FullName + "." + action.Method.Name);
@@ -130,7 +138,7 @@ namespace RevitBridge.Services
                 return AwaitResult<T>(tcs.Task);
             }
 
-            var item = new QueueItem(app => action(app), tcs, cancellationToken, correlationId);
+            var item = new QueueItem(app => action(app), tcs, cancellationToken, correlationId, externalEventOnly);
             item.Diagnostic = diagnostic;
             Volatile.Write(ref _diagnosticOwner, diagnostic);
             _queue.Enqueue(item);
@@ -194,11 +202,9 @@ namespace RevitBridge.Services
             // ExternalEvent.Raise may report Accepted while Revit is transitioning out of
             // document load, yet never deliver that first callback. Idling is itself an
             // authoritative Revit API-thread callback, so use it as a lossless fallback
-            // pump for the same single-item queue. A later ExternalEvent callback simply
-            // observes an empty queue and is harmless.
-            if (_queue.IsEmpty) return false;
-            Execute(app);
-            return true;
+            // pump for the same single-item queue when the API allows the action from
+            // Idling. OpenAndActivateDocument requires the ExternalEvent callback.
+            return ExecuteNext(app, fromIdling: true);
         }
 
         private async Task MaintainRaiseUntilStartedAsync(QueueItem item)
@@ -304,31 +310,17 @@ namespace RevitBridge.Services
             // Only one item can be in flight, so the head is expected to be this item. If
             // Execute won the dequeue race, it will observe CancelledBeforeStart and release
             // the slot in its finally block.
-            if (_queue.TryDequeue(out var item))
-            {
-                if (ReferenceEquals(item, expected))
-                {
-                    Interlocked.Exchange(ref _inFlight, 0);
-                    return;
-                }
-
-                _queue.Enqueue(item);
-            }
+            if (TakePendingItem(expected: expected) != null)
+                Interlocked.Exchange(ref _inFlight, 0);
         }
 
         private void FailQueuedItem(QueueItem expected, Exception error)
         {
             OperatorRevitQueueDiagnostic.Write(_diagnosticSink, "raise_failed", expected.Diagnostic);
-            if (_queue.TryDequeue(out var item))
-            {
-                if (!ReferenceEquals(item, expected))
-                {
-                    _queue.Enqueue(item);
-                    return;
-                }
-                item.Completion.TrySetException(error);
-                Interlocked.Exchange(ref _inFlight, 0);
-            }
+            var item = TakePendingItem(expected: expected);
+            if (item == null) return;
+            Interlocked.Exchange(ref _inFlight, 0);
+            item.Completion.TrySetException(error);
         }
 
         private static async Task<T> AwaitResult<T>(Task<object> task)
@@ -336,13 +328,24 @@ namespace RevitBridge.Services
             return (T)await task.ConfigureAwait(false);
         }
 
-        public void Execute(UIApplication app)
+        private QueueItem? TakePendingItem(bool fromIdling = false, QueueItem? expected = null)
         {
-            if (!_queue.TryDequeue(out var item))
+            // Keep the eligibility check and dequeue together. Cancellation can
+            // remove the head and release the slot for a different request.
+            lock (_queueTakeGate)
             {
-                Interlocked.Exchange(ref _inFlight, 0);
-                return;
+                if (!_queue.TryPeek(out var item) || (expected != null && !ReferenceEquals(item, expected))
+                    || (fromIdling && item.ExternalEventOnly)) return null;
+                return _queue.TryDequeue(out item) ? item : null;
             }
+        }
+
+        public void Execute(UIApplication app) => ExecuteNext(app, fromIdling: false);
+
+        private bool ExecuteNext(UIApplication app, bool fromIdling)
+        {
+            var item = TakePendingItem(fromIdling);
+            if (item == null) return false;
 
             object? result = null;
             Exception? error = null;
@@ -396,6 +399,7 @@ namespace RevitBridge.Services
             {
                 item.Completion.TrySetResult(result!);
             }
+            return true;
         }
 
         public string GetName()

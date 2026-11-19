@@ -30,7 +30,7 @@ function isAnswerDraftRequest(request: string): boolean {
 }
 
 /** Standalone document review, answer drafting, research and calculation need no Revit observation. */
-export function isStandaloneAssistantRequest(text: string): boolean {
+export function isStandaloneAssistantRequest(text: string, hasRegisteredReferences = false): boolean {
   // Strip the complete prohibition before individual edit constraints, so
   // "do not inspect or change the Revit model" cannot leave a false model
   // inspection request behind. Affirmative neighboring work stays intact.
@@ -38,7 +38,10 @@ export function isStandaloneAssistantRequest(text: string): boolean {
   const modelObject = "(?:(?:the|any)\\s+)?(?:(?:current|active|open)\\s+)?(?:revit\\s+)?(?:model|project|document)";
   const excludedObject = `(?:${modelObject}|(?:anything|any (?:elements?|parameters?|data))(?:\\s+(?:in|within|to)\\s+(?:revit|${modelObject}))?|revit)`;
   const accessExclusion = new RegExp(`\\b(?:do not|don't|dont|never)\\s+${accessVerb}(?:\\s*(?:,|and|or|nor)\\s*${accessVerb})*\\s+${excludedObject}\\b`, "gi");
-  const request = text.replace(accessExclusion, " ")
+  const registeredRequest = hasRegisteredReferences ? text
+    .replace(/\b(?:leave|keep)\s+(?:the\s+)?(?:current\s+|active\s+|open\s+)?(?:revit\s+)?(?:model|project|document)\s+(?:untouched|unchanged)\b/gi, " ")
+    .replace(/\b(?:do not|don't|dont|never)\s+save\s+(?:(?:a|any|the)\s+)?(?:files?|copies?)\b/gi, " ") : text;
+  const request = registeredRequest.replace(accessExclusion, " ")
     .replace(/\bwithout\s+(?:opening|inspecting|reading|accessing|querying|touching)(?:\s*(?:,|and|or)\s*(?:opening|inspecting|reading|accessing|querying|touching))*\s+(?:the\s+)?(?:revit\s+)?(?:model|project|document)\b/gi, " ")
     .replace(new RegExp(MODEL_CHANGE_PROHIBITION.source, "gi"), " ")
     .replace(/\b(?:do not|don't|dont|never)\s+(?:change|modify|edit|save)\s+(?:the\s+)?(?:revit\s+)?(?:model|project|document)\b/gi, " ")
@@ -47,16 +50,20 @@ export function isStandaloneAssistantRequest(text: string): boolean {
   if (isRetainedResultDiscussion(request)) return true;
   const documentReview = /\b(?:read|review|inspect|summarize|explain|extract|compare|outline|analy[sz]e)\b[^.!?;\n]{0,100}\b(?:attached|uploaded|provided)\b[^.!?;\n]{0,60}\b(?:documents?|pdfs?|checklists?|task lists?|specifications?|specs?|reports?|redlines?|drawings?|tables?|json|csv|text|notes?)\b/i.test(request)
     || /\bwhat\b[^.!?;\n]{0,60}\b(?:attached|uploaded|provided)\b[^.!?;\n]{0,60}\b(?:documents?|pdfs?|checklists?|task lists?|specifications?|specs?|reports?|tables?|json|csv|text|notes?)\b[^.!?;\n]{0,60}\b(?:say|mean|require|call for)\b/i.test(request);
+  const registeredReview = hasRegisteredReferences &&
+    /\b(?:files?|attachments?|references?|examples?|csv|json|txt)\b/i.test(request) &&
+    /\b(?:read|review|inspect|extract|compare|summari[sz]e|analy[sz]e|what|which|who|how)\b/i.test(request);
   const researchOrCalculation = /\b(?:look up|research|search (?:the )?(?:internet|web)|manufacturer|published|calculate|calculation|convert|formula|explain|engineering)\b/i.test(request);
   const answerDraft = isAnswerDraftRequest(request);
-  if (!researchOrCalculation && !documentReview && !answerDraft) return false;
+  if (!researchOrCalculation && !documentReview && !registeredReview && !answerDraft) return false;
+  if (registeredReview && /\b(?:send|email|contact|publish|submit|execute|implement|run|save)\b/i.test(request)) return false;
   // Asking which checklist items could be checked in Revit is a capability
   // question, not a request to inspect a live model. Remove only that narrow
   // clause; a neighboring actual model inspection still retains its owner.
   const scopeRequest = documentReview ? request.replace(/\b(?:tell me\s+)?(?:what|which)\s+(?:(?:of\s+)?(?:the(?:se)?\s+)?(?:items|tasks|requirements)\s+)?(?:can|could)\s+be\s+(?:checked|verified|handled|done|accomplished)\s+(?:in|using|with)\s+revit\b/gi, " ") : request;
   // References to the current model, selection, drawing, or an executable
   // model operation keep the durable Revit owner, including mixed requests.
-  if (documentReview) {
+  if (documentReview || registeredReview) {
     if (/\b(?:revit|model|selected|selection|parameter|element)\b|\b(?:current|active|open|this|our)\s+(?:project|sheet|view|schedule)\b/i.test(scopeRequest)) return false;
   } else if (/\b(?:revit|model|project|selected|selection|sheet|view|redline|markup|parameter|element|schedule)\b/i.test(request)) return false;
   if (/\b(?:this|that|these|those|current|active)\s+(?:duct|pipe|fan|device|equipment|system|branch)\b/i.test(request)) return false;

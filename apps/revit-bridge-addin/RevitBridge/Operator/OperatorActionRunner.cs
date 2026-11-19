@@ -365,6 +365,7 @@ namespace RevitBridge.Operator
                 return AttachSettlement(action, directResult, requestedEffect, method, path);
             }
 
+            OperatorDialogComputerUse.RequireReadyForNativeModelOpen(method, path);
             var dialogComputerUse = App.Instance?.DialogComputerUse;
             var dialogEventCursor = dialogComputerUse?.CaptureEventCursor() ?? 0;
             var autoGuardArmed = ShouldAutoArmRetryableDialogGuard(method, path, jsonBody) && dialogComputerUse != null;
@@ -466,7 +467,8 @@ namespace RevitBridge.Operator
                     }
 
                     return handlerResult;
-                }, localDeadline.Token, correlationId, "courier:" + method + ":" + path).ConfigureAwait(false);
+                }, localDeadline.Token, correlationId, "courier:" + method + ":" + path,
+                    externalEventOnly: RevitEventService.RequiresExternalEvent(method, path)).ConfigureAwait(false);
             }
             catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested && localDeadline.IsCancellationRequested)
             {

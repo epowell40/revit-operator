@@ -10,8 +10,12 @@ export function unresolvedSheetTarget(sheetNumber) {
   return error;
 }
 
-export function executionFailureMessage(error, settlement, assignment, fallback) {
+export function executionFailureMessage(error, settlement, assignment, fallback, ownerWriting) {
   const canonical = stoppedWorkReturnMessage(settlement, assignment);
   const detail = error instanceof Error ? details.get(error) : null;
-  return [detail, canonical || (detail ? null : `Run failed: ${fallback}`)].filter(Boolean).join('\n\n');
+  const message = canonical || (detail ? '' : `Run failed: ${fallback}`);
+  const detailBoundary = ownerWriting ? message.indexOf('\n\n## Details\n\n') : -1;
+  const summary = detailBoundary < 0 ? message : message.slice(0, detailBoundary);
+  const openItems = detailBoundary < 0 ? '' : message.slice(detailBoundary).trimStart();
+  return [detail, summary, ownerWriting, openItems].filter(Boolean).join('\n\n');
 }

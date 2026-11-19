@@ -33,6 +33,51 @@ namespace RevitBridge.Common.Tests
             Assert.Throws<ArgumentOutOfRangeException>(() => OperatorFamilySessionReceipt.CapacityRefusal(2, 3));
         }
 
+        [Theory]
+        [InlineData("/revit/open-family-doc")]
+        [InlineData("/revit/edit-family-from-instance")]
+        public void ActiveFamilyRefusalProvesNoNativeOpenAndNamesProjectRecovery(string path)
+        {
+            var raw = JsonNode.Parse(@"{
+                ""ok"": false,
+                ""code"": ""family_session_project_document_required"",
+                ""family_session_receipt"": {
+                    ""schema"": ""revit-operator.family-session-open.v1"",
+                    ""status"": ""project_document_required"",
+                    ""active_document_kind"": ""family"",
+                    ""native_open_started"": false,
+                    ""retained_sessions_unchanged"": true,
+                    ""model_write_performed"": false,
+                    ""file_write_performed"": false
+                }
+            }")!;
+            var result = OperatorAttemptSuccessfulSettlement.Classify(raw, "apply", "POST", path);
+            Assert.Equal("none", result.EffectState);
+            Assert.True(result.RequestDispatched);
+            Assert.Equal("native_receipt", result.EffectAuthority);
+            Assert.Equal("family_session_project_document_required", result.EffectReason);
+            Assert.Empty(result.AffectedTargetIdentities);
+            Assert.Empty(result.ReceiptRefs);
+            var produced = JsonNode.Parse(JsonSerializer.Serialize(OperatorFamilySessionReceipt.ProjectDocumentRefusal()))!;
+            Assert.Equal(raw["family_session_receipt"]!.ToJsonString(), produced["family_session_receipt"]!.ToJsonString());
+            Assert.Equal("none", OperatorAttemptSuccessfulSettlement.Classify(produced, "apply", "POST", path).EffectState);
+            Assert.Contains("original project tab", produced["hint"]!.GetValue<string>());
+            Assert.Contains("GET /revit/context", produced["hint"]!.GetValue<string>());
+
+            foreach (var field in new[] { "native_open_started", "retained_sessions_unchanged", "model_write_performed", "file_write_performed" })
+            {
+                var invalid = JsonNode.Parse(raw.ToJsonString())!;
+                invalid["family_session_receipt"]![field] = field != "retained_sessions_unchanged";
+                Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(invalid, "apply", "POST", path).EffectState);
+            }
+            var wrongDocument = JsonNode.Parse(raw.ToJsonString())!;
+            wrongDocument["family_session_receipt"]!["active_document_kind"] = "project";
+            Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(wrongDocument, "apply", "POST", path).EffectState);
+            Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(raw, "apply", "POST", "/revit/load-family-doc").EffectState);
+            Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(
+                new { error = "Active document is a family document. Open a project document (.rvt)." }, "apply", "POST", path).EffectState);
+        }
+
         [Fact]
         public void OpeningIsKnownPreparationNotAProjectCommit()
         {

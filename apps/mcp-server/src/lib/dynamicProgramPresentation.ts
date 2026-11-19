@@ -1,4 +1,5 @@
 type RecordValue = Record<string, unknown>;
+const JOINED_WALL_INSERT_FAILURE = "7240576f-66ca-40e7-bc79-be5af5f891f5";
 const record = (value: unknown): RecordValue => value && typeof value === "object" && !Array.isArray(value) ? value as RecordValue : {};
 const text = (value: unknown, limit = 1000): string | null => typeof value === "string" ? value.slice(0, limit) : null;
 const count = (value: unknown): number | null => Array.isArray(value) ? value.length : null;
@@ -30,7 +31,17 @@ export function presentDynamicProgramResult(value: RecordValue): RecordValue {
       && value.execution_status === "failed" && outcome.persistent_effect === "none" && outcome.native_transaction_state === "rolled_back"
       ? " Confirmed rollback means this attempt left no persistent model changes. Inspect current targets and the native cause before correcting source or scope. Reported collateral IDs do not automatically authorize changes to those elements. For authorized general native-code work, submit a fresh request using explicit active_document scope rather than predicting dependent IDs; the host binds it to the current document and exact source. Keep a requested strict listed-elements scope when that is the intended constraint. Verify requested results and review the actual executed code against user intent; an audit of dependent changes is not a failure by itself. Do not replay consumed authorization or use snapshot resume on this lane."
       : "";
-    const correctionIdentityGuidance = rollbackGuidance
+    const joinedWallRollback = rollbackGuidance && diagnostics.some(item => {
+      const diagnostic = record(item), failure = record(diagnostic.native_failure);
+      const ids = failure.element_ids;
+      return diagnostic.phase === "native" && (diagnostic.code === "NATIVE_MODEL_FAILURE" || diagnostic.code === "NATIVE_MODEL_WARNING")
+        && typeof failure.failure_definition_id === "string" && failure.failure_definition_id.toLowerCase() === JOINED_WALL_INSERT_FAILURE
+        && failure.complete === true && failure.reported_element_count === 2 && failure.returned_element_count === 2
+        && Array.isArray(ids) && ids.length === 2 && ids[0] !== ids[1] && ids.every(id => Number.isSafeInteger(id) && id > 0);
+    });
+    const correctionIdentityGuidance = joinedWallRollback
+      ? " For this joined-wall insert conflict, use one focused current-model read to identify the existing wall among the two attempt-time IDs and compare the join with the intended full opening width. Continue independent openings in separate bounded batches so this conflict cannot roll back their work. Isolate the conflicting opening for correction or report it as blocked if the source does not support a placement. Do not reuse a rolled-back insert ID, shift the opening by guesswork, unjoin surrounding walls or repeat the same batch."
+      : rollbackGuidance
       ? " For a curve correction, endpoints alone are not unique: coincident curves may be intentional. Inspect matching identities, owner/style and geometry with a bounded read-only query, then use the intended observed UniqueId with doc.GetElement(uniqueId). Do not choose or delete an arbitrary match."
       : "";
     const invalidObjectGuidance = rollbackGuidance && typeof outcome.error === "string"

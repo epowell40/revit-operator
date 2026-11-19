@@ -74,7 +74,7 @@ import { committedTagReadbackPlanV2 } from "../verification/committed_tag_readba
 import { committedVisibilityReadbackPlanV2 } from "../verification/committed_visibility_readback_plan_v2.js";
 import { committedParameterReadbackPlanV2, committedTypedParameterReadbackPlanV2 } from "../verification/committed_parameter_readback_plan_v2.js";
 import {committedInlineAccessoryReadbackPlanV2} from '../verification/inline_accessory_evidence_v2.js';
-import {committedNativeAccessoryReadbackPlanV2} from '../verification/native_accessory_evidence_v2.js';
+import {committedNativeAccessoryReadbackPlanV2,nativeAccessoryBranchDiagnosticV2} from '../verification/native_accessory_evidence_v2.js';
 import {committedTeeTakeoffReadbackPlanV2} from '../verification/tee_takeoff_evidence_v2.js';
 import { committedCircuitReadbackPlanV2, committedTypedCircuitReadbackPlanV2 } from "../verification/circuit_membership_postcondition_v2.js";
 import { committedElementTypeReadbackPlanV2 } from "../verification/element_type_postcondition_v2.js";
@@ -108,6 +108,9 @@ function attachCurrentAssignmentContext(response: ReturnType<typeof adaptMcpTool
   tool: unknown, assignmentId: string, operationId?: string): void {
   const snapshot = getAssignmentKernelSnapshotV2(assignmentId);
   if (!snapshot) return;
+  const read=operationId?snapshot.operations[operationId]:undefined;
+  const accessory=read?nativeAccessoryBranchDiagnosticV2(snapshot,read):null;
+  if(accessory)response.contentItems.push({type:'inputText',text:JSON.stringify(accessory)});
   attachDynamicObservationContext(response, tool, codexAssignmentEvidenceContextV2(snapshot, operationId,
     assignmentWorkBudgetStatusV2(snapshot, DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, new Date().toISOString())));
 }
@@ -590,7 +593,8 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
         tool: params.tool,
         arguments: boundArguments.arguments,
         projections: context.projections,
-        omitted: context.omitted
+        omitted: context.omitted,
+        canonicalStatus: settled.result.status
       });
       if (hostReadResponse) response.contentItems.push({ type:"inputText", text:
         "Host requested a separate bounded native readback. Its result and verification status are retained in the assignment context; the edit receipt itself is not proof." },

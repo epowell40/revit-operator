@@ -11,6 +11,27 @@ const app=fs.readFileSync(new URL('../public/app.js',import.meta.url),'utf8').re
 const server=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
 function body(source,name){let i=source.indexOf('async function '+name+'(');if(i<0)i=source.indexOf('function '+name+'(');assert(i>=0);return source.slice(i,source.indexOf('\n}\n',i)+2);}
 const binding={assignment_id:'task',session_id:'session',run_id:'run',generation:1};
+test('browser state shows resumed conversation without publishing host context as chat',()=>{
+ const history={session_id:binding.session_id,messages:[
+  {role:'user',text:'SAVED TASK CONTEXT. Keep this literal message.'},
+  {role:'assistant',text:'The model is saved. A door check remains.'},
+ ]};
+ const messages=savedComputerConversation({objective:'Check the door',work_budget:{attachment_ids:['original-dwg']}},
+  {current_binding:binding,operations:{older:{operation_id:'retained-operation'}}},history);
+ const start=server.indexOf('app.get("/api/computer/state",');
+ assert.ok(start>=0);
+ const routeSource=server.slice(start,server.indexOf('\n});',start)+4);
+ let state;
+ runInNewContext(routeSource,{
+  app:{get(path,handler){assert.equal(path,'/api/computer/state');handler({}, {setHeader(){},json(data){state=data;}});}},
+  computerState:{messages},browserComputerAssignmentBinding:()=>binding,
+  modelCallReceiptsSnapshot:()=>[],providerUsageCoverageSnapshot:()=>({}),
+  modelCallReceiptIntegritySnapshot:()=>({}),browserSafeCertifiedReadUi:()=>null,
+  browserComputerMessages:savedConversationHelpers.browserComputerMessages,
+ });
+ assert.deepEqual(JSON.parse(JSON.stringify(state.messages)),history.messages);
+ assert.match(savedConversationHelpers.selectComputerConversationForInput(messages,12,binding)[0].text,/retained-operation/);
+});
 test('initial model input retains authenticated saved source and punch list beyond twelve messages',()=>{
  const goal={objective:'Finish both systems',work_budget:{attachment_ids:['registered-original-pdf'],conversation_message_id:'original-request'}};
  const snapshot={current_binding:binding,spec:{source_user_request:goal.objective},work_plan:{items:[{id:'system-a',status:'partial',remaining:'two devices'}]},operations:{},advisory_followups:{items:[{text:'Source label still unchecked'}]}};

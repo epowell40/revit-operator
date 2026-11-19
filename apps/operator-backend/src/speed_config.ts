@@ -76,9 +76,9 @@ export function normalizeReasoningEffort(value: unknown, fallback: ReasoningEffo
 }
 
 export function assertModelReasoningEffort(model: string, effort: ReasoningEffort): void {
-  // GPT-6.1 Sol does not accept none. Reject explicit unsupported requests
+  // These Sol models do not accept none. Reject explicit unsupported requests
   // without substituting another model or silently increasing reasoning.
-  if ((model === "gpt-6.1-sol" || /^gpt-6\.1-sol-\d{4}-\d{2}-\d{2}$/.test(model)) && effort === "none") {
+  if (effort === "none" && /^gpt-6\.[12]-sol(?:-\d{4}-\d{2}-\d{2})?$/.test(model)) {
     throw new Error(`${model} requires reasoning effort low, medium, high, xhigh, or max.`);
   }
 }

@@ -42,6 +42,91 @@ test('ordinary fresh local composer uses available computer owner and preserves 
   assert.equal(h.calls[0].submission.attachments[0].dataBase64, 'source-pixels');
 });
 
+test('long computer task briefs retain their final instruction and excessive text stays in the unsent draft', () => {
+  const h = routingHarness();
+  const clause = " Do not save over the original.";
+  const prompt = "Update the current schedule.".padEnd(16_000 - clause.length, " Check labels.") + clause;
+  const attachment = { filename: "reference.pdf", dataBase64: "source" };
+  const submitted = h.create(prompt, [attachment]);
+  assert.equal(submitted.text, prompt);
+  assert.equal(submitted.attachments[0].filename, attachment.filename);
+  assert.throws(() => h.create("X" + prompt, [attachment]), /exceeds 16,000 characters/);
+  assert.deepEqual(h.calls, []);
+});
+test('a file drop stages all references and keeps one submission and one task owner', async () => {
+  const files = [{ name: 'Library example.pdf', type: 'application/pdf', size: 3 },
+    { name: 'Hospital example.pdf', type: 'application/pdf', size: 3 }];
+  const h = routingHarness();
+  const handlers = new Map();
+  const classes = new Set();
+  const chatPane = {
+    addEventListener: (type, listener) => handlers.set(type, listener),
+    contains: () => false,
+    classList: {
+      toggle: (name, enabled) => enabled ? classes.add(name) : classes.delete(name),
+      remove: name => classes.delete(name)
+    }
+  };
+  const elements = { chatPane, attachInput: { disabled: false } };
+  const state = { ...h.state, sessionId: '', taskNavigationEpoch: 1,
+    pendingAttachments: [], attachmentReadsPending: 0 };
+  const firstHandlers = source.indexOf('elements.chatPane.addEventListener("dragover"');
+  const lastHandlers = source.indexOf('elements.promptInput.addEventListener("paste"', firstHandlers);
+  assert.ok(firstHandlers >= 0 && lastHandlers > firstHandlers);
+  let reading;
+  let persists = 0;
+  const readGates = [Promise.resolve("data:application/pdf;base64,YWJj"), Promise.withResolvers()];
+  let i = 0;
+  const context = {
+    state, elements, window: { addEventListener() {} }, composerDraftRevision: 0,
+    document: { getElementById: () => null },
+    renderAttachStrip() {}, updateControls() {}, setStatus() {}, renderMessages() {},
+    persistComposerDraft: async () => { persists++; return true; },
+    readFileAsDataUrl: () => i++ === 0 ? readGates[0] : readGates[1].promise,
+  };
+  runInNewContext(`${appBody('assertAttachmentTotalSize')}
+    ${appBody('addSelectedFiles', true)}
+    ${appBody('isFileDrop')}
+    function attachComposerFiles(files) { track(addSelectedFiles(files)); }
+    ${source.slice(firstHandlers, lastHandlers)}`,
+  { ...context, track: promise => { reading = promise; } });
+  let prevented = 0;
+  const event = { dataTransfer: { types: ['Files'], files }, preventDefault: () => { prevented++; } };
+  handlers.get('dragover')(event);
+  assert.equal(event.dataTransfer.dropEffect, 'copy');
+  assert.ok(classes.has('fileDropActive'));
+  handlers.get('drop')(event);
+  assert.equal(prevented, 2);
+  assert.ok(!classes.has('fileDropActive'));
+  assert.equal(state.attachmentReadsPending, 1);
+  assert.equal(state.pendingAttachments.length, 0);
+  assert.equal(h.calls.length, 0, 'dropping files cannot dispatch work');
+  readGates[1].resolve('data:application/pdf;base64,ZGVm');
+  await reading;
+  assert.equal(state.attachmentReadsPending, 0);
+  assert.equal(persists, 1);
+  await h.send(h.create('Copy the scheduling approach from these projects.', state.pendingAttachments));
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.calls[0].owner, 'computer');
+  const attachments = h.calls[0].submission.attachments;
+  assert.equal(JSON.stringify(attachments.map(a => a.name)), JSON.stringify(files.map(f => f.name)));
+  assert.equal(JSON.stringify(attachments.map(a => a.dataBase64)), '["YWJj","ZGVm"]');
+  assert.notEqual(attachments[0].id, attachments[1].id);
+});
+
+test('the composer rejects a combined limit overflow before reading the files and keeps the draft', async () => {
+  const prior = {name: 'already attached.pdf', sizeBytes: 180};
+  const state = {attachmentLimits: {maxCount: 3, maxFileBytes: 300, maxTotalBytes: 400},
+    pendingAttachments: [prior], attachmentReadsPending: 0};
+  const add = runInNewContext(`${appBody('assertAttachmentTotalSize')}
+    ${appBody('addSelectedFiles', true)}
+    addSelectedFiles`, {state, formatBytes: size => `${size} bytes`,
+    readFileAsDataUrl() { throw new Error('must reject before reading'); }});
+  await assert.rejects(add([{name: 'second.pdf', size: 221}]), /combined attachment size.*400 bytes/);
+  assert.deepEqual(state.pendingAttachments, [prior]);
+  assert.equal(state.attachmentReadsPending, 0);
+});
+
 test('actual composer respects explicit API-only restriction before computer admission', async () => {
   for (const localExecutorChoice of [localExecutor, null]) {
     const h = routingHarness({ localExecutor: localExecutorChoice });
@@ -172,7 +257,7 @@ test('actual Send handler acknowledges synchronously, retains immutable click in
   const attachment = { filename: 'redline.pdf', data_base64: 'retained-file-bytes' };
   const state = { resetting: false, pendingAttachments: [attachment] };
   const elements = { chatForm: { addEventListener(_event, fn) { handler = fn; } }, promptInput: { value: 'Review these marks' }, sendButton: {} };
-  runInNewContext(directionPolicy + '\n' + source.slice(from, until + 4), { state, elements, beginComposerSend, loadedBrowserIdentity: 'current', selectedGoal: () => null,
+  runInNewContext(directionPolicy + '\n' + appBody('assertAttachmentTotalSize') + '\n' + source.slice(from, until + 4), { state, elements, beginComposerSend, loadedBrowserIdentity: 'current', selectedGoal: () => null,
     setStatus: text => { status = text; }, updateControls() { elements.sendButton.disabled = state.composerSubmissionPending; },
     persistComposerDraft: () => new Promise(resolve => { saveDone = resolve; }),
     assertLoadedBrowserFresh: () => { checks++; return new Promise(resolve => { freshDone = resolve; }); },
@@ -203,7 +288,7 @@ test('actual Send handler acknowledges synchronously, retains immutable click in
 test('reset during pending freshness prevents dispatch and releases intake controls', async () => {
   let handler, freshDone; let sends = 0;
   const state = { pendingAttachments: [] }; const elements = { chatForm: { addEventListener(_event, fn) { handler = fn; } }, promptInput: { value: 'Question' } };
-  runInNewContext(directionPolicy + '\n' + source.slice(from, until + 4), { state, elements, beginComposerSend, loadedBrowserIdentity: 'current', selectedGoal: () => null, setStatus() {}, updateControls() {},
+  runInNewContext(directionPolicy + '\n' + appBody('assertAttachmentTotalSize') + '\n' + source.slice(from, until + 4), { state, elements, beginComposerSend, loadedBrowserIdentity: 'current', selectedGoal: () => null, setStatus() {}, updateControls() {},
     persistComposerDraft: async () => true, assertLoadedBrowserFresh: () => new Promise(resolve => { freshDone = resolve; }),
     createChatSubmission() { sends++; }, clearChatComposerForSubmission() { sends++; }, beginOptimisticChatSubmission() { sends++; }, sendPrompt() { sends++; }
   });

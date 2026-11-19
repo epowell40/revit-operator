@@ -20,6 +20,22 @@ namespace RevitBridge.Common
                     retained_sessions_unchanged = true, model_write_performed = false, file_write_performed = false } };
         }
 
+        private const string ProjectDocumentRequired = "family_session_project_document_required";
+
+        public static object ProjectDocumentRefusal() => new
+        {
+            ok = false,
+            code = ProjectDocumentRequired,
+            error = "The active Revit document is a family editor. Opening a loaded family requires the project document.",
+            hint = "Select the original project tab and use GET /revit/context to confirm it is active before continuing. This request did not open a family session or write to the model or a file.",
+            family_session_receipt = new
+            {
+                schema = Schema, status = "project_document_required", active_document_kind = "family",
+                native_open_started = false, retained_sessions_unchanged = true,
+                model_write_performed = false, file_write_performed = false
+            }
+        };
+
         public static object Opened(string sessionId, string sourceKind, string sourceId,
             bool documentValid, bool sessionRegistered)
         {
@@ -39,6 +55,21 @@ namespace RevitBridge.Common
             if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("family_session_receipt", out var r)) return false;
             try
             {
+                if (r.GetProperty("status").GetString() == "project_document_required")
+                {
+                    if (effect != "apply" || method != "POST" || (path != "/revit/open-family-doc" && path != "/revit/edit-family-from-instance")
+                        || root.GetProperty("ok").ValueKind != JsonValueKind.False
+                        || root.GetProperty("code").GetString() != ProjectDocumentRequired
+                        || r.GetProperty("schema").GetString() != Schema
+                        || r.GetProperty("active_document_kind").GetString() != "family"
+                        || r.GetProperty("native_open_started").ValueKind != JsonValueKind.False
+                        || r.GetProperty("retained_sessions_unchanged").ValueKind != JsonValueKind.True
+                        || r.GetProperty("model_write_performed").ValueKind != JsonValueKind.False
+                        || r.GetProperty("file_write_performed").ValueKind != JsonValueKind.False) return true;
+                    settlement = OperatorAttemptSettlement.None(effect, method, path,
+                        ProjectDocumentRequired, "native_receipt", requestDispatched: true);
+                    return true;
+                }
                 if (r.GetProperty("status").GetString() == "capacity_rejected")
                 {
                     if (effect != "apply" || method != "POST" || (path != "/revit/open-family-doc" && path != "/revit/edit-family-from-instance")

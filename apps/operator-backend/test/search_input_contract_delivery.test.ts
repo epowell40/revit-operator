@@ -88,6 +88,67 @@ test("schema-free and oversized schemas retain catalog identities without invent
   }
 }));
 
+const broadScheduleSchema = {
+  type: "object",
+  properties: {
+    filters: { type: "array", items: { type: "object", properties: { op: { type: "string" } } } },
+    replaceFilters: { type: "boolean" },
+    dryRun: { type: "boolean" },
+    hugeChoice: { enum: Array.from({ length: 1200 }, (_, index) => `choice-${index}`) },
+    "unsafe.path": { type: "string" },
+  },
+};
+
+test("oversized search delivers exact query-matched request fields and their retained selector prefix", () => isolated(() => {
+  const schedule = {
+    method: "POST", path: "/revit/configure-schedule", required_fields: [],
+    request_schema: broadScheduleSchema,
+  };
+  const root = { source: "/revit/tool-registry", query: "/revit/schedule-filter", matches: [schedule] };
+  const raw = wrap(root);
+  const saved = retain(raw, 4096);
+  const bounded = assembleBoundedEvidenceContext({ projections: [saved.projection], ...scope });
+  const response = adaptMcpToolCallResultToDynamicResponse(raw, { tool: "revit_search_tools", projections: bounded.projections, omitted: bounded.omitted });
+  const visible = JSON.parse((response.contentItems[0] as any).text);
+  const doc = visible.evidence_projections[0].tool_documentation;
+  const row = doc.tools[0];
+  const selected = row.request_schema_selection;
+  assert.deepEqual(selected, {
+    complete: false,
+    property_path_prefix: "payload.matches[0].request_schema.properties.",
+    included_properties: {
+      filters: broadScheduleSchema.properties.filters,
+      replaceFilters: broadScheduleSchema.properties.replaceFilters,
+    },
+  });
+  assert.equal(row.request_schema, undefined);
+  assert(doc.omitted_paths.includes("payload.matches[0].request_schema"));
+  assert.equal(doc.completion_eligible, false);
+  assertBoundedModelEvidencePayload([{ type: "function_call_output", output: JSON.stringify(visible) }]);
+  const fields = Object.keys(selected.included_properties).map(name => selected.property_path_prefix + name);
+  const result = retrieveEvidence({ scope, evidence_id: saved.ref.evidence_id, purpose: "Read exact filter arguments", fields, max_bytes: 4096 });
+  assert.deepEqual(result.selection, Object.fromEntries(fields.map((field, index) =>
+    [field, Object.values(selected.included_properties)[index]])));
+  assert.equal(result.complete, false);
+}));
+
+test("oversized exact documentation points to original properties without inventing a focused query", () => isolated(() => {
+  const raw = wrap({ version: "operator.tool_doc.v1", method: "POST", path: "/revit/configure-schedule",
+    request_schema: broadScheduleSchema });
+  const saved = storeEvidence({ scope, source: "assignment_kernel_v2:revit_tool_doc", raw, trust_level: "host_observed" }, 4096);
+  const doc = saved.projection.tool_documentation!;
+  assert.deepEqual(doc.tools[0]!.request_schema_selection, {
+    complete: false, property_path_prefix: "payload.request_schema.properties.",
+  });
+  assert(doc.omitted_paths.includes("payload.request_schema"));
+  assert.equal(doc.complete, false);
+  const field = (doc.tools[0]!.request_schema_selection as any).property_path_prefix + "filters";
+  const result = retrieveEvidence({ scope, evidence_id: saved.ref.evidence_id, purpose: "Read exact filter contract", fields: [field], max_bytes: 4096 });
+  assert.deepEqual(result.selection, { [field]: broadScheduleSchema.properties.filters });
+  assert.throws(() => retrieveEvidence({ scope: { ...scope, generation: 2 }, evidence_id: saved.ref.evidence_id,
+    purpose: "Read exact filter contract", fields: [field] }), /generation/i);
+}));
+
 test("search metadata cannot acquire native authority or bypass source and ambiguity guards", () => isolated(() => {
   const raw = fixture(), saved = retain(raw);
   for (const change of [

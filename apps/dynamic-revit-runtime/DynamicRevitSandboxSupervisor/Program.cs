@@ -96,7 +96,18 @@ internal static partial class Program
         string snapshotCore = "";
         if(config.NativeProgram!=null)
         {
-            (nativePreparation,snapshotRaw)=await PrepareNativeProgram(config,source,runtimeId,hostSessionKey,token,writeGrant,hostAuthentications);
+            var prepared = await PrepareNativeProgram(config,source,runtimeId,hostSessionKey,token,writeGrant,hostAuthentications);
+            if (prepared == null)
+            {
+                return new LiveEvidence
+                {
+                    Ok = false, StartedUtc = started, CompletedUtc = DateTimeOffset.UtcNow,
+                    TargetRevitYear = config.TargetRevitYear, WorkerStarted = false,
+                    WorkerOutput = JsonSerializer.SerializeToElement<object?>(null),
+                    Failure = NativePreparationMismatch, HostAuthenticationReceipts = hostAuthentications
+                };
+            }
+            (nativePreparation,snapshotRaw) = prepared.Value;
         }
         else
         {

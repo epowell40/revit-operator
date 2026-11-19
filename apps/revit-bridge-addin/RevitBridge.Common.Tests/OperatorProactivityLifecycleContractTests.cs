@@ -51,8 +51,14 @@ namespace RevitBridge.Common.Tests
             var eventService = ReadRepoFile(
                 "revit-bridge-addin", "RevitBridge", "Services", "RevitEventService.cs");
             Assert.Contains("internal bool ExecutePendingOnIdling(UIApplication app)", eventService);
-            Assert.Contains("if (_queue.IsEmpty) return false", eventService);
-            Assert.Contains("Execute(app)", eventService);
+            Assert.Contains("ExecuteNext(app, fromIdling: true)", eventService);
+            Assert.Contains("TakePendingItem(fromIdling)", eventService);
+            Assert.Contains("(fromIdling && item.ExternalEventOnly)", eventService);
+            Assert.Contains("method == \"POST\" && string.Equals(path, \"/revit/open-model\"", eventService);
+            var http = ReadRepoFile("revit-bridge-addin", "RevitBridge", "Server", "RevitHttpServer.cs");
+            var runner = ReadRepoFile("revit-bridge-addin", "RevitBridge", "Operator", "OperatorActionRunner.cs");
+            Assert.Contains("externalEventOnly: RevitEventService.RequiresExternalEvent(effectiveMethod, path)", http);
+            Assert.Contains("externalEventOnly: RevitEventService.RequiresExternalEvent(method, path)", runner);
             Assert.Contains("MaintainRaiseUntilStartedAsync(item)", eventService);
             Assert.Contains("_activeIdleLease.RecordActivity()", eventService);
             Assert.Contains("_activeIdleLease.Stop()", eventService);

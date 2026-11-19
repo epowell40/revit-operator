@@ -9,6 +9,7 @@ import { createAssignmentKernelForGoalV2 } from "../src/assignments/assignment_k
 import { advanceAssignmentKernelProgressV2 } from "../src/assignments/assignment_kernel_v2_progress.js";
 import { ensureAssignmentRunForTurn } from "../src/assignments/turn_journal.js";
 import { canonicalAssignmentOutcomeForBinding } from "../src/assignments/outcome_handoff.js";
+import { externalAssignmentInputHandoff } from "../src/assignments/external_assignment_start.js";
 import { configureGoalEvidenceAuthorityProvider, createGoal } from "../src/goals/service.js";
 import { createLocalGoalEvidenceAuthority } from "../src/goals/authority.js";
 import { createOperatorBackendAuth } from "../src/operator_backend_auth.js";
@@ -132,6 +133,11 @@ test("authenticated chat outcome handoff reads a V2 clarification from the exact
         question: clarification.question,
         missing_fields: ["replacement_text"]
       });
+      const started = { assignmentId: goal.id, runId: run.runId, generation: run.generation, kernelVersion: 2 as const };
+      assert.deepEqual(externalAssignmentInputHandoff(started, sessionId), { canonical_assignment_outcome: outcome });
+      assert.deepEqual(externalAssignmentInputHandoff({...started, generation: run.generation + 1}, sessionId), {});
+      assert.deepEqual(externalAssignmentInputHandoff(started, 'foreign-session'), {});
+      assert.deepEqual(externalAssignmentInputHandoff({...started, kernelVersion: 1}, sessionId), {});
     });
   });
 });
@@ -163,6 +169,8 @@ test("local shared-token outcome handoff reads the same exact V2 binding", () =>
       assert.equal(outcome?.run_id, binding.run_id);
       assert.equal(outcome?.outcome_state, "active");
       assert.equal(outcome?.terminal_state, "open");
+      assert.deepEqual(externalAssignmentInputHandoff({assignmentId: goal.id, runId: binding.run_id,
+        generation: binding.generation, kernelVersion: 2}, sessionId), {});
     });
   });
 });

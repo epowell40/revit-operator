@@ -3,7 +3,7 @@
 export const PROVIDER_TOKEN_PRICING_SNAPSHOT = {
   schema: "revit-operator.openai-pricing-snapshot.v1",
   effective_date: "2026-10-26",
-  model_rate_dates: { "gpt-6.1-sol": "2026-10-09", "gpt-6.1-terra": "2026-10-26", "gpt-6-luna": "2026-10-26", default: "2026-09-24" },
+  model_rate_dates: { "gpt-6.1-sol": "2026-10-09", "gpt-6.2-sol": "2026-11-17", "gpt-6.1-terra": "2026-10-26", "gpt-6-luna": "2026-10-26", default: "2026-09-24" },
   currency: "USD",
   unit_tokens: 1_000_000,
   long_context_input_threshold_tokens: 272_000,
@@ -13,6 +13,7 @@ export const PROVIDER_TOKEN_PRICING_SNAPSHOT = {
     "gpt-6-astra": { input: 10, cached_input: 1, cache_write_input: 12.5, output: 50 },
     "gpt-6-sol": { input: 2, cached_input: 0.2, cache_write_input: 2.5, output: 10 },
     "gpt-6.1-sol": { input: 2, cached_input: 0.1, cache_write_input: 2.5, output: 10 },
+    "gpt-6.2-sol": { input: 2, cached_input: 0.1, cache_write_input: 2.5, output: 10 },
     "gpt-6.1-terra": { input: 1, cached_input: 0.05, cache_write_input: 1.25, output: 5 },
     "gpt-6-luna": { input: 0.1, cached_input: 0.01, cache_write_input: 0.125, output: 0.5 }
   },
@@ -22,6 +23,7 @@ export const PROVIDER_TOKEN_PRICING_SNAPSHOT = {
     "gpt-6-astra": "https://developers.openai.com/api/docs/models/gpt-6-astra",
     "gpt-6-sol": "https://developers.openai.com/api/docs/models/gpt-6-sol",
     "gpt-6.1-sol": "https://developers.openai.com/api/docs/models/gpt-6.1-sol",
+    "gpt-6.2-sol": "https://developers.openai.com/api/docs/models/gpt-6.2-sol",
     "gpt-6.1-terra": "https://developers.openai.com/api/docs/models/gpt-6.1-terra",
     "gpt-6-luna": "https://developers.openai.com/api/docs/models/gpt-6-luna"
   }

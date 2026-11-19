@@ -42,5 +42,51 @@ namespace RevitBridge.Common.Tests
             }
             if (!string.IsNullOrWhiteSpace(retained)) Assert.Equal(raw, File.ReadAllText(retained));
         }
+
+        [Fact]
+        public void CleanActivationRequiresTheVerifiedDestinationOfTheRequestedOpen()
+        {
+            var retained = Environment.GetEnvironmentVariable("OPERATOR_TEST_RETAINED_ACTIVATION_RESULT");
+            var raw = string.IsNullOrWhiteSpace(retained)
+                ? "{\"status\":\"Success\",\"path\":\"C:/Models/Door.rfa\"}"
+                : File.ReadAllText(retained);
+            var old = JsonNode.Parse(raw)!;
+            Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(old, "apply", "POST", "/revit/open-model").EffectState);
+
+            var current = JsonNode.Parse(raw)!;
+            var requestedPath = old["path"]!.GetValue<string>();
+            current["document_activation_receipt"] = JsonSerializer.SerializeToNode(new
+            {
+                schema = "revit-operator.document-activation.v1",
+                requested_path = requestedPath.Replace('\\', '/'),
+                active_path = requestedPath,
+                active_document_session_id = new string('a', 32),
+                active_document_unmodified = true,
+                scope = "open_existing_file_without_edits"
+            });
+            var result = OperatorAttemptSuccessfulSettlement.Classify(current, "apply", "POST", "/revit/open-model");
+            Assert.Equal("none", result.EffectState);
+            Assert.Equal("native_document_activation_confirmed", result.EffectReason);
+            Assert.Equal("native_receipt", result.EffectAuthority);
+            Assert.True(result.RequestDispatched);
+            Assert.Empty(result.AffectedTargetIdentities);
+
+            foreach (var field in new[] { "schema", "requested_path", "active_path", "active_document_session_id", "scope" })
+            {
+                var foreign = JsonNode.Parse(current.ToJsonString())!;
+                foreign["document_activation_receipt"]![field] = "foreign";
+                Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(foreign, "apply", "POST", "/revit/open-model").EffectState);
+            }
+            var dirty = JsonNode.Parse(current.ToJsonString())!;
+            dirty["document_activation_receipt"]!["active_document_unmodified"] = false;
+            Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(dirty, "apply", "POST", "/revit/open-model").EffectState);
+            var unloaded = JsonNode.Parse(current.ToJsonString())!;
+            unloaded["status"] = "Unloaded Link and Activated";
+            Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(unloaded, "apply", "POST", "/revit/open-model").EffectState);
+            Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(current, "apply", "POST", "/revit/save-as").EffectState);
+            Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(current, "preview", "POST", "/revit/open-model").EffectState);
+            if (!string.IsNullOrWhiteSpace(retained)) Assert.Equal(raw, File.ReadAllText(retained));
+        }
+
     }
 }

@@ -210,11 +210,12 @@ const writingBinding=(a,b)=>['assignment_id','session_id','run_id','generation']
 const writingControl=s=>JSON.stringify(s.execution_control??null);
 const writingInvalidations=s=>JSON.stringify(s.input_invalidated_operation_ids??[]);
 const writingApplies=s=>JSON.stringify(Object.entries(s.operations??{}).filter(([,o])=>o.requested_effect==='apply').map(([id,o])=>[id,o.status,o.persistent_effect,o.result?.completed_at]).sort((a,b)=>a[0].localeCompare(b[0])));
-function writingReady(s,binding) {
+function writingReady(s,binding,allowRecordedFailure=false) {
   return s && writingBinding(s.current_binding,binding) && Number.isSafeInteger(s.assignment_version) && s.assignment_version>0
     && s.quiescent===true && s.execution_control?.state!=='paused' && !s.provider_usage_hold && !s.completion_proposal
-    && ['in_flight_operation_ids','in_flight_provider_call_ids','unresolved_unknown_operation_ids','pending_input_variable_ids','pending_review_ids','execution_failure_ids']
+    && ['in_flight_operation_ids','in_flight_provider_call_ids','unresolved_unknown_operation_ids','pending_input_variable_ids','pending_review_ids']
       .every(k=>Array.isArray(s[k])&&s[k].length===0)
+    && Array.isArray(s.execution_failure_ids) && (allowRecordedFailure || s.execution_failure_ids.length===0)
     && Object.values(s.operations??{}).every(o=>o.requested_effect!=='apply'||(o.persistent_effect!=='unknown'&&Number.isFinite(Date.parse(o.result?.completed_at))));
 }
 export function retainOwnerWrittenFindings(binding,text,snapshot) {
@@ -230,10 +231,23 @@ export function ownerWrittenFindingsReceipt(record) {
     native_postcondition_verified:false,whole_task_verified:false,
     guidance:'Written follow-up retained. Continue required native verification, inspection and delivery; this receipt does not end the task.'};
 }
-export function ownerWrittenFindingsMessage(record,binding,snapshot) {
-  if(!record||!ownerWritingRecords.has(record)||!writingBinding(record.binding,binding)||!writingReady(snapshot,binding)
-    ||!snapshot.terminal||!['complete','complete_with_issues','verified_noop','blocked'].includes(snapshot.outcome)
+function readDraftAfterMissingOutcome(snapshot,binding,failureMessage) {
+  if (typeof failureMessage !== 'string' || !failureMessage.startsWith('task_outcome_required:') || snapshot?.outcome !== 'failed' ||
+      snapshot.spec?.requested_effect !== 'read' || snapshot.terminal_reason !== 'assignment_runtime_failed' ||
+      snapshot.result_delivery || snapshot.execution_failure_ids?.length !== 1 ||
+      !Object.values(snapshot.operations ?? {}).every(operation =>
+        operation.requested_effect === 'read' && operation.persistent_effect === 'none')) return false;
+  const failure = snapshot.execution_failures?.[snapshot.execution_failure_ids[0]];
+  return writingBinding(failure?.binding,binding) && failure.code === 'assignment_runtime_failed' &&
+    failure.error_class === 'runtime' && failure.phase === 'provider_turn';
+}
+
+export function ownerWrittenFindingsMessage(record,binding,snapshot,failureMessage) {
+  const draft=readDraftAfterMissingOutcome(snapshot,binding,failureMessage);
+  if(!record||!ownerWritingRecords.has(record)||!writingBinding(record.binding,binding)||!writingReady(snapshot,binding,draft)
+    ||!snapshot.terminal||(!draft&&!['complete','complete_with_issues','verified_noop','blocked'].includes(snapshot.outcome))
     ||snapshot.assignment_version<record.version||writingControl(snapshot)!==record.control||writingApplies(snapshot)!==record.applies
     ||writingInvalidations(snapshot)!==record.invalidations)return '';
+  if(draft)return 'Unverified draft findings from this run. The task ended before completion.\n\n'+record.text;
   return 'Requested written follow-up (owner-authored; not native verification or an approved design):\n\n'+record.text;
 }

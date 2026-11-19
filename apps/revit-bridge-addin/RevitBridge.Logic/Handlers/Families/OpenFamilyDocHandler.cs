@@ -65,6 +65,7 @@ namespace RevitBridge.Logic.Handlers
 
             if (p.familyId.HasValue && p.familyId.Value != 0)
             {
+                if (projectDoc.IsFamilyDocument) return Task.FromResult(OperatorFamilySessionReceipt.ProjectDocumentRefusal());
                 var fam = projectDoc.GetElement(RevitBridge.Common.ElementIdCompat.Create(p.familyId.Value)) as Family;
                 if (fam == null) throw new InvalidOperationException($"Family {p.familyId.Value} not found in the active document.");
                 if (FamilyEditSessionStore.TryGetCapacityRefusal(out var refusal)) return Task.FromResult(refusal);

@@ -1,4 +1,4 @@
-import { normalizeAgentModel } from './agent_model_catalog.mjs';
+import { agentModelRequiresReasoning, normalizeAgentModel } from './agent_model_catalog.mjs';
 import { parseTaskNavigation, renderTaskList, renderSessionStart, taskDraftKey, taskStateLabel, currentTaskState, computerStateMatchesTask, computerStateIncludesSubmittedMessage } from "./task_navigation.mjs";
 import { createComposerDraftStore, staleComposerNotice, saveComposerRefreshTarget, readComposerRefreshTarget, clearComposerRefreshTarget } from "./composer_draft.mjs";
 import { beginComposerSend, selectChatSubmissionMode, startsFreshComputerConversation, routeSavedChatSubmission } from "./composer_intake.mjs";
@@ -69,6 +69,8 @@ const state = {
   backendConfigStatus: "unknown",
   shellEnabled: false,
   pendingAttachments: [],
+  attachmentLimits: null,
+  attachmentReadsPending: 0,
   screenTimer: null,
   computerStateTimer: null,
   notificationsTimer: null,
@@ -81,6 +83,7 @@ const state = {
   feedbackVisible: false,
   backendMessages: [],
   computerMessages: [],
+  checkedProjectCopy: null,
   computerEvents: [],
   computerProgress: null,
   computerScreen: null,
@@ -693,6 +696,7 @@ async function consumeAuthoritativeBackendSse(reader, onEvent) {
 
 const elements = {
   messages: document.querySelector("#messages"),
+  chatPane: document.querySelector("#chatPane"),
   chatScroll: document.querySelector("#chatScroll"),
   events: document.querySelector("#events"),
   statusText: document.querySelector("#statusText"),
@@ -946,7 +950,7 @@ async function persistComposerDraft() {
   if (composerDraftTimer) clearTimeout(composerDraftTimer);
   composerDraftTimer = null;
   try {
-    const draft = { text: elements.promptInput.value, attachments: state.pendingAttachments.map(item => ({ ...item })), sessionId: state.sessionId };
+    const draft = { text: elements.promptInput.value, attachments: [...state.pendingAttachments], sessionId: state.sessionId };
     const key = await taskDraftKey(composerDraftKey, draft.sessionId);
     await composerDraftStore.save(key, draft);
     return true;
@@ -1234,7 +1238,11 @@ function renderAttachStrip() {
 function renderMessages() {
   renderSessionStartScreen();
   elements.messages.innerHTML = "";
-  for (const message of activeMessages()) {
+  const messages = activeMessages();
+  const copy = state.checkedProjectCopy;
+  const liveCopy = state.activeRunKind !== "backend" && copy?.sessionId === state.sessionId
+    && copy.epoch === state.taskNavigationEpoch ? copy.message : null;
+  for (const message of liveCopy ? [...messages, liveCopy] : messages) {
     const normalizedRole = message.role === "user" ? "user" : message.role === "error" ? "error" : "assistant";
     const assistantParts = normalizedRole === "assistant" ? splitAssistantControlText(message.text) : null;
     const messageText = assistantParts ? assistantParts.text : `${message.text || ""}`;
@@ -1946,13 +1954,18 @@ function setSession(sessionId) {
 async function restoreConversationHistory() {
   const sessionId = state.sessionId;
   if (!sessionId) return;
+  const assignmentId = state.taskNavigationAssignmentId;
+  const epoch = state.taskNavigationEpoch;
+  const taskQuery = assignmentId ? `&assignment_id=${encodeURIComponent(assignmentId)}` : "";
   try {
-    const payload = await fetchJson(`/api/session/history?session_id=${encodeURIComponent(sessionId)}`);
-    if (state.sessionId !== sessionId || payload?.session_id !== sessionId) return;
+    const payload = await fetchJson(`/api/session/history?session_id=${encodeURIComponent(sessionId)}${taskQuery}`);
+    if (state.sessionId !== sessionId || payload?.session_id !== sessionId
+        || state.taskNavigationAssignmentId !== assignmentId || state.taskNavigationEpoch !== epoch) return;
     state.backendMessages = mergeConversationHistory(state.backendMessages, payload.messages);
     renderMessages();
   } catch {
-    if (state.sessionId === sessionId && !state.streaming) setStatus("Conversation history is unavailable.");
+    if (state.sessionId === sessionId && state.taskNavigationAssignmentId === assignmentId
+        && state.taskNavigationEpoch === epoch && !state.streaming) setStatus("Conversation history is unavailable.");
   }
 }
 
@@ -1991,7 +2004,7 @@ function updateControls() {
   const captureActive = !!state.captureState.mode;
   const captureBusy = state.captureState.busy || state.resetting || state.composerSubmissionPending || state.assignmentResumePending;
   const backendSubmissionActive = state.streaming && state.activeRunKind === "backend";
-  elements.sendButton.disabled = captureBusy;
+  elements.sendButton.disabled = captureBusy || state.attachmentReadsPending > 0;
   elements.sendButton.textContent = state.composerSubmissionPending
     ? "Sending…"
     : backendSubmissionActive || state.streaming && state.activeRunKind === "computer"
@@ -3927,31 +3940,88 @@ function readFileAsDataUrl(file) {
   });
 }
 
+function assertAttachmentTotalSize(attachments, files = []) {
+  const limit = state.attachmentLimits?.maxTotalBytes;
+  if (!Number.isSafeInteger(limit) || limit <= 0) return;
+  const total = attachments.reduce((sum, file) => sum + (file.sizeBytes || 0), 0)
+    + files.reduce((sum, file) => sum + file.size, 0);
+  if (total > limit) {
+    throw new Error(`The combined attachment size exceeds ${formatBytes(limit)}. Remove a reference and try again.`);
+  }
+}
+
 async function addSelectedFiles(fileList) {
   const files = Array.from(fileList || []);
   if (!files.length) return;
 
-  const next = [];
-  for (const file of files) {
-    const dataUrl = await readFileAsDataUrl(file);
-    const commaIndex = dataUrl.indexOf(",");
-    if (commaIndex === -1) {
-      throw new Error(`Failed to encode ${file.name}.`);
+  const limits = state.attachmentLimits;
+  const assertAttachmentCount = () => {
+    if (limits && state.pendingAttachments.length + files.length > limits.maxCount) {
+      throw new Error(`You can send at most ${limits.maxCount} attachments per message. Remove extra files and try again.`);
+    }
+  };
+  assertAttachmentCount();
+  const oversized = limits && files.find(file => file.size > limits.maxFileBytes);
+  if (oversized) {
+    throw new Error(`${oversized.name} exceeds the ${limits.maxFileBytes}-byte limit.`);
+  }
+  assertAttachmentTotalSize(state.pendingAttachments, files);
+
+  const sessionId = state.sessionId;
+  const navigationEpoch = state.taskNavigationEpoch;
+  state.attachmentReadsPending++;
+  updateControls();
+  try {
+    const next = [];
+    for (const file of files) {
+      const dataUrl = await readFileAsDataUrl(file);
+      const commaIndex = dataUrl.indexOf(",");
+      if (commaIndex === -1 || commaIndex === dataUrl.length - 1) {
+        throw new Error(`Could not read ${file.name} as an attachment.`);
+      }
+
+      next.push({
+        id: globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        name: file.name,
+        mimeType: file.type || "",
+        sizeBytes: file.size || 0,
+        dataBase64: dataUrl.slice(commaIndex + 1)
+      });
     }
 
-    next.push({
-      id: globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      name: file.name,
-      mimeType: file.type || "",
-      sizeBytes: file.size || 0,
-      dataBase64: dataUrl.slice(commaIndex + 1)
-    });
+    // File reads can outlive the original conversation or a second selection.
+    if (state.sessionId !== sessionId || state.taskNavigationEpoch !== navigationEpoch) {
+      throw new Error("The conversation changed while reading these files. Attach them again in the intended conversation.");
+    }
+    assertAttachmentCount();
+    assertAttachmentTotalSize(state.pendingAttachments, files);
+    state.pendingAttachments = [...state.pendingAttachments, ...next];
+    renderAttachStrip();
+    composerDraftRevision++;
+    const recoveryWarning = 'Attachments are available in this tab. Keep the original files before refreshing because local draft recovery is unavailable.';
+    if (!await persistComposerDraft()) {
+      showComposerNotice(recoveryWarning);
+    } else if (document.getElementById('composerNotice')?.textContent === recoveryWarning) {
+      showComposerNotice('');
+    }
+  } finally {
+    state.attachmentReadsPending--;
+    updateControls();
   }
+}
 
-  state.pendingAttachments = [...state.pendingAttachments, ...next];
-  renderAttachStrip();
-  composerDraftRevision++;
-  await persistComposerDraft();
+async function attachComposerFiles(fileList) {
+  try {
+    await addSelectedFiles(fileList);
+  } catch (error) {
+    state.computerMessages.push({ role: "error", text: error.message || String(error), attachments: [] });
+    renderMessages();
+    setStatus("Attachment failed.");
+  }
+}
+
+function isFileDrop(event) {
+  return Array.from(event.dataTransfer?.types || []).includes("Files");
 }
 
 async function addClipboardItems(items) {
@@ -4158,7 +4228,7 @@ function getSpeedSettings() {
 
 function synchronizeModelReasoning() {
   if (!elements.agentReasoning) return;
-  const requiresReasoning = elements.agentModel?.value === "gpt-6.1-sol";
+  const requiresReasoning = agentModelRequiresReasoning(elements.agentModel?.value);
   for (const option of elements.agentReasoning.options || []) {
     if (option.value === "none") option.disabled = requiresReasoning;
   }
@@ -5000,7 +5070,8 @@ async function syncComputerState() {
     ? { ...selectedGoal()?._bindingV2 } : null;
   const selectedAssignmentId = state.taskNavigationAssignmentId;
   const requestId = ++state.computerSyncRequestId;
-  const payload = await fetchJsonWithTimeout("/api/computer/state", {}, 10_000);
+  const query = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : "";
+  const payload = await fetchJsonWithTimeout(`/api/computer/state${query}`, {}, 10_000);
   if (requestId !== state.computerSyncRequestId) return;
   if (state.resetting) return;
   // A fallback backend stream owns its busy state and transcript. An idle
@@ -5014,6 +5085,10 @@ async function syncComputerState() {
       || !computerStateMatchesTask(payload, selectedGoal()?._bindingV2, sessionId))) return;
   if (!savedBinding && sessionId && payload.backendSessionId !== sessionId) return;
   state.computerSubmissionMessageId = "";
+  const copy = payload.checkedProjectCopy;
+  const checkedProjectCopy = payload.running && computerStateMatchesTask(payload, copy?.binding, sessionId)
+    ? copy.message : null;
+  state.checkedProjectCopy = checkedProjectCopy ? { message:checkedProjectCopy, sessionId, epoch } : null;
   state.activityLastSeenAt = Date.now();
   state.activityConnectionLost = false;
   const wasDesktopPreviewCaptureBlocked = desktopPreviewCaptureBlocked(state.computerRunSubmissionPending, state.desktopCaptureSuppressed);
@@ -5023,6 +5098,7 @@ async function syncComputerState() {
     running: payload.running,
     error: payload.error,
     messages: payload.messages,
+    checkedProjectCopy,
     events: payload.events,
     progress: payload.progress,
     certifiedReadUi: certifiedReadFixture,
@@ -5519,6 +5595,7 @@ async function sendPrompt(input, attachments = [], { browserFreshnessChecked = f
 }
 
 function applySidecarConfig(config = {}) {
+  state.attachmentLimits = config.attachmentLimits || null;
   state.backendUrl = config.backendUrl || "";
   state.backendLocal = !!config.backendLocal;
   state.backendAuthMode = config.backendAuthMode || "unknown";
@@ -5637,6 +5714,7 @@ function handleChatSubmissionFailure(error, submission) {
 
 elements.chatForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (state.attachmentReadsPending > 0) return;
   if (state.streaming && state.activeRunKind === "backend" || pausedTaskAcceptsDirection()) { await submitTaskDirection(); return; }
   const captured = beginComposerSend(state, elements.promptInput.value);
   if (!captured) return;
@@ -5644,6 +5722,7 @@ elements.chatForm.addEventListener("submit", async (event) => {
   updateControls();
   let submission;
   try {
+    assertAttachmentTotalSize(captured.attachments);
     await persistComposerDraft();
     await assertLoadedBrowserFresh(loadedBrowserIdentity);
     if (state.resetting) return;
@@ -6008,15 +6087,33 @@ elements.speakButton?.addEventListener("click", async () => {
 elements.attachButton.addEventListener("click", () => elements.attachInput.click());
 elements.attachInput.addEventListener("change", async (event) => {
   try {
-    await addSelectedFiles(event.target.files);
-  } catch (error) {
-    state.computerMessages.push({ role: "error", text: error.message || String(error), attachments: [] });
-    renderMessages();
-    setStatus("Failed.");
+    await attachComposerFiles(event.target.files);
   } finally {
     event.target.value = "";
   }
 });
+elements.chatPane.addEventListener("dragover", (event) => {
+  if (!isFileDrop(event)) return;
+  event.preventDefault();
+  const allowed = !elements.attachInput.disabled;
+  event.dataTransfer.dropEffect = allowed ? "copy" : "none";
+  elements.chatPane.classList.toggle("fileDropActive", allowed);
+});
+elements.chatPane.addEventListener("dragleave", (event) => {
+  if (!elements.chatPane.contains(event.relatedTarget)) elements.chatPane.classList.remove("fileDropActive");
+});
+elements.chatPane.addEventListener("drop", (event) => {
+  elements.chatPane.classList.remove("fileDropActive");
+  if (!isFileDrop(event)) return;
+  event.preventDefault();
+  if (!elements.attachInput.disabled) void attachComposerFiles(event.dataTransfer.files);
+});
+// A file dropped outside the conversation must never navigate away from the draft.
+for (const name of ["dragover", "drop"]) {
+  window.addEventListener(name, (event) => {
+    if (isFileDrop(event)) event.preventDefault();
+  });
+}
 elements.promptInput.addEventListener("paste", async (event) => {
   try {
     await handlePasteAttachments(event);

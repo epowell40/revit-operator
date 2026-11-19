@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';import test from 'node:test';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import {createHash} from 'node:crypto';
 import {boundDesktopNativeOutput} from '../src/assignments/desktop_native_output.js';
+import {adaptMcpToolCallResultToDynamicResponse} from '../src/brains/codex_dynamic_result_adapter.js';
 import {retrieveEvidence,storeEvidence} from '../src/evidence/evidence_store.js';
 import {assertBoundedModelEvidencePayload,modelEvidenceEnvelope,prepareBoundedModelEvidenceInput} from '../src/evidence/model_context_budget.js';
 const scope={session_id:'session',assignment_id:'assignment',run_id:'run',generation:1};
@@ -93,4 +94,23 @@ test('aggregate packing preserves failed status, interleaved errors and actual i
  assert.equal(result.success,false);assert(result.contentItems.some(b=>b.type==='inputImage'&&b.imageUrl===image.imageUrl));
  assert(result.contentItems.some(b=>b.type==='inputText'&&b.text===error.text));
  assert(result.contentItems.some(b=>b.type==='inputText'&&b.text.includes('visual_inputs')));
+}));
+
+test('canonical native refusal stays failed while the recovery instruction is delivered',()=>isolated(()=>{
+  const native={ok:false,code:'family_session_project_document_required',hint:'Select the original project tab and confirm the context.'};
+  const payload=JSON.stringify(native);
+  const stored=storeEvidence({scope,source:'assignment_kernel_v2:revit_call_tool',trust_level:'authoritative_native',raw:native});
+  const transport={content:[{type:'text',text:payload}]};
+  const input={tool:'revit_call_tool',projections:[stored.projection]};
+  const response=boundDesktopNativeOutput(adaptMcpToolCallResultToDynamicResponse(transport,{
+    ...input,canonicalStatus:'failed_after_dispatch'
+  }),scope,'family-open');
+  assert.equal(response.success,false);
+  const envelope=JSON.parse((response.contentItems[0] as any).text);
+  assert.equal(envelope.evidence_projections[0].evidence_id,stored.projection.evidence_id);
+  assert.match(JSON.stringify(response.contentItems),/Select the original project tab/);
+  assert.equal(adaptMcpToolCallResultToDynamicResponse(transport,input).success,true,'legacy transport-only response');
+  assert.equal(adaptMcpToolCallResultToDynamicResponse(transport,{
+    ...input,canonicalStatus:'completed_without_native_dispatch'
+  }).success,true,'successful control operation');
 }));

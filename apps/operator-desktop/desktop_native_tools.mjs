@@ -48,6 +48,7 @@ export function singleExecutionInstructions(instructions,guidance,executionMode)
     guidance+='\nThis assignment uses the advisory work plan: work-plan item IDs are not native inspection IDs. Do not pass complete_inspection_item_id to visual review. Keep native readbacks, required independent visual/code review and save/file evidence; then record scoped work-plan claims and report_work_for_review once. Claims remain advisory, not host-verified completion. A failed review or unknown effect remains unresolved.';
   }
   guidance+='\nFor a bounded edit to existing text, labels or parameters, choose one scoped inspection strategy. Reuse a known typed contract; when required preservation fields need C#, use the directly exposed executor for one bounded read instead of first discovering and calling several overlapping readers. Typed inspection is not a prerequisite to custom code. If searching is needed, use a focused capability name such as find text notes, not a compound list of every requested property; includeSchemas=true returns the contract with the match. Reuse the chosen inspection for independent post-edit readback. Gather the requested values and preservation fields together, apply the known related edits in one supported batch, then compare those fields. Do not enumerate every view element, tessellate unrelated curves or duplicate a sufficient typed read with C# solely for reassurance. Explicit preservation requirements still need relevant before/after evidence; use a scoped C# read when the typed contract lacks those fields. In custom reads use supported Revit classes and null-safe category/location access, not GetType/reflection. TextNote orientation is TextElement.BaseDirection and UpDirection, not a Rotation property; preserve Coord, type and alignment as applicable. Check Curve.IsBound before GetEndPoint or normalized Evaluate: a full circle is an unbounded Arc, so read its Center, Radius and axes instead. Keep native values/units; do not silently skip unsupported preservation fields. Keep write receipts and independent actual result reads; a returned success or code review is not native verification. For drawing-content checks prefer capture_mode:native_visible_region; use visible_work for an actual application UI/display requirement. For displayed text, combine readability/overlap checks and any required executed-code review into one final review_current_work call. A current matched review covers only its checked region and conditions: reuse it when unchanged instead of another zoom, screenshot or reviewer call merely to confirm the same pixels. Obtain missing evidence or recheck after relevant edits, uncertain results, or an uncovered UI requirement. Then issue one concise report_work_for_review with actual findings and remaining limits; do not add an interim report or reopen completed inspection just for bookkeeping.';
+  guidance+='\nFor a drawing reconstruction with a requested separate RVT, use focused native readback of the first usable batch, then checkpoint it with native Save As at the authorized result path before opening or creating a family to refine existing geometry. Read back the actual locations, dimensions and hosting or connections in scope. Inspect the exact saved file and retain remaining discrepancies. Honor review-before-save and no-save instructions and never overwrite source files. Do not save while effects are unknown. Continue required corrections and save the updated result after confirmed edits. A draft checkpoint still requires its own native verification and does not finish the assignment or replace required final visual checks.';
   const changes=[
     ['Complete requested Revit work through delegate_revit_task using the current user objective, including simple model/view questions and PDF exports. That executor records native operations, verification and the saved outcome. inspect_revit_context is useful for orientation and progress, but its local result alone cannot finish a saved task. ','Complete requested Revit work directly through native__ tools using the full current user objective. The existing backend records native operations, verification and the saved outcome. A supporting context read alone cannot finish a saved task. '],
     ['Use delegate_revit_task for supported native load/assignment stages and verification','Use native__ tools for supported native load/assignment stages and verification'],
@@ -127,7 +128,8 @@ function codeReviewSelector(call,result,binding) {
 export async function invokeDesktopNativeTool({assignment,messageId,responseId,call,context,request}) {
   if(!call?.name?.startsWith('native__')||!messageId||!responseId||!call.call_id)
     throw Error('desktop_native_provider_identity_required');
-  const result=await request('/api/assignments/v2/desktop-native/call',{method:'POST',body:JSON.stringify({
+  const result=await request('/api/assignments/v2/desktop-native/call',{method:'POST',
+    headers:{'x-operator-desktop-presentation':'checked-copy-v1'},body:JSON.stringify({
     ...desktopNativeBinding(assignment),message_id:messageId,response_id:responseId,call_id:call.call_id,context})});
   if(result?.schema==='operator.desktop-native-pending.v1') {
     const binding=desktopNativeBinding(assignment);
@@ -154,6 +156,14 @@ export async function invokeDesktopNativeTool({assignment,messageId,responseId,c
     native_stop_reason:result.stop_reason??null,content:result.result.contentItems})};
   Object.defineProperty(output,'native_model_output',{value:{type:'function_call_output',call_id:call.call_id,output:content}});
   Object.defineProperty(output,'native_stop_reason',{value:result.stop_reason??null});
+  const checkedCopy=result.checked_copy,binding=desktopNativeBinding(assignment);
+  if(checkedCopy&&Object.keys(binding).every(key=>checkedCopy.binding?.[key]===binding[key])
+    &&checkedCopy.message?.role==='assistant'
+    &&typeof checkedCopy.message.message_id==='string'
+    &&checkedCopy.message.message_id.startsWith(`saved-checkpoint:${binding.assignment_id}:`)
+    &&typeof checkedCopy.message.text==='string'&&checkedCopy.message.text.length<=4000){
+    Object.defineProperty(output,'checked_copy',{value:checkedCopy});
+  }
   return output;
 }
 

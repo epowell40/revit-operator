@@ -125,7 +125,9 @@ export function retainWorkPlanInspectionV2(snapshot: AssignmentSnapshotV2, opera
             rejectionReason = 'The retained find-text-notes request lacks an exact elementIds array. A broad inventory or single elementId selector cannot supply this inspection coverage. Use an existing fresh exact-target read if it covers the required targets; otherwise obtain the supported scoped read.';
           if (op.input.path === '/revit/get-element-summary' && Array.isArray(data?.result)
               && data.result.some((row: any) => row?.found === false))
-            rejectionReason = 'This read contains missing elements. Corrective deletions are covered only by fresh get-element-summary with exact elementIds and includeNativeProgramEffectState:true, matched to already verified committed deletions. Use an existing qualifying read after the last edit and SaveAs; do not recreate deleted lines or discard their required identities. A plain missing-element row or failed read does not prove a deletion. Cite saved-file verification separately when the inspection also depends on a saved artifact.';
+            rejectionReason = body?.includeNativeProgramEffectState === true
+              ? 'This effect-state read does not establish fresh absence for an already verified deletion in the current document. Do not repeat the same read or discard the required deleted identity. Use another qualifying retained read or keep the exact coverage gap open. Cite saved-file verification separately.'
+              : 'This read contains missing elements. Corrective deletions are covered only by fresh get-element-summary with exact elementIds and includeNativeProgramEffectState:true, matched to already verified committed deletions. Use an existing qualifying read after the last edit and SaveAs; do not recreate deleted lines or discard their required identities. A plain missing-element row or failed read does not prove a deletion. Cite saved-file verification separately when the inspection also depends on a saved artifact.';
           continue;
         }
         ids.forEach(id => targets.add(`element_id:${id}`)); observations.push(oid); accepted = true; break;

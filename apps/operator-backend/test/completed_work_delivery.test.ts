@@ -1,15 +1,17 @@
 import assert from 'node:assert/strict';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import test from 'node:test';import {fileURLToPath} from 'node:url';
 import {storeEvidence} from '../src/evidence/evidence_store.js';
+import {payloadDigestV2} from '@revitoperator/payload-digest-v2';
 import {verifiedChangePresentationV2} from '../src/assignments/verified_change_presentation_v2.js';
 import {deriveTerminalResultV2} from '../src/assignments/assignment_kernel_v2_terminal_result.js';
-import {savedCopyHandoffV2} from '../src/assignments/saved_copy_handoff_v2.js';
+import {modelSavedProjectCheckpointV1,savedCopyHandoffV2,savedProjectBeforeInterruptionV2,savedProjectCheckpointV2} from '../src/assignments/saved_copy_handoff_v2.js';
 import {finalCodexAssignmentMessageV2} from '../src/brains/codex_assignment_progress.js';
+import {codexAssignmentEvidenceContextV2} from '../src/brains/codex_assignment_evidence.js';
 import {generateWorkReturnFromKernelV2} from '../src/work_returns/assignment_kernel_v2_generator.js';
 import {workReturnTerminalPresentationV2} from '../src/work_returns/terminal_presentation.js';
 import {verifyWorkReturnHash} from '../src/work_returns/generator.js';
 const here=path.dirname(fileURLToPath(import.meta.url)),file=[path.join(here,'fixtures/completed-work-delivery-516.json'),path.join(here,'../../test/fixtures/completed-work-delivery-516.json')].find(fs.existsSync)!;
-function fixture(id:string,run:(s:any)=>void){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'operator-work-delivery-')),old=process.env.OPERATOR_WORKSPACE_ROOT;process.env.OPERATOR_WORKSPACE_ROOT=dir;
- try{const f=JSON.parse(fs.readFileSync(file,'utf8'))[id],s=f.snapshot;for(const [oid,payload]of Object.entries(f.payloads)){const o=s.observations[oid],stored=storeEvidence({scope:{...s.current_binding,attempt_id:o.operation_id},source:'assignment_kernel_v2:revit_call_tool',trust_level:'authoritative_native',raw:payload});o.raw_payload_ref='evidence:'+stored.ref.evidence_id;}run(s);}
+function fixture(id:string,run:(s:any,payloads:Record<string,any>)=>void){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'operator-work-delivery-')),old=process.env.OPERATOR_WORKSPACE_ROOT;process.env.OPERATOR_WORKSPACE_ROOT=dir;
+ try{const f=JSON.parse(fs.readFileSync(file,'utf8'))[id],s=f.snapshot;for(const [oid,payload]of Object.entries(f.payloads)){const o=s.observations[oid],stored=storeEvidence({scope:{...s.current_binding,attempt_id:o.operation_id},source:'assignment_kernel_v2:revit_call_tool',trust_level:'authoritative_native',raw:payload});o.raw_payload_ref='evidence:'+stored.ref.evidence_id;}run(s,f.payloads);}
  finally{if(old===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=old;assert.equal(path.dirname(dir),os.tmpdir());assert(path.basename(dir).startsWith('operator-work-delivery-'));fs.rmSync(dir,{recursive:true,force:true});}}
 for(const [id,summary]of [['schedule-original','Verified in Revit: 1 schedule.'],['mixed-original','Verified in Revit: 1 element with updated parameters.']]){
  test(`${id} native result and saved path survive bound Work Return projection without certifying task completion`,()=>fixture(id,s=>{
@@ -73,3 +75,156 @@ for(const [id,summary]of [['schedule-original','Verified in Revit: 1 schedule.']
   assert.equal(verifiedChangePresentationV2(s),null);
  }));
 }
+
+test('a project save remains available as a historical checkpoint during a separate family open failure',()=>fixture('schedule-original',snapshot=>{
+ const save=Object.values(snapshot.operations).find((operation:any)=>operation.input.path==='/revit/save-as') as any;
+ const checkpoint=save.result.native_artifact_receipt.save_document.after.path;
+ const operationId='separate-family-open';
+ const body={filePath:'C:\\Project\\Door.rfa',audit:false,detach:false,discardExistingOpenDocument:false};
+ const request={...save.request_identity,path:'/revit/open-model'};
+ snapshot.operations[operationId]={...save,operation_id:operationId,request_identity:request,
+  admitted_assignment_version:save.settled_assignment_version+1,settled_assignment_version:save.settled_assignment_version+3,
+  input:{method:'POST',path:'/revit/open-model',body},observation_ids:[],persistent_effect:'unknown',
+  result:{...save.result,operation_id:operationId,request_identity:request,persistent_effect:'unknown',status:'failed_after_dispatch'}};
+ Object.assign(snapshot,{terminal:false,outcome:'active',unresolved_unknown_operation_ids:[operationId],
+  in_flight_operation_ids:[],in_flight_provider_call_ids:[],pending_review_ids:[],execution_control:undefined});
+ const before=JSON.stringify(snapshot);
+ assert.equal(savedCopyHandoffV2(snapshot),null);
+ assert.equal(savedProjectBeforeInterruptionV2(snapshot)?.file,checkpoint);
+ for(const mode of ['same-project','discard','unrecognized-option','concurrent','foreign','stale-save','paused','pending-usage','another-unknown'] as const){
+  const copy=structuredClone(snapshot),operation=copy.operations[operationId];
+  if(mode==='same-project')operation.input.body.filePath=checkpoint;
+  if(mode==='discard')operation.input.body.discardExistingOpenDocument=true;
+  if(mode==='unrecognized-option')operation.input.body.futureOption=false;
+  if(mode==='concurrent')operation.admitted_assignment_version=save.settled_assignment_version;
+  if(mode==='foreign')operation.result.binding={...copy.current_binding,run_id:'other-run'};
+  if(mode==='stale-save')copy.input_invalidated_operation_ids=[save.operation_id];
+  if(mode==='paused')copy.execution_control={state:'paused'};
+  if(mode==='pending-usage')copy.in_flight_provider_call_ids=['pending'];
+  if(mode==='another-unknown')copy.unresolved_unknown_operation_ids.push('unproven');
+  assert.equal(savedProjectBeforeInterruptionV2(copy),null,mode);
+ }
+ assert.equal(JSON.stringify(snapshot),before);
+}));
+
+test('the already verified project copy remains available while active work or Pause awaits provider settlement',()=>fixture('schedule-original',snapshot=>{
+ const save=Object.values(snapshot.operations).find((operation:any)=>operation.input.path==='/revit/save-as') as any;
+ const verification=snapshot.operations[save.verification_operation_ids[0]];
+ const file=save.result.native_artifact_receipt.save_document.after.path;
+ assert.equal(verification.input.path,'/revit/inspect-exported-files');
+ for(const control of ['running','paused']){
+  const retained=structuredClone(snapshot);
+  Object.assign(retained,{terminal:false,outcome:'active',execution_control:{state:control,command_id:'owned'},
+   unresolved_unknown_operation_ids:[],in_flight_operation_ids:[],in_flight_provider_call_ids:['finishing-response']});
+  const before=JSON.stringify(retained);
+  assert.equal(savedProjectCheckpointV2(retained)?.file,file);
+  assert.equal(JSON.stringify(retained),before);
+  for(const change of ['unknown','in-flight-edit','later-edit','stale-save','foreign-read','missing-read','wrong-file','wrong-digest']){
+   const copy=structuredClone(retained);
+   const read=copy.operations[verification.operation_id];
+   if(change==='unknown')copy.unresolved_unknown_operation_ids=['uncertain'];
+   if(change==='in-flight-edit')copy.in_flight_operation_ids=['still-writing'];
+   if(change==='later-edit')copy.operations.later={...save,operation_id:'later',input:{path:'/revit/set-parameter'},
+    settled_assignment_version:save.settled_assignment_version+1};
+   if(change==='stale-save')copy.input_invalidated_operation_ids=[save.operation_id];
+   if(change==='foreign-read')read.result.binding={...read.result.binding,run_id:'unrelated'};
+   if(change==='missing-read')read.observation_ids=[];
+   if(change==='wrong-file')read.input.body.paths=['C:\\Other\\Unrelated.rvt'];
+   if(change==='wrong-digest')copy.observations[read.observation_ids[0]].raw_payload_hash='0'.repeat(64);
+   assert.equal(savedProjectCheckpointV2(copy),null,change);
+  }
+ }
+}));
+
+test('the native save response tells the actor which existing file check to reuse',()=>fixture('schedule-original',snapshot=>{
+ const save=Object.values(snapshot.operations).find((operation:any)=>operation.input.path==='/revit/save-as') as any;
+ const verificationId=save.verification_operation_ids[0];
+ const observation=snapshot.observations[save.observation_ids[0]];
+ Object.assign(snapshot,{terminal:false,outcome:'active',quiescent:true,execution_control:{state:'running'},
+  in_flight_operation_ids:[],in_flight_provider_call_ids:[],unresolved_unknown_operation_ids:[],
+  pending_input_variable_ids:[],pending_review_ids:[],provider_usage_hold:null});
+ const envelope={schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{
+  attempt_id:save.operation_id,evidence_id:observation.raw_payload_ref.slice(9),trust_level:'authoritative_native'
+ }]};
+ const result={success:true,contentItems:[{type:'inputText',text:JSON.stringify(envelope)}]};
+ const before=JSON.stringify([snapshot,result]);
+ const projected=modelSavedProjectCheckpointV1(snapshot,result);
+ assert.equal(projected?.file_inspection_operation_id,verificationId);
+ assert.equal(projected?.save_operation_id,save.operation_id);
+ assert.equal(projected?.file_name,path.win32.basename(save.result.native_artifact_receipt.save_document.after.path));
+ assert.equal(projected?.whole_task_verified,false);
+ assert.match(projected?.next_action??'',/Reuse this file check/);
+ assert.equal(JSON.stringify([snapshot,result]),before);
+ assert.ok(Buffer.byteLength(JSON.stringify(projected),'utf8')<1024);
+ for(const variant of ['failed','wrong-proof','wrong-operation','unrelated','read-missing','unknown','stale','foreign','paused','usage-hold'] as const){
+  const copy=structuredClone(snapshot),wire=structuredClone(result),payload=structuredClone(envelope);
+  if(variant==='failed')wire.success=false;
+  if(variant==='wrong-proof')payload.evidence_projections[0]!.evidence_id='other-saved-file';
+  if(variant==='wrong-operation')payload.evidence_projections[0]!.attempt_id=verificationId;
+  if(variant==='unrelated')payload.evidence_projections=[];
+  if(variant==='read-missing')copy.operations[verificationId].observation_ids=[];
+  if(variant==='unknown')copy.unresolved_unknown_operation_ids=['unproven'];
+  if(variant==='stale')copy.input_invalidated_operation_ids=[save.operation_id];
+  if(variant==='foreign')copy.current_binding.run_id='other-run';
+  if(variant==='paused')copy.execution_control.state='paused';
+  if(variant==='usage-hold')copy.provider_usage_hold={hold_id:'pending'};
+  wire.contentItems[0]!.text=JSON.stringify(payload);
+  assert.equal(modelSavedProjectCheckpointV1(copy,wire),null,variant);
+ }
+}));
+
+test('an explicit refresh of an earlier review copy uses the new file check even after Pause',()=>fixture('schedule-original',(snapshot,payloads)=>{
+ const firstSave=Object.values(snapshot.operations).find((operation:any)=>operation.input.path==='/revit/save-as') as any;
+ const firstRead=snapshot.operations[firstSave.verification_operation_ids[0]];
+ const save=structuredClone(firstSave),read=structuredClone(firstRead);
+ const receipt=save.result.native_artifact_receipt;
+ Object.assign(receipt.save_document,{before:receipt.save_document.after,document_path_changed:false,document_session_changed:false});
+ receipt.outputs[0].sha256='b'.repeat(64);
+ save.input.body.overwrite=true;
+ save.verification_operation_ids=['refresh-read'];
+ read.verification_of_operation_id='refresh-save';
+ read.opened_at='2099-01-01T00:00:02Z';
+ const payload=structuredClone(payloads[firstRead.observation_ids[0]]);
+ payload.files[0].sha256=receipt.outputs[0].sha256;
+ const operations=[
+  {op:save,id:'refresh-save',raw:{...payloads[firstSave.observation_ids[0]],artifact_receipt:receipt,overwrite:true},version:snapshot.assignment_version+2,completedAt:'2099-01-01T00:00:01Z'},
+  {op:read,id:'refresh-read',raw:payload,version:snapshot.assignment_version+4,completedAt:'2099-01-01T00:00:03Z'},
+ ];
+ for(const {op,id,raw,version,completedAt} of operations){
+  const observation=structuredClone(snapshot.observations[op.observation_ids[0]]),observationId=id+'-observation';
+  const digest=payloadDigestV2(raw).digest;
+  const stored=storeEvidence({scope:{...op.binding,attempt_id:id},source:'assignment_kernel_v2:revit_call_tool',trust_level:'authoritative_native',raw});
+  Object.assign(observation,{operation_id:id,observation_id:observationId,raw_payload_hash:digest,raw_payload_ref:'evidence:'+stored.ref.evidence_id});
+  Object.assign(op.result,{operation_id:id,raw_payload_hash:digest,completed_at:completedAt});
+  Object.assign(op,{operation_id:id,observation_ids:[observationId],admitted_assignment_version:version-1,settled_assignment_version:version});
+  snapshot.observations[observationId]=observation;
+  snapshot.operations[id]=op;
+ }
+ Object.assign(snapshot,{terminal:false,outcome:'active',execution_control:{state:'paused'},assignment_version:read.settled_assignment_version+1,
+  in_flight_operation_ids:[],unresolved_unknown_operation_ids:[]});
+ const fresh=savedProjectCheckpointV2(snapshot);
+ assert.equal(fresh?.operation_id,save.operation_id);
+ assert.equal(fresh?.file_inspection_operation_id,read.operation_id);
+
+ const original=structuredClone(snapshot);
+ delete original.operations[firstSave.operation_id];
+ assert.equal(savedProjectCheckpointV2(original),null,'Overwriting the source alone is not creating a review copy');
+ const foreign=structuredClone(snapshot);
+ foreign.operations[firstSave.operation_id].binding.run_id='other-run';
+ assert.equal(savedProjectCheckpointV2(foreign),null);
+ const unchecked=structuredClone(snapshot);
+ unchecked.operations[read.operation_id].observation_ids=[];
+ assert.equal(savedProjectCheckpointV2(unchecked),null,'Earlier file inspection cannot verify the latest bytes');
+
+ const current=structuredClone(snapshot);
+ Object.assign(current,{execution_control:{state:'running'},quiescent:true,in_flight_provider_call_ids:[],
+  pending_input_variable_ids:[],pending_review_ids:[],provider_usage_hold:null});
+ const index=(state:any)=>JSON.parse(codexAssignmentEvidenceContextV2(state,save.operation_id));
+ const pending=(state:any)=>index(state).pending_verification.some((row:any)=>row.operation_id===firstSave.operation_id);
+ const saved=index(current).verified_postconditions.find((row:any)=>row.operation_id===save.operation_id);
+ assert.deepEqual(saved?.saved_file_check,{file_name:path.win32.basename(fresh!.file),superseded_operation_ids:[firstSave.operation_id],superseded_count:1});
+ assert.equal(pending(current),false);
+ assert.equal(pending(snapshot),true,'Pause retains the original evidence and suppresses live handoff guidance');
+ current.operations[firstSave.operation_id].verification_operation_ids=[];
+ assert.equal(pending(current),true,'An unchecked earlier save cannot be silently resolved');
+}));

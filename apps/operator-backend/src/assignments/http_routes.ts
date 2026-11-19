@@ -4,7 +4,7 @@ import { activeProviderTurnForBinding, interruptActiveProviderForBinding } from 
 import { assignmentDirections, steerAssignment } from "./task_steering.js";
 import { listTaskNavigationAsync } from "./task_navigation.js";
 import { manageAssignmentWorkPlan } from "./assignment_work_plan.js";
-import {retainDesktopReviewConversationV1} from './desktop_conversation.js';
+import {liveDesktopCheckedCopyV1,retainDesktopReviewConversationV1} from './desktop_conversation.js';
 import { controlAssignmentExecutionV2 } from "./assignment_kernel_v2_controls.js";
 import { recoverAssignmentCompletionsV2 } from "./assignment_kernel_v2_completion_recovery.js";
 import { assignmentKernelSessionIndexResponseV2 } from "@revitoperator/assignment-kernel-v2-contracts";
@@ -80,7 +80,21 @@ export async function handleAssignmentHttpRoute(
       requireV2Principal(getAssignmentKernelSnapshotV2(binding.assignment_id));
       const result=url.pathname.endsWith('/catalog')?await desktopNativeCatalog(binding):url.pathname.endsWith('/interaction')
         ?desktopNativeInteractionState(binding):await executeDesktopNativeCall(binding,body);
-      writeJson(res,200,result);
+      let response=result;
+      if(url.pathname.endsWith('/call')&&req.headers['x-operator-desktop-presentation']==='checked-copy-v1'
+        &&(result as JsonMap|null)?.schema==='operator.desktop-native-result.v1'){
+        // A display lookup can never turn an admitted native result into a retry.
+        try{
+          const wire=result as {result:{contentItems:unknown[]};stop_reason?:unknown};
+          const delivery=liveDesktopCheckedCopyV1(binding,wire.stop_reason?null:wire.result);
+          if(delivery){
+            const native=delivery.modelCheckpoint?{...wire.result,contentItems:[...wire.result.contentItems,
+              {type:'inputText',text:JSON.stringify(delivery.modelCheckpoint)}]}:wire.result;
+            response={...wire,result:native,checked_copy:delivery.copy};
+          }
+        }catch{/* Keep the native result. */}
+      }
+      writeJson(res,200,response);
     }catch(error){writeJson(res,409,{error:error instanceof Error?error.message:String(error)});}
     return true;
   }

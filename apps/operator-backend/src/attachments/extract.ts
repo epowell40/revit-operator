@@ -74,9 +74,12 @@ function truncateText(s: string, maxChars: number): string {
   return t.slice(0, maxChars) + "…(truncated)";
 }
 
-async function extractJsonExcerpts(fullPath: string): Promise<AttachmentExcerpt[]> {
-  const raw = fs.readFileSync(fullPath, "utf8");
-  const trimmed = truncateText(raw, 3500);
+async function extractJsonExcerpts(fullPath: string, expectedSha256?: string): Promise<AttachmentExcerpt[]> {
+  const bytes = fs.readFileSync(fullPath);
+  if (expectedSha256 && createHash("sha256").update(bytes).digest("hex") !== expectedSha256.toLowerCase()) {
+    throw new Error("JSON attachment bytes changed since upload. Attach the intended version again.");
+  }
+  const trimmed = truncateText(bytes.toString("utf8"), 3500);
   return trimmed ? [{ anchor: "JSON", text: trimmed }] : [];
 }
 
@@ -391,7 +394,7 @@ export async function getAttachmentExcerptsForPrompt(attachments: UserAttachment
 
     if (ext === ".json") {
       try {
-        const excerpts = await extractJsonExcerpts(full);
+        const excerpts = await extractJsonExcerpts(full, a.sha256);
         out.push({ id, label, relative_path: rp, external_path: extPath || undefined, mime: a.mime, sha256: a.sha256, excerpts });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);

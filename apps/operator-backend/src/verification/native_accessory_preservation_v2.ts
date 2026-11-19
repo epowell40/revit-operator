@@ -104,7 +104,19 @@ function systemBrowsers(s:Row):Row[]{
 export function nativeAccessoryPreservationV2(input:unknown,affected:readonly string[],applied:unknown,observed:unknown):(NativeAccessoryTopology&{calculatedFlowChanges:NativeCalculatedFlowChange[]})|null{
  try{return compare(input as Row,affected,applied as Row,observed as Row);}catch{return null;}
 }
-function compare(request:Row,affected:readonly string[],a:Row,read:Row){
+type ConnectedBranch = {kind:'pipe'|'duct'; branch_count:number; accessory_count:number; outside_branch_modified_count:number};
+
+/** Diagnostic result of the same comparison. A topology match cannot attest
+ * to schedule, assigned parameter or transaction footprint preservation. */
+export function nativeAccessoryPreservationAssessmentV2(input:unknown,affected:readonly string[],applied:unknown,observed:unknown) {
+ let connectedBranch:ConnectedBranch|undefined;
+ try {
+  return {preservation:compare(input as Row,affected,applied as Row,observed as Row,branch=>{connectedBranch=branch;})};
+ } catch {
+  return {preservation:null,connectedBranch};
+ }
+}
+function compare(request:Row,affected:readonly string[],a:Row,read:Row,onConnectedBranch?:(branch:ConnectedBranch)=>void){
  const p=request?.body,tx=a?.transaction,tracking=a?.changeTracking;
  require(request?.path==='/revit/place-mep-accessory-interactively'&&request.method==='POST'
    &&p&&Object.keys(p).length===7&&['expectedModelPath','viewId','expectedViewUniqueId','accessoryTypeId','expectedAccessoryTypeUniqueId','maximumPlacements','targetHosts'].every(k=>Object.hasOwn(p,k))
@@ -140,6 +152,17 @@ function compare(request:Row,affected:readonly string[],a:Row,read:Row){
  require(newPhysical.every((o:Row)=>added.includes(o.elementId))&&placed.every(r=>newPhysical.some((o:Row)=>o.elementId===r.elementId&&o.uniqueId===r.uniqueId)));
  const topology=nativeAccessoryTopologyV2(a.preservationBefore,read,p.targetHosts.map((h:Row)=>h.elementId),placed.map(r=>r.elementId),newPhysical.map((o:Row)=>o.elementId),p.accessoryTypeId,kind!);
  require(topology);
+ if(onConnectedBranch){
+  const owners=new Set<number>();
+  for(const run of topology!.runs){
+   owners.add(run.hostId);
+   for(const id of [...run.segmentIds,...run.accessoryIds])owners.add(id);
+   const original=a.preservationBefore.results.find((row:Row)=>row.id===run.hostId);
+   for(const port of original.connectors)for(const peer of port.physicalConnectedTo)owners.add(peer.ownerId);
+  }
+  onConnectedBranch({kind:kind!,branch_count:topology!.runs.length,accessory_count:placed.length,
+   outside_branch_modified_count:modified.filter(id=>!owners.has(id)).length});
+ }
  const segmentHost=new Map<number,Row>(),accessoryHost=new Map<number,Row>();
  for(const run of topology!.runs){const old=b.owners.find((o:Row)=>o.elementId===run.hostId);
    for(const id of run.segmentIds)segmentHost.set(id,old);for(const id of run.accessoryIds)accessoryHost.set(id,old);}

@@ -101,6 +101,12 @@ export function prepareBoundedModelEvidenceInput(input: unknown, budget = getEvi
   const committedCores: Array<{ slot: Slot; index: number; compact: any }> = [];
   const object = (value: any) => value !== null && typeof value === 'object' && !Array.isArray(value);
   const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value), 'utf8');
+  const positiveId = (value: unknown) => Number.isSafeInteger(value) && (value as number) > 0;
+  const isTargetedSheetRead = (v: any): boolean => {
+    const ids = v?.requestedPlacementIds;
+    return Array.isArray(ids) && ids.length > 0 && ids.length <= 32 && ids.every(positiveId)
+      && new Set(ids).size === ids.length;
+  };
   const readAccelerator = (p: any): any | null => {
     // This is a presentation fallback, not native evidence admission. Recognize
     // only known inspection/documentation accelerators; never generalize a null
@@ -123,8 +129,9 @@ export function prepareBoundedModelEvidenceInput(input: unknown, budget = getEvi
         'inline_payload', 'tool_documentation'].includes(k))) return null;
     const diagnostic = 'batch_budget: retrieve omitted read fields/contracts by evidence_id; summary is not proof.';
     if (p.source === 'assignment_kernel_v2:revit_call_tool' && p.trust_level === 'authoritative_native'
-      && p.verification_relevance === 'required' && p.media_type === 'application/json') {
+      && p.media_type === 'application/json') {
       const v = p.inline_payload;
+      const targeted = isTargetedSheetRead(v);
       const fields = ['status', 'action', 'sheetElementId', 'sheetId', 'viewId', 'sheetNumber', 'sheetName',
         'title', 'isPlaceholder', 'requestedPlacementIds', 'viewportCount', 'placedViewCount',
         'placedScheduleCount', 'titleBlockCount', 'sheetOutline', 'viewportIds', 'viewportGeometry',
@@ -133,13 +140,16 @@ export function prepareBoundedModelEvidenceInput(input: unknown, budget = getEvi
         || v.status !== 'Ok' || v.action !== 'detail' || !Number.isSafeInteger(v.sheetElementId) || v.sheetElementId <= 0
         || v.sheetId !== v.sheetElementId || v.viewId !== v.sheetElementId
         || typeof v.sheetNumber !== 'string' || typeof v.sheetName !== 'string' || typeof v.title !== 'string'
-        || typeof v.isPlaceholder !== 'boolean' || v.requestedPlacementIds !== null
+        || typeof v.isPlaceholder !== 'boolean'
+        || !(targeted ? p.verification_relevance === 'authoritative'
+          : p.verification_relevance === 'required' && v.requestedPlacementIds === null)
         || !object(v.sheetOutline) || !['minU', 'minV', 'maxU', 'maxV'].every(k => Number.isFinite(v.sheetOutline[k]))
         || ![['viewportCount', 'viewportIds'], ['viewportCount', 'viewportGeometry'],
           ['placedViewCount', 'placedViews'], ['placedScheduleCount', 'placedSchedules'],
           ['titleBlockCount', 'titleBlocks']].every(([count, rows]) => Array.isArray(v[rows])
             && Number.isSafeInteger(v[count]) && v[count] === v[rows].length)
         || Object.hasOwn(p, 'tool_documentation')) return null;
+      if (targeted) return targetedSheetCore(p);
       const {inline_payload: _inline, ...retained} = p;
       return {...retained, truncated: true, diagnostics: [...p.diagnostics, diagnostic]};
     }
@@ -155,14 +165,31 @@ export function prepareBoundedModelEvidenceInput(input: unknown, budget = getEvi
       tools: [{method: d.tools[0].method, path: d.tools[0].path}], complete: false,
       omitted_paths: [...d.omitted_paths, 'tools[*].contract: batch_budget; retrieve before use']}};
   };
-  const sheetCore = (p: any): any | null => {
-    // Called only after the strict known-read recognizer above. Retain the
-    // actual sheet -> placed-view associations rather than blacking out every
-    // sheet when metadata plus one other read still exceeds the batch budget.
+  const targetedSheetCore = (p: any): any | null => {
     const v = p.inline_payload;
-    if (p.source !== 'assignment_kernel_v2:revit_call_tool' || !object(v) || v.action !== 'detail') return null;
+    const ids = new Set<number>(v.requestedPlacementIds);
+    const viewportGeometry = v.viewportGeometry.filter((row: any) => ids.has(row?.viewportId));
+    const placedSchedules = v.placedSchedules.filter((row: any) => ids.has(row?.instanceId));
+    const placements = [...viewportGeometry.map((row: any) => row.viewportId), ...placedSchedules.map((row: any) => row.instanceId)];
+    if (placements.length !== ids.size || new Set(placements).size !== ids.size) return null;
+    const placedViews = v.placedViews.filter((row: any) => Array.isArray(row?.viewportIds)
+      && row.viewportIds.some((id: number) => ids.has(id)));
+    const geometryFields = ['viewportId', 'viewId', 'viewportType', 'rotation', 'center', 'placementAnchor', 'box'];
+    if (!viewportGeometry.every((row: any) => Object.keys(row).every(key => geometryFields.includes(key))
+      && positiveId(row.viewId) && object(row.center) && object(row.box)
+      && placedViews.some((view: any) => view.viewId === row.viewId && view.viewportIds.includes(row.viewportId)))) return null;
+    const fields = ['status', 'action', 'sheetElementId', 'sheetId', 'viewId', 'sheetNumber', 'sheetName',
+      'isPlaceholder', 'requestedPlacementIds', 'viewportCount', 'placedViewCount', 'placedScheduleCount', 'titleBlockCount'];
+    return {...p, inline_payload: {...Object.fromEntries(fields.map(key => [key, v[key]])),
+      viewportGeometry: viewportGeometry.map(({viewportId, viewId, rotation, center, box}: any) => ({viewportId, viewId, rotation, center, box})),
+      placedViews, placedSchedules}, ...removeSheetSummaryMirrors(p), truncated: true, additional_evidence: true,
+      diagnostics: [...p.diagnostics, 'batch_budget: partial layout for requested placements; retrieve whole sheet by evidence_id.']};
+  };
+  const removeSheetSummaryMirrors = (p: any) => {
+    const v = p.inline_payload;
     const counts: Record<string, unknown> = {}, facts: Record<string, unknown> = {status: v.status};
     for (const name of ['viewportIds', 'viewportGeometry', 'placedViews', 'placedSchedules', 'titleBlocks']) counts[name + '.length'] = v[name].length;
+    if (Array.isArray(v.requestedPlacementIds)) counts['requestedPlacementIds.length'] = v.requestedPlacementIds.length;
     v.placedViews.forEach((r: any, i: number) => {
       if (Array.isArray(r?.viewportIds)) counts[`placedViews[${i}].viewportIds.length`] = r.viewportIds.length;
       if (typeof r?.name === 'string') facts[`placedViews[${i}].name`] = r.name;
@@ -175,7 +202,13 @@ export function prepareBoundedModelEvidenceInput(input: unknown, budget = getEvi
     // Remove only summaries proven equal to this exact native read. Unknown,
     // contradictory or control-like fields are preserved, never sanitized.
     const withoutMirrors = (actual: any, expected: any) => Object.fromEntries(Object.entries(actual).filter(([k, val]) => !Object.hasOwn(expected, k) || expected[k] !== val));
-    return {...p, key_counts: withoutMirrors(p.key_counts, counts), key_facts: withoutMirrors(p.key_facts, facts),
+    return {key_counts: withoutMirrors(p.key_counts, counts), key_facts: withoutMirrors(p.key_facts, facts)};
+  };
+  const sheetCore = (p: any): any | null => {
+    // Keep actual sheet-to-view associations when the full read cannot fit.
+    const v = p.inline_payload;
+    if (p.source !== 'assignment_kernel_v2:revit_call_tool' || !object(v) || v.action !== 'detail') return null;
+    return {...p, ...removeSheetSummaryMirrors(p),
       inline_payload: Object.fromEntries(['status', 'action', 'sheetElementId', 'sheetId', 'viewId', 'sheetNumber', 'sheetName', 'title', 'isPlaceholder', 'viewportCount', 'placedViewCount', 'placedScheduleCount', 'titleBlockCount', 'placedViews'].map(k => [k, v[k]])),
       truncated: true, diagnostics: [...p.diagnostics, 'batch_budget: partial sheet identities, placedViews and counts only; retrieve geometry or missing fields by evidence_id, not preservation proof.']};
   };
@@ -244,7 +277,7 @@ export function prepareBoundedModelEvidenceInput(input: unknown, budget = getEvi
       if (readCompact) {
         const saving = bytes(p) - bytes(readCompact);
         if (saving > 0) candidates.push({slot, index, compact: readCompact, saving});
-        const core = sheetCore(p);
+        const core = isTargetedSheetRead(p.inline_payload) ? readCompact : sheetCore(p);
         if (core) sheetCores.push({slot, index, compact: core});
         return;
       }
@@ -297,12 +330,14 @@ export function prepareBoundedModelEvidenceInput(input: unknown, budget = getEvi
   for (const {slot, index, compact} of sheetCores.slice(0, 512)) {slot.envelope.evidence_projections[index] = compact; coreSlots.add(slot);}
   for (const {slot,index,compact} of committedCores.slice(0,512)){slot.envelope.evidence_projections[index]=compact;coreSlots.add(slot);}
   const canonicalRetrieval = modelEvidenceEnvelope([], 0).retrieval;
+  const shortRetrieval = 'Use operator_retrieve_evidence (evidence_id). Honor scope and paging; partial data cannot prove absence or completion.';
   // This exact repeated paragraph is guidance, not a control or fact. Shorten
   // it for all recognized envelopes only at the overflow fallback; keep each
   // projection's scoped retrieval contract and every unknown paragraph exact.
-  if(committedCores.length)for(const slot of slots)if(slot.envelope.retrieval===canonicalRetrieval)coreSlots.add(slot);
+  const hasTargetedSheetRead = sheetCores.some(({compact}) => isTargetedSheetRead(compact.inline_payload));
+  if(committedCores.length || hasTargetedSheetRead)for(const slot of slots)if(slot.envelope.retrieval===canonicalRetrieval)coreSlots.add(slot);
   for (const slot of coreSlots) {
-    if (slot.envelope.retrieval === canonicalRetrieval) slot.envelope.retrieval = 'operator_retrieve_evidence by evidence_id; raw_payload paths or deterministic_projection literal keys. Honor scope/paging; partial data is not absence/preservation/completion proof.';
+    if (slot.envelope.retrieval === canonicalRetrieval) slot.envelope.retrieval = shortRetrieval;
     const row = output[slot.row], text = JSON.stringify(slot.envelope);
     if (slot.block === null) output[slot.row] = {...row, output: text};
     else {const content = row.output.slice(); content[slot.block] = {...content[slot.block], text}; output[slot.row] = {...row, output: content};}
@@ -316,7 +351,6 @@ export function prepareBoundedModelEvidenceInput(input: unknown, budget = getEvi
   // within each call before failing the entire drafting task. This moves no
   // projection, image, error or control across another content block and drops
   // no native data. Nonzero omission counts/unknown guidance remain untouched.
-  const shortRetrieval = 'operator_retrieve_evidence by evidence_id; raw_payload paths or deterministic_projection literal keys. Honor scope/paging; partial data is not absence/preservation/completion proof.';
   const knownEnvelope = (block: any): any | null => {
     if (!object(block) || block.type !== 'input_text' || typeof block.text !== 'string'
       || !Object.keys(block).every(k => ['type', 'text'].includes(k))) return null;

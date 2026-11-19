@@ -1,4 +1,5 @@
-import { normalizeAgentModel } from '../public/agent_model_catalog.mjs';
+import { agentModelRequiresReasoning, normalizeAgentModel } from '../public/agent_model_catalog.mjs';
+import { linkedTextParts, mergeConversationHistory } from '../public/conversation_ui.js';
 import { taskDraftKey } from "../public/task_navigation.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -27,13 +28,13 @@ function bootModelSettings(storage) {
   const elements = { agentModel, agentReasoning: control(), showWork: control() };
   const settings = runInNewContext(['readBoolSetting', 'writeBoolSetting', 'readStringSetting', 'writeStringSetting',
     'normalizeSpeedModel', 'normalizeReasoningEffort', 'getSpeedSettings', 'synchronizeModelReasoning', 'initializeSpeedControls'].map(functionSource).join('\n')
-    + '; initializeSpeedControls(); getSpeedSettings', { elements, normalizeAgentModel,
+    + '; initializeSpeedControls(); getSpeedSettings', { elements, agentModelRequiresReasoning, normalizeAgentModel,
       localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) } });
   return { model: agentModel, reasoning: elements.agentReasoning, showWork: elements.showWork, settings };
 }
 
 test('Settings preserves each offered model through change, reload, and the request payload', () => {
-  for (const model of ['gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-luna', 'gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
+  for (const model of ['gpt-6.1-sol', 'gpt-6.2-sol', 'gpt-6.1-terra', 'gpt-6-luna', 'gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
     const storage = new Map([['operator.speedDefaultsVersion', 'unified-agent-v1'], ['operator.agentReasoning', 'high'], ['operator.speedMode', '0'], ['operator.speedDiet', '0']]);
     const page = bootModelSettings(storage);
     page.model.value = model;
@@ -150,6 +151,35 @@ test("history restoration ignores a late response for the previous conversation"
   assert.equal(renders, 0);
   assert.deepEqual(state.backendMessages, []);
 });
+
+test("saved history requests the selected assignment and rejects a stale result in the same conversation", async () => {
+  let resolveOld;
+  const state = { sessionId: "shared", taskNavigationAssignmentId: "first", taskNavigationEpoch: 1, backendMessages: [] };
+  const calls = [];
+  const restore = runInNewContext(functionSource('restoreConversationHistory') + "; restoreConversationHistory", {
+    state,
+    fetchJson: route => {
+      calls.push(route);
+      return calls.length === 1
+        ? new Promise(resolve => { resolveOld = resolve; })
+        : Promise.resolve({ session_id: "shared", messages: [{ role: "assistant", text: "Second answer" }] });
+    },
+    mergeConversationHistory: (_current, history) => history,
+    renderMessages() {},
+    setStatus: () => {}
+  });
+  const pending = restore();
+  state.taskNavigationAssignmentId = "second";
+  state.taskNavigationEpoch++;
+  await restore();
+  resolveOld({ session_id: "shared", messages: [{ role: "assistant", text: "First answer" }] });
+  await pending;
+  assert.deepEqual(calls, [
+    "/api/session/history?session_id=shared&assignment_id=first",
+    "/api/session/history?session_id=shared&assignment_id=second"
+  ]);
+  assert.deepEqual(state.backendMessages, [{ role: "assistant", text: "Second answer" }]);
+});
 test("work details open on request, expose their state, and return keyboard focus on close", () => {
   const nodes = Object.fromEntries(["workDetails", "workDetailsButton", "assignmentCompactToggle"].map(id => [id, {
     hidden: true, attributes: {}, setAttribute(key, value) { this.attributes[key] = value; }, focus() { this.focused = true; }
@@ -233,4 +263,16 @@ test('product settings keep implementation controls behind a closed troubleshoot
   }
   assert.doesNotMatch(settings, /Hybrid Agent|Global write grant|Agent model/);
   assert.equal([...settings.matchAll(/id="agentModel"/g)].length, 1);
+});
+
+test("restoring Tasks replaces historical file handoffs when the server changes eligibility", () => {
+  const id = "saved-checkpoint:task:receipt";
+  const stored = { role: "assistant", message_id: id, text: "Saved file: Result.rvt\n[Open its folder](file:///C:/Project)" };
+  const old = { id, role: "assistant", text: "Old projection", attachments: [] };
+  const message = { id: "original-request", role: "user", text: "Draft the plan." };
+  const merged = mergeConversationHistory([old, message], [stored]);
+  assert.equal(merged.filter(item => item.id === id).length, 1);
+  assert.equal(merged[0].text, stored.text);
+  assert.equal(linkedTextParts(merged[0].text).find(item => item.href)?.href, "file:///C:/Project");
+  assert.deepEqual(mergeConversationHistory(merged, []), [message]);
 });

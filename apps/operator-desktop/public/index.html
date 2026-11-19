@@ -49,6 +49,7 @@
                       <select id="agentModel">
                         <option value="gpt-5.6-sol" selected>GPT-5.6 Sol</option>
                         <option value="gpt-6.1-sol">GPT-6.1 Sol</option>
+                        <option value="gpt-6.2-sol">GPT-6.2 Sol</option>
                         <option value="gpt-6.1-terra">GPT-6.1 Terra</option>
                         <option value="gpt-6-luna">GPT-6 Luna</option>
                         <option value="gpt-6-astra">GPT-6 Astra</option>
@@ -127,7 +128,7 @@
 
       <main class="main">
         <section class="left">
-          <div class="chatPane">
+          <div id="chatPane" class="chatPane">
             <section id="assignmentCompact" class="assignmentCompact" aria-label="Active assignment" hidden>
               <div class="assignmentCompactCopy">
                 <span id="assignmentCompactStatus" class="assignmentStatus tone-neutral">Active</span>
@@ -161,7 +162,7 @@
                 id="promptInput"
                 rows="2"
                 aria-label="Message Operator"
-                placeholder="Ask a question or attach a redline…"
+                placeholder="Ask a question or drop reference files here…"
               ></textarea>
               <div class="composerFooter">
                 <div class="composerBtns">
@@ -178,7 +179,7 @@
                       <rect x="7" y="7" width="10" height="10" rx="1.5" />
                     </svg>
                   </button>
-                  <button id="attachButton" type="button">Attach</button>
+                  <button id="attachButton" type="button" title="Choose one or more reference files">Attach</button>
                   <button id="sendButton" type="submit">Send</button>
                 </div>
               </div>

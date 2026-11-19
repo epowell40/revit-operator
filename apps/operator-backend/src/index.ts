@@ -15,7 +15,7 @@ import { readJson, writeJson } from "./http.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest } from "./contracts.js";
 import { appendMessage, appendToolSummary, assertSessionOwnership, ensureSession } from "./session_store.js";
 import { recordUiContextConversation } from "./conversation_history.js";
-import {requestConversationPersistenceV1,retainDesktopInitialConversationV1} from './assignments/desktop_conversation.js';
+import {desktopConversationResultV1,requestConversationPersistenceV1,retainDesktopInitialConversationV1} from './assignments/desktop_conversation.js';
 import {getAssignmentKernelSnapshotV2} from './assignments/assignment_kernel_v2_store.js';
 import { getConversationHistory } from "./memory/sqlite_store.js";
 import { consumeRestartRequested, scheduleBackendRestart } from "./dev/dev_agent.js";
@@ -191,7 +191,7 @@ import { requireProviderAssignmentBinding } from "./assignments/provider_binding
 import { bindPreparedAssignmentToRequest, prepareAssignmentTurnWithAttachments } from "./assignments/turn_preparation.js";
 import { handleChatExecutionFailureBoundaryV2 } from "./assignments/chat_execution_failure_boundary.js";
 import { recordChatExecutionFailureDiagnostic } from "./assignments/chat_execution_failure_diagnostic.js";
-import { prepareExternalAssignmentRequest, startExternalAssignmentRun,retainedExternalAssignmentStart } from "./assignments/external_assignment_start.js";
+import { externalAssignmentInputHandoff, prepareExternalAssignmentRequest, startExternalAssignmentRun, retainedExternalAssignmentStart } from "./assignments/external_assignment_start.js";
 import { buildSidecarDiagnosticReport } from "./sidecar_diagnostics.js";
 import {
   applyEnvironmentPolicyToActions,
@@ -1163,7 +1163,19 @@ const server = http.createServer(async (req, res) => {
       const sessionId = url.searchParams.get("session_id") || "";
       if (!sessionId || sessionId.length > 200) return writeJson(res, 400, { error: "A valid conversation is required." });
       if (!sessionAccessAllowed(res, sessionId, auth.principal)) return;
-      try { return writeJson(res, 200, { session_id: sessionId, messages: getConversationHistory(sessionId) }); }
+      const assignmentId = url.searchParams.get("assignment_id") || "";
+      if (assignmentId && !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(assignmentId)) {
+        return writeJson(res, 400, { error: "Invalid conversation task." });
+      }
+      try {
+        const messages = getConversationHistory(sessionId);
+        const result = assignmentId ? desktopConversationResultV1(sessionId, assignmentId) : null;
+        if (result && !messages.some(message => message.role === "assistant" && message.text === result.text)) {
+          messages.push(result);
+          messages.sort((left, right) => left.created_at.localeCompare(right.created_at));
+        }
+        return writeJson(res, 200, { session_id: sessionId, messages });
+      }
       catch { return writeJson(res, 503, { error: "Conversation history is unavailable." }); }
     }
 
@@ -1252,7 +1264,11 @@ const server = http.createServer(async (req, res) => {
       try {
         const current = getCurrentGoalForSession(sessionId);
         const retained=retainedExternalAssignmentStart(body as Record<string,unknown>,current);
-        if(retained)return writeJson(res,200,{ok:true,goal:current,assignment_run:{assignment_id:retained.assignmentId,run_id:retained.runId,generation:retained.generation,kernel_version:retained.kernelVersion}});
+        if(retained){
+          const inputHandoff=externalAssignmentInputHandoff(retained,sessionId);
+          return writeJson(res,200,{ok:true,goal:inputHandoff.canonical_assignment_outcome?(getGoal(retained.assignmentId)??current):current,
+            assignment_run:{assignment_id:retained.assignmentId,run_id:retained.runId,generation:retained.generation,kernel_version:retained.kernelVersion},...inputHandoff});
+        }
         const {normalizedRequest,sourceAllowance}=await prepareExternalAssignmentRequest(body as Record<string,unknown>);
         const replaceBlockedSidecar = (body as any)?.replace_blocked_sidecar === true
           && current?.status === "blocked"
@@ -1275,17 +1291,20 @@ const server = http.createServer(async (req, res) => {
           const snapshot=getAssignmentKernelSnapshotV2(goal.id);
           if(snapshot)retainDesktopInitialConversationV1(snapshot.current_binding);
         }
-        appendNotification(sessionId, "goal.set", `Goal set: ${goal.title}`, { goal_id: goal.id, status: goal.status });
+        const inputHandoff=assignmentRun?externalAssignmentInputHandoff(assignmentRun,sessionId):{};
+        const responseGoal=inputHandoff.canonical_assignment_outcome?(getGoal(goal.id)??goal):goal;
+        appendNotification(sessionId, "goal.set", `Goal set: ${goal.title}`, { goal_id: goal.id, status: responseGoal.status });
         return writeJson(res, 200, {
           ok: true,
-          goal,
+          goal: responseGoal,
           ...(assignmentRun ? {
             assignment_run: {
               assignment_id: assignmentRun.assignmentId,
               run_id: assignmentRun.runId,
               generation: assignmentRun.generation,
               kernel_version: assignmentRun.kernelVersion
-            }
+            },
+            ...inputHandoff
           } : {})
         });
       } catch (error) {

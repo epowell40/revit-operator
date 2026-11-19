@@ -38,6 +38,32 @@ test("Changed CAD bytes and unknown headers do not produce usable extracted refe
   assert.match(unknown?.warning ?? "", /Unrecognized DWG/);
 });
 
+test("registered JSON excerpts cannot attribute changed bytes to the uploaded reference", async t => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator_json_excerpt_"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  t.after(() => {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+    fs.rmSync(root, { recursive: true });
+  });
+  const original = JSON.stringify({ equipment: "ERV-12", supply_cfm: 140 });
+  const replacement = JSON.stringify({ equipment: "ERV-12", supply_cfm: 940 });
+  assert.equal(Buffer.byteLength(replacement), Buffer.byteLength(original));
+  const rec = storeAttachmentUpload({ filename: "equipment-schedule.json", session_id: "json-source",
+    data_base64: Buffer.from(original).toString("base64") });
+  const [unchanged] = await getAttachmentExcerptsForPrompt([rec]);
+  assert.deepEqual(unchanged?.excerpts, [{ anchor: "JSON", text: original }]);
+  assert.equal(unchanged?.sha256, rec.sha256);
+
+  fs.writeFileSync(path.join(root, rec.relative_path), replacement);
+  const [changed] = await getAttachmentExcerptsForPrompt([rec]);
+  assert.deepEqual(changed?.excerpts, []);
+  assert.match(changed?.warning ?? "", /changed since upload/);
+  assert.equal(changed?.sha256, rec.sha256);
+  assert.doesNotMatch(changed?.warning ?? "", /supply_cfm/);
+});
+
 test("xlsx attachments produce excerpts with anchors", async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "revit-operator-workspace-"));
   process.env.OPERATOR_WORKSPACE_ROOT = tmp;

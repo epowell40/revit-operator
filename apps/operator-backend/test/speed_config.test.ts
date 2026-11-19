@@ -69,15 +69,17 @@ test("provider defaults survive unrelated Codex defaults and retain explicit age
   }
 });
 
-test("GPT-6.1 Sol keeps the requested model and rejects unsupported no-reasoning requests", () => {
-  for (const effort of ["low", "medium", "high", "xhigh", "max"] as const) {
-    assert.deepEqual(resolveAgentModelSettings({ ui: { speed_settings: {
-      agent_model: "gpt-6.1-sol", agent_reasoning_effort: effort
-    } } }), { model: "gpt-6.1-sol", reasoning_effort: effort });
+test("GPT-6.1 and GPT-6.2 Sol preserve the requested settings and reject no reasoning", () => {
+  for (const model of ["gpt-6.1-sol", "gpt-6.2-sol"]) {
+    for (const effort of ["low", "medium", "high", "xhigh", "max"] as const) {
+      assert.deepEqual(resolveAgentModelSettings({ ui: { speed_settings: {
+        agent_model: model, agent_reasoning_effort: effort
+      } } }), { model, reasoning_effort: effort });
+    }
+    assert.throws(() => resolveAgentModelSettings({ ui: { speed_settings: {
+      agent_model: model, agent_reasoning_effort: "none"
+    } } }), { message: `${model} requires reasoning effort low, medium, high, xhigh, or max.` });
   }
-  assert.throws(() => resolveAgentModelSettings({ ui: { speed_settings: {
-    agent_model: "gpt-6.1-sol", agent_reasoning_effort: "none"
-  } } }), /gpt-6.1-sol.*low.*medium.*high.*xhigh.*max/);
   assert.equal(resolveAgentModelSettings({ ui: { speed_settings: {
     agent_model: "gpt-5.6-sol", agent_reasoning_effort: "none"
   } } }).reasoning_effort, "none");

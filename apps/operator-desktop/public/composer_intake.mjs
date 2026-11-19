@@ -1,3 +1,5 @@
+export const MAX_COMPUTER_TASK_SOURCE_CHARACTERS = 16_000;
+
 /** Respect an explicit tool restriction without requiring users to name UI capabilities for ordinary work. */
 export function excludesComputerUse(userText) {
   const text = String(userText || "");
@@ -13,6 +15,15 @@ export function beginComposerSend(state, prompt) {
   if (!text.trim() && attachments.length === 0) return null;
   state.composerSubmissionPending = true;
   return { prompt: text, attachments };
+}
+
+/** Match the backend's semantic intake ceiling without dropping any instructions. */
+export function exactComputerTaskSource(prompt) {
+  const source = String(prompt || "").trim();
+  if (source.length > MAX_COMPUTER_TASK_SOURCE_CHARACTERS) {
+    throw new Error("This task brief exceeds 16,000 characters. Attach the full brief and summarize the requested work in the message.");
+  }
+  return source;
 }
 
 /** Transport selection only: the backend still owns admission and authority. */
@@ -32,11 +43,16 @@ export function selectChatSubmissionMode(state, prompt = "") {
     // The working owner can use native tools and see/operate Revit as needed.
     // Availability selects capability, never a write grant or a new provider.
     if (startsFreshComputerConversation(state) && state.computerUseAvailable === true
-      && !excludesComputerUse(prompt)) return "computer-run";
+      && !excludesComputerUse(prompt)) {
+      exactComputerTaskSource(prompt);
+      return "computer-run";
+    }
     return "backend";
   }
-  return state.computerUseAvailable && !excludesComputerUse(prompt)
-    ? (state.streaming ? "computer-interject" : "computer-run") : "backend";
+  if (!state.computerUseAvailable || excludesComputerUse(prompt)) return "backend";
+  if (state.streaming) return "computer-interject";
+  exactComputerTaskSource(prompt);
+  return "computer-run";
 }
 
 /** Freeze New Chat intent at submission; later polling must not select an old session. */

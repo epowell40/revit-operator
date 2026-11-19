@@ -1,6 +1,18 @@
 import assert from 'node:assert/strict';import test from 'node:test';
 import {installDesktopNativeTools,invokeDesktopNativeTool,desktopNativeBinding,singleExecutionInstructions} from './desktop_native_tools.mjs';
 const assignment={kernel_version:2,session_id:'s',goal_id:'a',run_id:'r',generation:1};
+test('the unified owner checkpoints a requested separate RVT before opening the family editor for refinement',()=>{
+ for(const mode of [undefined,'single_actor_review_v1']){
+  const text=singleExecutionInstructions('base','native',mode);
+  const guidance=text.split('\n').find(line=>line.startsWith('For a drawing reconstruction with a requested separate RVT'));
+  assert.ok(guidance,'The instruction must be present in the model-facing prompt');
+  assert.match(guidance,/native readback of the first usable batch.*Save As.*before opening or creating a family/);
+  assert.match(guidance,/Honor review-before-save and no-save instructions/);
+  assert.match(guidance,/still requires its own native verification/);
+  assert.match(guidance,/Do not save while effects are unknown/);
+  assert.match(guidance,/Continue required corrections/);
+ }
+});
 test('same-owner documentation is delivered as context without adding native success or executing a tool',async()=>{
  const contract={schema:'operator.desktop-native-tool-contract.v1',completion_eligible:false,authorizationGranted:false,
   tool:{name:'operator_run_dynamic_revit_program',description:'Exact SDK guide',inputSchema:{type:'object'}}};
@@ -60,6 +72,24 @@ test('host sends only identity/context, preserves native image blocks and does n
  assert.equal(calls,1);assert.equal(output.native_model_output.output[1].image_url,'data:image/png;base64,AAA');
  assert.equal(JSON.parse(output.output).ok,true);assert.equal(output.native_model_output.native_success,undefined);
 });
+test('a checked copy is browser presentation metadata and stays outside model context',async()=>{
+ const binding=desktopNativeBinding(assignment);
+ const message={role:'assistant',message_id:'saved-checkpoint:a:save-observation',text:'Saved file: Review copy.rvt'};
+ const native={schema:'operator.desktop-native-result.v1',result:{success:true,contentItems:[{type:'inputText',text:'Native file inspection.'}]}};
+ for(const scope of [binding,{...binding,session_id:'foreign'},{...binding,generation:2}]){
+  let calls=0;
+  const output=await invokeDesktopNativeTool({assignment,messageId:'m',responseId:'r',context:{},
+   call:{name:'native__invoke',call_id:'inspect'},request:async(_route,opts)=>{
+    assert.equal(opts.headers['x-operator-desktop-presentation'],'checked-copy-v1');
+    calls++;
+    return {...native,checked_copy:{binding:scope,message}};
+   }});
+  assert.equal(calls,1);
+  assert.deepEqual(output.checked_copy,scope===binding?{binding,message}:undefined);
+  assert.doesNotMatch(JSON.stringify([output,output.native_model_output]),/Review copy|checked_copy/);
+ }
+});
+
 test('transport failure never invokes an automatic retry and missing host identity refuses',async()=>{
  let calls=0;const args={assignment,messageId:'message',responseId:'response',call:{name:'native__revit_ping',call_id:'call'},
   request:async()=>{calls++;throw Error('lost transport');}};

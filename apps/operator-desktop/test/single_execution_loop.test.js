@@ -44,6 +44,8 @@ for(const executionMode of [undefined,'single_actor_review_v1'])test('ordinary d
     assert.equal(body.tools.find(t=>t.name==='review_current_work').parameters.properties.complete_inspection_item_id,undefined);
    }else assert.match(body.instructions,/final native inspection checklist item pending/);
    assert.match(body.instructions,/drafted.*backchecked/);
+   assert.match(body.instructions,/when a visible question affects the next edit or at final review/);
+   assert.doesNotMatch(body.instructions,/use review_current_work after a useful bounded change/);
    assert.match(body.instructions,/unfinished parent.*open/);
    assert.match(body.tools.find(t=>t.name==='review_current_work').description,/fresh scoped review.*prior.*open/);
    const initialContext=body.input.flatMap(m=>m.content??[]).find(c=>c.type==='input_text'&&c.text?.includes('operator.execution-orientation.v1'));

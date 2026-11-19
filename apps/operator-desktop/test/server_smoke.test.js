@@ -37,6 +37,46 @@ test('fresh conversation entry keeps unpersisted answers blocked456',async t=>{
  const state=await(await fetch('http://127.0.0.1:'+server.address().port+'/api/computer/state')).json();assert.notEqual(state.progress.phase,'completed');assert.ok(!state.messages.some(m=>m.text==='Unpersisted assertion'));
 });
 
+for(const variant of ['current','foreign','not-quiescent'])test('V2 clarification already present at desktop startup '+variant,async t=>{
+ const desktop=await loadDelegatedDesktopModule('startup-clarification-'+variant);
+ const prompt='Shift the garage view on the notes sheet. Ask which view if the target is ambiguous.';
+ const question='Which garage view should I move?';
+ const routes=[];let resolverCalls=0;
+ const request=async (route,options={})=>{
+  routes.push(route);
+  if(route!=='/api/agent-goal')throw Error('Unexpected request for startup clarification: '+route);
+  const body=JSON.parse(options.body);
+  return {...boundSidecarGoalResponse('garage-task',body,'active',{kernelVersion:2}),
+   canonical_assignment_outcome:boundCanonicalAssignmentOutcome('garage-task','mock-session',body.assignment_run_id,{
+    outcomeState:'awaiting_user_input',clarificationId:'garage-choice',question,missingFields:['garage_view'],
+    ...(variant==='foreign'?{runId:'foreign-run'}:{}),...(variant==='not-quiescent'?{quiescent:false}:{})})};
+ };
+ desktop.configureOperatorDesktopTestHooks({computerRunTestHooks:{
+  ...delegatedHooks(request,async()=>{throw Error('No Revit action is authorized');}),enableSidecarAssignment:true,
+  resolveSemanticAecTransport:async()=>{resolverCalls++;throw Error('Must stop at the startup question');}
+ }});
+ const server=desktop.app.listen(0,'127.0.0.1');await once(server,'listening');
+ t.after(async()=>{desktop.configureOperatorDesktopTestHooks();await new Promise(resolve=>server.close(resolve));});
+ const base='http://127.0.0.1:'+server.address().port;
+ const response=await fetch(base+'/api/computer/run',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({prompt,message_id:'garage-'+variant})});
+ const body=await response.json();
+ const state=await(await fetch(base+'/api/computer/state')).json();
+ assert.equal(resolverCalls,0);
+ assert.equal(state.running,false);
+ if(variant==='current'){
+  assert.equal(response.status,200);assert.equal(body.awaiting_user_input,true);
+  assert.equal(state.progress.phase,'awaiting_user_input');assert.equal(state.error,'');
+  assert.equal(state.pendingClarification.question,question);
+  assert.deepEqual(state.pendingClarification.missing_fields,['garage_view']);
+  assert.equal(state.pendingClarification.assignment_id,state.assignmentBindingV2.assignment_id);
+  assert(!state.messages.some(message=>message.text?.includes('Run failed')));
+  assert.deepEqual(routes,['/api/agent-goal']);
+ }else{
+  assert.equal(response.status,503);assert.equal(state.pendingClarification,null);
+  assert.equal(state.progress.phase,'failed');
+ }
+});
+
 test("benchmark linked fixture can close through exact foreground Revit UI before reopen", async (t) => {
   const originalNoListen = process.env.OPERATOR_DESKTOP_NO_LISTEN;
   process.env.OPERATOR_DESKTOP_NO_LISTEN = "1";

@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
+using RevitBridge.Common;
 using RevitBridge.Operator;
 
 namespace RevitBridge.Handlers
@@ -119,13 +120,22 @@ namespace RevitBridge.Handlers
             {
                 ArmUnresolvedReferencesGuardIfRequested(p.continueOnUnresolvedReferences);
                 UIDocument uidoc = app.OpenAndActivateDocument(modelPath, opts, false);
-                var settings = BuildProjectSettings(uidoc.Document);
-                return Task.FromResult<object>(new 
-                { 
-                    status = "Success", 
-                    title = uidoc.Document.Title,
-                    path = uidoc.Document.PathName,
-                    settings
+                var opened = uidoc.Document;
+                var settings = BuildProjectSettings(opened);
+                var active = app.ActiveUIDocument?.Document;
+                // Discard/unload, detach, audit, and unresolved-reference recovery
+                // have different side effects and retain their existing settlement.
+                var activation = !p.audit && !p.detach && !p.discardExistingOpenDocument && !p.continueOnUnresolvedReferences
+                    && active != null && active.Equals(opened) && active.IsValidObject && !active.IsLinked && !active.IsModified
+                    ? OperatorDocumentActivationReceipt.Confirmed(p.filePath, active.PathName, OperatorNativeDocumentSessionAuthority.GetSessionId(active))
+                    : null;
+                return Task.FromResult<object>(new
+                {
+                    status = "Success",
+                    title = opened.Title,
+                    path = opened.PathName,
+                    settings,
+                    document_activation_receipt = activation
                 });
             }
             catch (Exception ex)

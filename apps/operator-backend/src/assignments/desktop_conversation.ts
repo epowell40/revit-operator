@@ -1,11 +1,55 @@
+import path from 'node:path';
+import {pathToFileURL} from 'node:url';
 import type {ChatRequest} from '../contracts.js';
 import type {AssignmentBindingV2} from '../domain/assignment-kernel/index.js';
+import type {AssignmentKernelBindingInputV2} from './assignment_kernel_v2_lifecycle.js';
 import {sameAssignmentBindingV2} from '../domain/assignment-kernel/index.js';
 import {getAssignmentKernelSnapshotV2} from './assignment_kernel_v2_store.js';
 import {desktopExecutorOwnsAssignmentV2,desktopHelperScopeForSnapshotV1,desktopHelperScopeFromContextV1} from './desktop_executor_owner.js';
 import {appendMessage} from '../session_store.js';
 import {conversationDisplay} from '../conversation_history.js';
-import {getConversationTurn} from '../memory/sqlite_store.js';
+import {getConversationTurn,type ConversationEntry} from '../memory/sqlite_store.js';
+import {deriveTerminalResultV2} from './assignment_kernel_v2_terminal_result.js';
+import {modelSavedProjectCheckpointV1,savedProjectBeforeInterruptionV2,savedProjectCheckpointV2} from './saved_copy_handoff_v2.js';
+import {requestMatchesAssignmentPrincipalId} from '../request_context.js';
+
+function savedProjectMessage(assignmentId:string,saved:Pick<NonNullable<ReturnType<typeof savedProjectCheckpointV2>>,
+ 'file'|'observation_id'|'created_at'>,checked:boolean):ConversationEntry{
+ const folder=pathToFileURL(path.win32.dirname(saved.file),{windows:true}).href.replaceAll('(','%28').replaceAll(')','%29');
+ return {role:'assistant',message_id:`saved-checkpoint:${assignmentId}:${saved.observation_id}`,created_at:saved.created_at,
+  text:`${checked?'Operator saved and checked this review copy. Final model checks may still be open.'
+   :'Operator saved this project before the interruption. Later work still needs checking.'}\n\nSaved file: ${path.win32.basename(saved.file)}\n[Open its folder](${folder})`};
+}
+
+/** Browser display and an optional current-call file check for the actor. */
+export function liveDesktopCheckedCopyV1(binding:AssignmentKernelBindingInputV2,nativeResult:unknown){
+ const snapshot=getAssignmentKernelSnapshotV2(binding.assignment_id);
+ if(!snapshot||!desktopExecutorOwnsAssignmentV2(snapshot)
+  ||snapshot.current_binding.session_id!==binding.session_id||snapshot.current_binding.run_id!==binding.run_id
+  ||snapshot.current_binding.generation!==binding.generation
+  ||!requestMatchesAssignmentPrincipalId(snapshot.current_binding.principal_id,undefined,binding.session_id))return null;
+ const saved=savedProjectCheckpointV2(snapshot);
+ if(!saved)return null;
+ return {copy:{binding,message:savedProjectMessage(binding.assignment_id,saved,true)},
+  modelCheckpoint:modelSavedProjectCheckpointV1(snapshot,nativeResult,saved)};
+}
+
+/** Restore the selected task's evidence-backed result after reconnecting. */
+export function desktopConversationResultV1(sessionId:string,assignmentId:string):ConversationEntry|null{
+ const snapshot=getAssignmentKernelSnapshotV2(assignmentId);
+ if(!snapshot||snapshot.current_binding.session_id!==sessionId||!desktopExecutorOwnsAssignmentV2(snapshot))return null;
+ if(!snapshot.terminal&&requestMatchesAssignmentPrincipalId(snapshot.current_binding.principal_id,undefined,sessionId)){
+  const checked=savedProjectCheckpointV2(snapshot);
+  const saved=checked??savedProjectBeforeInterruptionV2(snapshot);
+  if(saved)return savedProjectMessage(assignmentId,saved,Boolean(checked));
+ }
+ if(!snapshot.terminal||!snapshot.quiescent||!snapshot.finished_at
+  ||snapshot.spec.requested_effect!=='read'||!snapshot.result_delivery
+  ||!['complete','complete_with_issues','verified_noop'].includes(snapshot.outcome))return null;
+ const text=deriveTerminalResultV2(snapshot).result_summary;
+ if(!text.trim()||Buffer.byteLength(text,'utf8')>24000)return null;
+ return {role:'assistant',message_id:`terminal-result:${assignmentId}:${snapshot.assignment_version}`,text,created_at:snapshot.finished_at};
+}
 
 /** Presentation provenance only. Never changes task authority or verification.
  * The exact authenticated helper still has its raw turn/run and evidence logs,

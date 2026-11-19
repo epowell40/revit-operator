@@ -13,6 +13,8 @@ import {committedDeletedElementsReadbackPlansV2,deletedElementsPostconditionSati
 import {handleCodexDynamicToolCall}from '../src/brains/codex_dynamic_tool_handler.js';
 import {beginTeammateLoopOwner,endTeammateLoopOwner}from '../src/teammate_loop_runtime.js';
 import {controlAssignmentExecutionV2}from '../src/assignments/assignment_kernel_v2_controls.js';
+import {retainWorkPlanInspectionV2} from '../src/assignments/work_plan_inspection.js';
+import {nativeDraftingInspectionTargetsV2} from '../src/assignments/native_drafting_inspection.js';
 const wire=JSON.parse(fs.readFileSync('test/fixtures/native_deletion_apply_189.json','utf8').replace(/^\uFEFF/,''));
 async function workspace(fn:()=>unknown){
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-deletion-proof-'));
@@ -32,7 +34,9 @@ test(`kernel deletion proof requires the complete fresh native closure: ${varian
     markAssignmentKernelOperationDispatchStartedV2(lease);const op=state().operations[lease.operation_id]!;
     const result={schema:'revit-operator.operation-result/v2',result_id:'result:'+lease.operation_id,operation_id:lease.operation_id,binding:lease.binding,status:'succeeded',dispatch_state:'dispatched',persistent_effect:editing?'applied':'none',native_transaction_state:editing?'committed':'not_applicable',authority:'native-host',
       result_schema_id:'operator-native/POST:'+op.request_identity!.path+'/v2',observation_required:true,affected_target_identities:editing?[...new Set<number>([...payload.transaction.deleted_element_ids,...payload.transaction.modified_element_ids,...payload.transaction.added_element_ids])].map(id=>'element_id:'+id).sort():[],receipt_id:'receipt:'+lease.operation_id,native_correlation_id:'native:'+lease.operation_id,request_identity:op.request_identity,completed_at:new Date().toISOString(),raw_payload_hash:createHash('sha256').update(canonicalJsonV2(payload)).digest('hex')};
-    settleAssignmentKernelOperationV2(lease,{content:[],structuredContent:{schema:'revit-operator.assignment-kernel-mcp-result/v2',operation_result_v2:result,observation:{raw_payload:payload,semantic_facts:[{fact_id:editing?'task.result_available':'verification.result_available',fact_class:editing?'domain':'verification',value:true}],verification_relevance:['task_result']}}});
+    const fact=editing?{fact_id:'task.result_available',fact_class:'domain'}:op.purpose==='verification'
+      ?{fact_id:'verification.result_available',fact_class:'verification'}:{fact_id:'control.result_available',fact_class:'control'};
+    settleAssignmentKernelOperationV2(lease,{content:[],structuredContent:{schema:'revit-operator.assignment-kernel-mcp-result/v2',operation_result_v2:result,observation:{raw_payload:payload,semantic_facts:[{...fact,value:true}],verification_relevance:['task_result']}}});
   }
   let applied=structuredClone(wire.applied);if(variant==='wrong_native_scope')applied.transaction.scope_observer_executions=0;
   if(variant==='known_collateral'){
@@ -83,6 +87,39 @@ test(`kernel deletion proof requires the complete fresh native closure: ${varian
   }
   assert.equal(Object.values(snapshot.operations).filter(o=>o.requested_effect==='apply').length,1,'Verification never repeats the deletion');
   assert.deepEqual(new AssignmentJournalV2(getGoal(goal.id)!.assignment_kernel_v2!.events).snapshot(),snapshot);
+  if(variant==='ordinary_exact'){
+    const deletedIds:number[]=applied.transaction.deleted_element_ids;
+    const survivor=42,documentSessionId='after-save-session';
+    const elementIds=[survivor,...deletedIds.slice().reverse()];
+    const effectIds=elementIds.slice().sort((a,b)=>a-b);
+    const input={method:'POST',path:'/revit/get-element-summary',body:{elementIds,includeNativeProgramEffectState:true}};
+    const rows=elementIds.map(id=>id===survivor?{id,found:true,uniqueId:'surviving-view',className:'View'}:{id,found:false,error:'Element not found'});
+    const items=effectIds.map(elementId=>{
+      const found=elementId===survivor;
+      const stateJson=JSON.stringify({elementId,found,...(found?{className:'View',uniqueId:'surviving-view'}:{})});
+      return {elementId,found,complete:true,stateJson,stateHash:'sha256:'+createHash('sha256').update(stateJson).digest('hex')};
+    });
+    const data={result:rows,nativeProgramEffectState:{scope:'native_drafting_effect_state_v1',complete:true,
+      documentFingerprint:'sha256:'+state().current_binding.document_fingerprint,documentSessionId,
+      requestedElementIds:effectIds,items,nativeVersion:{ProcessId:100,Epoch:'epoch',DocumentSessionId:documentSessionId,Sequence:2}}};
+    const editAt=Date.parse(state().operations[edit.operation_id]!.result!.completed_at);
+    const read=openAssignmentKernelOperationV2({snapshot:state(),provider_turn_id:'turn',controller_request_id:'inspection',
+      capability_id:'revit_call_tool',classified_effect:'read',target_tokens:[],arguments:input,opened_at:new Date(editAt+1000).toISOString()});
+    settle(read,data,false);
+    const s=state(),op=s.operations[read.operation_id]!;
+    const proof=retainWorkPlanInspectionV2(s,[op.operation_id]);
+    assert.deepEqual(proof.target_ids,effectIds.map(id=>'element_id:'+id).sort());
+    for(const mutate of [
+      (p:typeof data)=>p.nativeProgramEffectState.requestedElementIds.splice(1,1,survivor),
+      (p:typeof data)=>p.nativeProgramEffectState.items[0]!.stateHash='sha256:'+'0'.repeat(64),
+      (p:typeof data)=>p.nativeProgramEffectState.documentFingerprint='sha256:'+'b'.repeat(64),
+    ]){const corrupt=structuredClone(data);mutate(corrupt);assert.equal(nativeDraftingInspectionTargetsV2(s,op,corrupt),null);}
+    assert.equal(nativeDraftingInspectionTargetsV2(s,{...op,input:{...op.input,body:{elementIds}}},data),null);
+    assert.equal(nativeDraftingInspectionTargetsV2(s,{...op,opened_at:new Date(editAt).toISOString()},data),null);
+    const unverifiable=structuredClone(s);
+    unverifiable.operations[edit.operation_id]!.verification_operation_ids=[];
+    assert.equal(nativeDraftingInspectionTargetsV2(unverifiable,op,data),null);
+  }
 }));
 
 for(const variant of ['exact','schema_rejected','survivor','paused','unknown','pending']as const)

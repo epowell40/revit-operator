@@ -27,7 +27,7 @@ import { advisoryVerificationV2 } from "../domain/assignment-kernel/execution_po
 import { openDuctPostconditionSatisfiedV2 } from "../verification/open_duct_postcondition_v2.js";
 import { existingMepConnectionPostconditionSatisfiedV2 } from "../verification/existing_mep_connection_readback_v2.js";
 import {inlineAccessoryIncomingPostconditionV2,inlineAccessoryReadRequestMatchesV2} from '../verification/inline_accessory_evidence_v2.js';
-import {nativeAccessoryIncomingPostconditionV2,nativeAccessoryReadRequestMatchesV2} from '../verification/native_accessory_evidence_v2.js';
+import {NATIVE_ACCESSORY_BRANCH_COMPARISON_V2,nativeAccessoryIncomingAssessmentV2,nativeAccessoryReadRequestMatchesV2} from '../verification/native_accessory_evidence_v2.js';
 import {teeTakeoffIncomingPostconditionV2,teeTakeoffReadRequestMatchesV2} from '../verification/tee_takeoff_evidence_v2.js';
 import { familyPlacementPostconditionSatisfiedV2 } from "../verification/family_placement_postcondition_v2.js";
 import { sheetMovePostconditionSatisfiedV2 } from "../verification/sheet_move_postcondition_v2.js";
@@ -721,7 +721,8 @@ function commitInput(
   // Proof and inventory completeness are host-derived, never producer claims.
   const semanticFacts = [...validateFacts(envelope.observation.semantic_facts)]
     .filter(f => f.fact_id !== NATIVE_OBSERVED_PHYSICAL_TARGETS_V1 && f.fact_id !== COMPLETE_NATIVE_CHANGE_INVENTORY_FACT_V2 && f.fact_id !== VERIFIED_DELIVERABLE_TARGETS_FACT_V2
-      && f.fact_id !== NATIVE_PROPERTY_COMPARISON_FACT_V2 && f.fact_id !== VECTOR_DETAIL_SOURCE_FACT_V2 && f.fact_id !== 'verification.postcondition_satisfied')
+      && f.fact_id !== NATIVE_PROPERTY_COMPARISON_FACT_V2 && f.fact_id !== NATIVE_ACCESSORY_BRANCH_COMPARISON_V2
+      && f.fact_id !== VECTOR_DETAIL_SOURCE_FACT_V2 && f.fact_id !== 'verification.postcondition_satisfied')
     // Retain the actual child effect and its independent verification, while
     // refusing a producer claim that it already fulfills the project task.
     .filter(f => !isDetachedFamilyLabelEditV2(lease.request_identity.method, lease.request_identity.path)
@@ -762,6 +763,9 @@ function commitInput(
       || Boolean(verificationSubject
         && observedTarget.principal_target_tokens.length > 0
         && operationMatchesTargetIdentityV2(verificationSubject, observedTarget.principal_target_tokens));
+  const accessoryAssessment=snapshot&&lease.purpose==='verification'&&lease.fulfillment_role==='verification'
+    &&deterministicallyTargetBound&&verificationSubject?.request_identity?.path==='/revit/place-mep-accessory-interactively'
+    ?nativeAccessoryIncomingAssessmentV2(snapshot,verificationSubject,result,envelope.observation.raw_payload):null;
   const deterministicallySatisfied = Boolean(
     lease.purpose === "verification"
       && lease.fulfillment_role === "verification"
@@ -833,7 +837,7 @@ function commitInput(
         : verificationSubject.request_identity?.path === "/revit/move-elements"
           ? modelPointMovePostconditionSatisfiedV2(snapshot!, verificationSubject, result, envelope.observation.raw_payload)
         : verificationSubject.request_identity?.path === '/revit/place-mep-accessory-interactively'
-          ? nativeAccessoryIncomingPostconditionV2(snapshot!,verificationSubject,result,envelope.observation.raw_payload)
+          ? accessoryAssessment?.preservation
         : verificationSubject.request_identity?.path === "/revit/connect-existing-mep-branch"
           ? (object(verificationSubject.input.body).connectionMode==='insert_inline_accessory'
             ?inlineAccessoryIncomingPostconditionV2(snapshot!,verificationSubject,result,envelope.observation.raw_payload)
@@ -857,6 +861,8 @@ function commitInput(
   const comparisonFact = nativePropertyComparisonControlFactV2(snapshot, operation, verificationSubject, result,
     lease, envelope.observation.raw_payload, deterministicallyTargetBound, deterministicallySatisfied);
   if (comparisonFact) semanticFacts.push(comparisonFact);
+  if(!deterministicallySatisfied&&accessoryAssessment?.connectedBranch)semanticFacts.push({fact_id:NATIVE_ACCESSORY_BRANCH_COMPARISON_V2,
+    fact_class:'control',value:JSON.stringify({state:'branch_connected',preservation_state:'not_established',...accessoryAssessment.connectedBranch})});
   const originalSourceComparison = vectorSourceProofRecordV2(sourceProof,result);
   if (originalSourceComparison && sourceProof) semanticFacts.push({fact_id:VECTOR_DETAIL_SOURCE_FACT_V2,fact_class:'control',
     value:JSON.stringify({state:originalSourceComparison.matches?'matched':'mismatch',evidence_id:sourceProof.evidence.evidence_id,

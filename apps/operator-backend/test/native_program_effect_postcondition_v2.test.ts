@@ -400,8 +400,7 @@ function scopedFixture(declaration:any={element_ids:[42,43]},mutate?:(r:any)=>vo
  f.result.raw_payload_hash=payloadDigestV2(f.fresh).digest;return f;
 }
 
-function checkedScopedFixture(scoped=true){
- const f=scoped?scopedFixture():fixture();
+function checkedScopedFixture(scoped=true, f=scoped?scopedFixture():fixture()){
  assert.equal(match(f.snapshot,f.subject,f.result,f.fresh),true);
  f.subject.target={target_id:'document',semantic_scope:{}};
  f.subject.verification_operation_ids=['read'];
@@ -455,6 +454,40 @@ test('actor feedback retains checked requested results while incidental notifica
  assert.equal(visible.verified_postconditions.some((o:any)=>o.operation_id==='apply'),false);
  f.snapshot.execution_control={state:'paused'};
  assert.deepEqual(feedback().verified_postconditions,[],'Pause still suppresses active verified guidance');
+}));
+
+test('a bound independent check of newly added native results can suggest the requested first copy',()=>workspace(()=>{
+ const additions=scopedFixture({element_ids:[41,42,43]},receipt=>{
+  receipt.transaction.added_element_ids=[41,42,43];
+  receipt.transaction.modified_element_ids=[];
+  receipt.transaction.deleted_element_ids=[];
+  receipt.effect_observation.items[2]=state(43);
+ });
+ const targets=[41,42,43];
+ additions.op.input.body.elementIds=targets;
+ additions.fresh.nativeProgramEffectState.requestedElementIds=targets;
+ additions.fresh.nativeProgramEffectState.items=targets.map(id=>state(id));
+ additions.result.raw_payload_hash=payloadDigestV2(additions.fresh).digest;
+ const f=checkedScopedFixture(true,additions);
+ f.snapshot.spec={requested_effect:'apply',source_user_request:'Build the walls. Save a separate Plan Result.rvt.'};
+ Object.assign(f.snapshot,{pending_review_ids:[],pending_input_variable_ids:[]});
+ for(const [id,o] of Object.entries(f.snapshot.observations) as Array<[string,any]>){
+  o.observation_id=id;o.observed_at='2026-11-08T10:00:03Z';o.raw_payload_ref??='evidence:read';o.facts??=[];o.eligible_criterion_ids=[];
+ }
+ const cue=(s=f.snapshot,op='apply')=>JSON.parse(codexAssignmentEvidenceContextV2(s,op)||'{}').requested_copy_step;
+ const before=JSON.stringify(f.snapshot);
+ assert.deepEqual(cue()?.request,{method:'POST',path:'/revit/save-as',body:{overwrite:false,dryRun:false}});
+ assert.equal(cue()?.preservation_state,'checked_new_elements_only');
+ assert.equal(cue()?.read_operation_id,'read');
+ assert.equal(cue()?.authorization_granted,false);
+ assert.equal(JSON.stringify(f.snapshot),before);
+ assert.equal(cue(f.snapshot,'read'),undefined);
+ for(const change of [
+  {spec:{...f.snapshot.spec,source_user_request:'Build the walls. Save a separate Plan Result.rvt after I approve.'}},
+  {execution_control:{state:'paused'}},{unresolved_unknown_operation_ids:['unknown']},
+  {input_invalidated_operation_ids:['read']},{pending_review_ids:['review']},
+  {operations:{...f.snapshot.operations,priorSave:{input:{path:'/revit/save-as'}}}},
+ ])assert.equal(cue({...f.snapshot,...change}),undefined);
 }));
 
 test('freshness narrowing requires trusted source, selector, binding, digest and exact checked read scope',()=>workspace(()=>{

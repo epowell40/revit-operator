@@ -663,6 +663,25 @@ test('native combined-field fragment admits bounded bindings and keeps legacy an
 });
 
 
+test('inline connector inspection exposes its conditional schedule input and owner bounds', () => {
+  const fragments = JSON.parse(readFileSync(new URL('../../../revit-bridge-addin/RevitBridge.Common/Contracts/conditional-request-fragments.v1.json', import.meta.url), 'utf8'));
+  const fragment = fragments.inline_accessory_inspection;
+  const check = (body: unknown) => preflightKnownGenericToolBody({
+    method: 'POST', path: '/revit/get-connectors', request_schema: {type: 'object', ...(fragment ? {allOf: [fragment]} : {})}
+  }, body);
+  const exact = {elementIds: [1, 2, 3, 4, 5], includeVerificationParameters: true, includeInlineAccessoryState: true};
+  for (const body of [exact, {...exact, elementIds: [1, 2, 3, 4, 5, 6, 7, 8]},
+    {...exact, preservationScheduleIds: null}, {...exact, preservationScheduleIds: [], elementIds: [1, 1]},
+    {...exact, preservationScheduleIds: [7, 7]}, {...exact, preservationScheduleIds: [], includeAllRefs: false}]) {
+    assert.equal(check(body)?.request_dispatched, false, JSON.stringify(body));
+  }
+  for (const body of [{...exact, preservationScheduleIds: []}, {...exact, preservationScheduleIds: [7]},
+    {elementIds: [1, 2, 3, 4, 5, 6, 7, 8], includeVerificationParameters: true},
+    {elementIds: [1], includeInlineAccessoryState: false, includeNativePlacementState: true, preservationScheduleIds: []}]) {
+    assert.equal(check(body), null, JSON.stringify(body));
+  }
+});
+
 test('uniqueItems uses bounded JSON equality without confusing object order or scalar types',()=>{
  const check=(body:unknown)=>preflightKnownGenericToolBody({method:'POST',path:'/revit/example',request_schema:{type:'array',uniqueItems:true}},body);
  assert.equal(check([1,'1',null,false,{},[]]),null);

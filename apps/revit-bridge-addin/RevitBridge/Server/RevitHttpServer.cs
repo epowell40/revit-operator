@@ -987,6 +987,7 @@ namespace RevitBridge.Server
                     }
                     else
                     {
+                        OperatorDialogComputerUse.RequireReadyForNativeModelOpen(effectiveMethod, path);
                         var risk = GetRequestRisk(effectiveMethod, path, body);
                         var deadline = OperatorActionDeadlinePolicy.Resolve(effectiveMethod, path, risk.ToString());
                         using var localDeadline = new CancellationTokenSource(deadline.Budget);
@@ -1098,7 +1099,8 @@ namespace RevitBridge.Server
                                 },
                                 localDeadline.Token,
                                 correlationId,
-                                "http:" + effectiveMethod + ":" + path);
+                                "http:" + effectiveMethod + ":" + path,
+                                externalEventOnly: RevitEventService.RequiresExternalEvent(effectiveMethod, path));
                         }
                         catch (OperationCanceledException ex) when (localDeadline.IsCancellationRequested)
                         {
