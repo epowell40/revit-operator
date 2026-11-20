@@ -3777,7 +3777,7 @@
     },
     {
       "path": "apps/operator-backend/src/external_desktop_models.ts",
-      "sha256": "sha256:c1054969927727445b724bb4a39f0ddb67f0adf1153f6e60eed27e7c72950646"
+      "sha256": "sha256:b2b016325779662bbe1bf158973011aa392ce1cf19289db41bf2dc5b3cab43bd"
     },
     {
       "path": "apps/operator-backend/src/feedback/dev_autofix.ts",
@@ -6237,7 +6237,7 @@
     },
     {
       "path": "apps/operator-backend/test/external_desktop_models.test.ts",
-      "sha256": "sha256:1edbdc46555f0d6555688ac6cf0fe0f3e4de1498789c3f5b9b1139550bfe9756"
+      "sha256": "sha256:e04fecf386138154d40e19b519aad1bcdbbbb35c4710ef356506ed2cc4764823"
     },
     {
       "path": "apps/operator-backend/test/external_file_intake_scope.test.ts",
@@ -12669,7 +12669,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:c9dbf5de13bf6241d450b80908818a92019171d8e1df4d3255d58fa6229293a0",
+  "inputs_hash": "sha256:da7a52cee328188f2345c930eea4ded757f783561005e4c34be0c0e29930fd98",
   "result": {
     "passed": true,
     "checks": [
