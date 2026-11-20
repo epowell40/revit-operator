@@ -54,13 +54,20 @@ export function projectDraftingFrontier(snapshot:AssignmentSnapshotV2) {
     .map(p=>({pass:p.pass,stage:p.stage,needs_recheck:p.needs_recheck}))};
  };
  const focus=rows[0]!;
- // The alternate pointers are deliberately oldest first. Recent-only recovery
- // otherwise keeps surfacing the same refinement even with older work open.
- const others=rows.filter(r=>r.item.item_id!==focus.item.item_id).reverse().slice(0,2).map(project);
+ const scope=(r:WorkPlanLocationRecordV2)=>{
+  const {attachment_id,sha256,page}=r.source!,region=r.source!.region!;
+  return JSON.stringify([attachment_id,sha256,page,region.min_u,region.min_v,region.max_u,region.max_v,r.native!.view_id,r.drafting!.pass]);
+ };
+ const isOpen=(item:typeof focus.item)=>!item.completed_at&&!item.deferrals?.some(d=>!d.resumed_at);
+ const focusScope=scope(focus.record);
+ // Keep the oldest usable alternatives visible, even when the recent area is
+ // still producing small commits. Checked records cover only the linked subset.
+ const others=rows.filter(({item,record})=>item.item_id!==focus.item.item_id&&isOpen(item)
+  &&['attempted','drafted'].includes(record.drafting!.stage)&&scope(record)!==focusScope)
+  .reverse().slice(0,2).map(project);
  // A partial spatial journal must not hide the rest of the declared scope.
  // These are prose pointers only: no invented crop, element IDs or completion.
- const unlocated=snapshot.work_plan.items.filter(item=>!latest.has(item.item_id)&&!item.completed_at
-  &&!item.deferrals?.some(d=>!d.resumed_at));
+ const unlocated=snapshot.work_plan.items.filter(item=>!latest.has(item.item_id)&&isOpen(item));
  const declared=unlocated.slice(-3).map(item=>({item_id:item.item_id,
   description:short(item.description,112),source_basis:short(item.source_basis,112),
   text_truncated:Buffer.byteLength(item.description,'utf8')>112||Buffer.byteLength(item.source_basis,'utf8')>112,
@@ -83,4 +90,4 @@ export function projectDraftingFrontier(snapshot:AssignmentSnapshotV2) {
  return result;
 }
 
-export const DRAFTING_COVERAGE_SWEEP_ADVICE='Your recent work has not added a new checked source-linked scope. Keep useful local work and its exact unresolved connection/label punch list; do not claim it complete. Compare whole-page context and readable source/model details, then choose another clear independent missing branch, recognizable device or annotation pass. If clear unbuilt physical routes remain, prioritize a coherent physical coverage batch over repeated cosmetic refinement of already drafted areas; retain annotation discrepancies for their own pass. Reconcile declared items without region tracking against existing model work before recording their source region and next action; do not reconstruct them merely because tracking is absent. Reuse admitted unchanged source/overview images; do not reread or recapture merely to answer this reminder. Use your own observe-mode comparison for routine backchecks and reserve independent visual review for coherent milestones or final handoff unless a required check or user instruction says otherwise. When saving is authorized, checkpoint useful settled progress before optional refinement; saving is preservation, not a request for complete engineering qualification of every area. Required native readback, currentness, final review and actual admission refusals still apply. A coverage sweep identifies remaining work, not completed construction. A difficult local junction must not indefinitely block coverage elsewhere. Return to it with changed evidence or a concrete supported approach. This is coverage pacing advice, not a demand to abandon a nearly finished useful batch or permission to skip checks.';
+export const DRAFTING_COVERAGE_SWEEP_ADVICE='Finish any nearly checked batch, then change area or pass. Compare whole-page context and readable source/model details. Prefer a coherent batch of missing physical routes, devices or annotations over repeated local refinement. Start with the other recorded regions if applicable. Reconcile unlocated declarations before editing; missing tracking is not missing model work. Reuse unchanged source images; do not reread or recapture merely to answer this reminder. Check the next batch together and retain the unresolved punch list. If a bounded sweep finds no independent work and no changed evidence or concrete approach for the stalled pass, preserve settled work when saving is authorized and report the checked partial, exact blocker, and what would unblock it. Required readback, review, admission and control checks still apply.';

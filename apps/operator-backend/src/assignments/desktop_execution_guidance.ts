@@ -3,7 +3,7 @@
 import type {AssignmentSnapshotV2} from '../domain/assignment-kernel/snapshot.js';
 import {advisoryVerificationV2} from '../domain/assignment-kernel/execution_policy.js';
 import {projectWorkPlanLocationV2} from '../domain/assignment-kernel/work_plan_location.js';
-import {projectDraftingFrontier} from './drafting_frontier.js';
+import {DRAFTING_COVERAGE_SWEEP_ADVICE,projectDraftingFrontier} from './drafting_frontier.js';
 
 /** Already-loaded canonical task state, not prefetched Revit content or a
  * replacement for current dispatch admission. No model target IDs are added. */
@@ -29,7 +29,8 @@ export function desktopNativeInitialContext(snapshot:AssignmentSnapshotV2):strin
   +'Later tool/control results supersede this snapshot. It is not native model data or write authority. '
   +'Use the declared required_fact_ids to choose scoped reads and the evaluator reason to address only missing evidence. Metadata does not establish model content; neither certifies engineering compliance. These requirements are not observed facts or a completion claim. '
   +(advisoryVerificationV2(snapshot)?'Continue useful authorized work within the frozen host budget. Keep lightweight progress and source/model checks; finish with report_work_for_review, retaining completed, remaining and uncertain work. A checklist claim or successful program is not completion; the report requests independent review. In this review profile, required_fact_ids describe formal verification, not an additional handoff gate. Once the requested inspection or change is actually done and the available checks support it, deliver the result with any unchecked aspects explicitly stated; do not repeat equivalent reads or chase an unsupported verifier solely for a formal pass. Do not undo, delete or reconstruct a successful committed edit merely because a later verification step is unavailable or inconclusive. Correct observed defects within scope; unknown effects must be reconciled before another mutation. Read-only assignments permit no model edits or saves. ':'')
-  +'On recovery reopen the saved reference crop and corresponding model region; reconcile linked elements and interrupted work before editing. Never replay construction merely because provider context was compacted or unavailable.';
+  +'On recovery reopen the saved reference crop and corresponding model region; reconcile linked elements and interrupted work before editing. Never replay construction merely because provider context was compacted or unavailable.'
+  +(frontier?.state==='coverage_sweep_due'?' '+DRAFTING_COVERAGE_SWEEP_ADVICE:'');
 }
 export const DESKTOP_EXECUTION_EFFICIENCY_GUIDANCE = [
  'When native__operator_manage_work_plan is in your tools, its exact current schema is already available; call it directly without describe_tool or schema evidence retrieval. Keep one item per coherent deliverable or area, using its named drafting passes as needed rather than inventing extra items for bookkeeping. A checked location records a backcheck, not a completion claim. When the requested item is actually satisfied, submit its complete action using retained relevant operations before report_work_for_review; report unresolved scope explicitly. Batch independent satisfied-item updates in one response. Do not repeat model inspections or edits solely to close a ledger item, and never mark genuinely unfinished work done.',

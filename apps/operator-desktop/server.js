@@ -11804,7 +11804,9 @@ async function activateRevitView(target, options = {}) {
         request_effect: "read",
         request_dispatched: activationDispatched,
         status: result?.ok ? "done" : "failed",
-        result_summary: result?.ok ? `Activated Revit view ${result.active_view?.name || result.active_view?.id || "requested target"}.` : null,
+        result_summary: result?.ok ? (result.already_active
+          ? `Revit view ${result.active_view.name} is already active.`
+          : `Activated Revit view ${result.active_view?.name || result.active_view?.id || "requested target"}.`) : null,
         error: result?.ok ? null : result?.error,
         ...(result?.ok ? { result_json: result } : {})
       };
@@ -12932,13 +12934,16 @@ async function executeFunctionToolCall(toolCall) {
 
   if (toolCall.name === "activate_revit_view") {
     const result = await activateRevitView(args);
+    const inspection = result.ok && !result.focus ? {
+      inspection_next_step: "Revit confirmed this view is active. This result contains no pixels. If appearance is the question, use review_current_work with this view ID and observed target elements or a stable native visible region. If a focused view cannot answer the question, record the specific unresolved check and continue independent work or return the checked partial. Reopening this view alone adds no evidence."
+    } : {};
     addComputerEvent(result.ok
-      ? `Revit view activated: ${result.active_view.name || "view"} (${result.active_view.id || "unknown"}).`
+      ? `Revit view ${result.already_active ? "already active" : "activated"}: ${result.active_view.name || "view"} (${result.active_view.id || "unknown"}).`
       : `Revit view activation failed: ${result.error || "unknown issue"}.`);
     return {
       type: "function_call_output",
       call_id: toolCall.call_id,
-      output: JSON.stringify(result)
+      output: JSON.stringify({ ...result, ...inspection })
     };
   }
 

@@ -63,7 +63,7 @@ test('strict feedback holds on Pause or unknown and does not infer drafting from
 });
 
 test('ongoing local edits cannot suppress whole-scope pacing or older source regions',()=>{
- const s=fixture();row(s,'older-area',1);row(s,'recent-area',2);row(s,'current-area',3);calls(s);
+ const s=fixture();row(s,'older-area',1).source.region.min_u=.09;row(s,'recent-area',2);row(s,'current-area',3);calls(s);
  // Even many successful native commits are not claimed as new checked coverage.
  s.operations.local={requested_effect:'apply',persistent_effect:'applied',opened_at:at(24),result:{completed_at:at(24),affected_target_identities:['element_id:10']}};
  const before=JSON.stringify(s),p=projectDraftingFrontier(s)!;
@@ -72,6 +72,31 @@ test('ongoing local edits cannot suppress whole-scope pacing or older source reg
  assert.equal(p.recent_focus.recorded_at,at(3));
  assert.equal(p.advisory_only,true);assert.equal(p.complete,false);assert.equal(p.checked_scope_count,0);
  assert.equal(JSON.stringify(s),before);assert(Buffer.byteLength(JSON.stringify(p))<=3072);
+});
+
+test('a due sweep surfaces unfinished alternatives and stops redirecting back to the current pass',()=>{
+ const s=fixture();
+ row(s,'completed',1);
+ s.work_plan.items[0].completed_at=at(2);
+ row(s,'deferred',2);
+ s.work_plan.items[1].deferrals=[{deferred_at:at(3),reason:'Needs user input'}];
+ row(s,'checked',3,'checked');
+ row(s,'blocked',4,'blocked');
+ row(s,'next-area',5).source.region={min_u:.4,min_v:.4,max_u:.5,max_v:.5};
+ row(s,'current-area',6);
+ calls(s);
+
+ const feedback=record(s);
+ assert.equal(feedback.drafting_frontier.state,'coverage_sweep_due');
+ assert.deepEqual(feedback.drafting_frontier.other_recorded_regions.map((r:any)=>r.item_id),['next-area']);
+ assert.equal(feedback.recorded_next_action,undefined);
+ const modelInput=JSON.stringify(desktopAssignmentFeedbackInputV2([],s));
+ assert.match(modelInput,/exact blocker.+would unblock it/);
+ const recovery=desktopNativeInitialContext(s);
+ assert.match(recovery,/next-area/);
+ assert.match(recovery,/exact blocker.+would unblock it/);
+ s.execution_control.state='paused';
+ assert.doesNotMatch(desktopNativeInitialContext(s),/would unblock it/);
 });
 test('new checked scopes advance coverage advice; duplicate check images/read IDs do not',()=>{
  const s=fixture(),r=row(s,'area',1,'checked');calls(s);const duplicate=structuredClone(r);
@@ -83,7 +108,7 @@ test('new checked scopes advance coverage advice; duplicate check images/read ID
  assert.match(projectDraftingFrontier(s)!.recent_focus.remaining,/not checked/,'No whole-area completion inferred');
 });
 test('actual model-visible feedback and recovery carry the same bounded frontier without changing native checks',()=>{
- const s=fixture();row(s,'older',1);row(s,'current',3);calls(s);const baseline=record({...s,work_plan:undefined}),r=record(s);
+ const s=fixture();row(s,'older',1).source.region.min_u=.09;row(s,'current',3);calls(s);const baseline=record({...s,work_plan:undefined}),r=record(s);
  assert.deepEqual(r.native_feedback,baseline.native_feedback);assert.equal(r.drafting_frontier.state,'coverage_sweep_due');
  const input=desktopAssignmentFeedbackInputV2([],s);assert.match(JSON.stringify(input),/Compare whole-page context/);
  assert.match(JSON.stringify(input),/do not reread or recapture merely to answer this reminder/);

@@ -1,5 +1,49 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import{runInNewContext}from'node:vm';
-import*as shared from'../visual_work_review.mjs';import{focusNativeReviewTarget}from'../native_view_activation.mjs';import{nativeChangeObservationFromContext}from'../native_change_observations.mjs';
+import*as shared from'../visual_work_review.mjs';import{confirmNativeViewActivation,focusNativeReviewTarget}from'../native_view_activation.mjs';import{nativeChangeObservationFromContext}from'../native_change_observations.mjs';
+
+test('confirmed same-ID navigation preserves framing without redispatch', async () => {
+  const activeView = { id: 41, name: 'Level 3' };
+  const context = { process_id: 23, document: {
+    sessionId: 'current-document', projectIdentity: { fingerprint: 'current-project' }, activeView
+  } };
+  let reads = 0, dispatches = 0, guards = 0;
+  const options = {
+    readContext: async () => { reads++; return context; },
+    assertCurrent: async () => { guards++; },
+    activate: async () => {
+      dispatches++;
+      return { ok: true, requestedViewId: 41, requestedViewName: 'Level 3', activeViewId: 41,
+        activeViewName: 'Level 3', focusPending: false, didZoom: true };
+    }
+  };
+  const repeated = await confirmNativeViewActivation({ view_id: 41 }, options);
+  assert.deepEqual(repeated, { ok: true, active_view: activeView, already_active: true, request_dispatched: false });
+  assert.deepEqual([reads, dispatches, guards], [1, 0, 2]);
+
+  const fit = await confirmNativeViewActivation({ view_id: 41, zoom_to_fit: true }, options);
+  assert.equal(fit.focus?.kind, 'fit');
+  assert.equal(dispatches, 1, 'explicit fresh focus must still dispatch');
+  await confirmNativeViewActivation({ view_name: 'Level 3' }, options);
+  assert.equal(dispatches, 2, 'a name can collide, so exact name resolution still dispatches');
+});
+
+test('pause or missing fresh identity bars an already-active result', async () => {
+  const context = { process_id: 23, document: {
+    sessionId: 'current-document', projectIdentity: { fingerprint: 'current-project' }, activeView: { id: 41, name: 'Level 3' }
+  } };
+  const options = {
+    readContext: async () => context,
+    assertCurrent: async () => {},
+    activate: () => assert.fail('no native activation may be dispatched')
+  };
+  let guards = 0;
+  await assert.rejects(confirmNativeViewActivation({ view_id: 41 }, {
+    ...options, assertCurrent: async () => { if (++guards === 2) throw Error('paused'); }
+  }), /paused/);
+  await assert.rejects(confirmNativeViewActivation({ view_id: 41 }, {
+    ...options, readContext: async () => ({ ...context, process_id: null })
+  }), /context_identity_unavailable/);
+});
 import {prepareFocusedInspection} from '../reviewed_inspection_closeout.mjs';
 import {parseAssignmentKernelPublicationV2} from '@revitoperator/assignment-kernel-v2-contracts';
 const source=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8'),a=source.indexOf('async function reviewCurrentRevitWork('),z=source.indexOf('function formatRevitContextMessage(',a);assert(a>0&&z>a);
