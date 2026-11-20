@@ -54,6 +54,24 @@ function functions(tools: any[]): any[] {
   });
 }
 
+function needsAnthropicArgumentEnvelope(schema: Record<string, unknown>): boolean {
+  return ["oneOf", "allOf", "anyOf"].some(key => Object.hasOwn(schema, key));
+}
+
+function anthropicTool({parameters, ...tool}: any) {
+  if (!needsAnthropicArgumentEnvelope(parameters)) return { ...tool, input_schema: parameters };
+  // Anthropic disallows combinators at the root of a tool schema. Keep the
+  // original contract inside the envelope and validate the real arguments at dispatch.
+  return {
+    ...tool,
+    description: `${tool.description ?? ""}\nPass the tool's inputs in the arguments object.`.trim(),
+    input_schema: {
+      type: "object", properties: { arguments: parameters },
+      required: ["arguments"], additionalProperties: false
+    }
+  };
+}
+
 function embedded(value: unknown, accepted: string): { mime: string; base64: string } {
   const match = typeof value === "string" && new RegExp(`^data:(${accepted});base64,([A-Za-z0-9+/]+={0,2})$`).exec(value);
   if (!match || Buffer.from(match[2]!, "base64").toString("base64") !== match[2]) throw Error("external_model_embedded_media_required");
@@ -129,26 +147,32 @@ export function externalDesktopPayload(provider: ExternalDesktopProvider, model:
   };
   return {
     model, system: instructions, messages: messages.map(m => ({ role: m.role, content: [...m.toolResults, ...m.blocks] })),
-    tools: declarations.map(({ parameters, ...tool }) => ({ ...tool, input_schema: parameters })),
+    tools: declarations.map(anthropicTool),
     max_tokens: maxTokens, thinking: { type: "adaptive", display: "omitted" }, output_config: { effort }
   };
 }
 
 function normalizedOutput(provider: ExternalDesktopProvider, parts: any[], responseId: string, tools: any[]): any[] {
-  const names = new Set(functions(tools).map(t => t.name));
+  const declarations = new Map(functions(tools).map(tool => [tool.name, tool.parameters]));
   const calls = new Set<string>();
   return parts.map((part, index) => {
     const continuation = { provider_transport: provider, provider_part: part };
     const call = provider === "gemini" ? part.functionCall : part.type === "tool_use" ? { id: part.id, name: part.name, args: part.input } : null;
     if (call) {
       const id = provider === "anthropic" ? call.id : `${responseId}:${index}`;
-      if (!names.has(call.name) || typeof id !== "string" || !/^[A-Za-z0-9._:-]{1,200}$/.test(id)
+      if (!declarations.has(call.name) || typeof id !== "string" || !/^[A-Za-z0-9._:-]{1,200}$/.test(id)
           || calls.has(id) || !call.args || typeof call.args !== "object" || Array.isArray(call.args))
         throw Error("external_model_invalid_tool_call");
+      let args = call.args;
+      if (provider === "anthropic" && needsAnthropicArgumentEnvelope(declarations.get(call.name))) {
+        if (!Object.hasOwn(args, "arguments") || Object.keys(args).length !== 1 || !args.arguments
+            || typeof args.arguments !== "object" || Array.isArray(args.arguments)) throw Error("external_model_invalid_tool_call");
+        args = args.arguments;
+      }
       calls.add(id);
       return call.name === desktopTool
-        ? { ...continuation, type: "computer_call", call_id: id, actions: [call.args] }
-        : { ...continuation, type: "function_call", call_id: id, name: call.name, arguments: JSON.stringify(call.args) };
+        ? { ...continuation, type: "computer_call", call_id: id, actions: [args] }
+        : { ...continuation, type: "function_call", call_id: id, name: call.name, arguments: JSON.stringify(args) };
     }
     if (part.thought || ["thinking", "redacted_thinking"].includes(part.type)) {
       const opaque = part.signature ?? part.data ?? part.thoughtSignature;

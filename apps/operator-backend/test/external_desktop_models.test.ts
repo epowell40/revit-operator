@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { availableExternalDesktopModels, externalDesktopPayload, externalDesktopProvider } from "../src/external_desktop_models.js";
+import { availableExternalDesktopModels, externalDesktopPayload, externalDesktopProvider, requestExternalDesktopModel } from "../src/external_desktop_models.js";
 
 const functions = [{type:"function",name:"read_view",description:"Read a view",parameters:{type:"object"}}];
 const originalText = {type:"input_text",text:"Current view"};
@@ -50,4 +50,44 @@ test("tool boundaries, cross-provider replay, and unresolved file identities fai
   assert.throws(() => send([ask,{type:"function_call_output",call_id:"forged",output:""}]),/without_call/);
   assert.throws(() => send([ask,{type:"reasoning",provider_transport:"anthropic",provider_part:{}}]),/foreign_history/);
   assert.throws(() => send([{role:"user",content:[{type:"input_image",file_id:"remote"}]}]),/embedded_media_required/);
+});
+
+test("Claude gets a nested schema for root combinators and the host gets exact original arguments", async (t) => {
+  const schema = {
+    type: "object", properties: { view_name: { type: "string" }, view_id: { type: "integer" } },
+    anyOf: [{ required: ["view_name"] }, { required: ["view_id"] }], additionalProperties: false
+  };
+  const tools = [{ ...functions[0], parameters: schema }];
+  const originalArguments = { view_name: "Test view" };
+  const nativePart = { type: "tool_use", id: "toolu_view", name: "read_view", input: { arguments: originalArguments } };
+  let replyInput: unknown = nativePart.input;
+  let sent: any;
+  t.mock.method(globalThis, "fetch", async (_url: string, init: RequestInit) => {
+    sent = JSON.parse(init.body as string);
+    return Response.json({
+      model: "claude-opus-5-5", id: "msg_test", stop_reason: "tool_use", usage: { input_tokens: 10, output_tokens: 12 },
+      content: [{ ...nativePart, input: replyInput }]
+    });
+  });
+  const variable = "OPERATOR_ANTHROPIC_API_KEY";
+  const old = process.env[variable];
+  process.env[variable] = "synthetic-credential";
+  t.after(() => { if (old === undefined) delete process.env[variable]; else process.env[variable] = old; });
+  const send = () => requestExternalDesktopModel("anthropic", "claude-opus-5-5", "medium", "instruction", tools, [ask]);
+  const response = await send();
+  assert.deepEqual(sent.tools[0].input_schema, {
+    type: "object", properties: { arguments: schema }, required: ["arguments"], additionalProperties: false
+  });
+  const call = response.output[0];
+  assert.equal(call.arguments, JSON.stringify(originalArguments));
+  assert.deepEqual(call.provider_part, nativePart);
+  const next = externalDesktopPayload("anthropic", "claude-opus-5-5", "medium", "instruction", tools,
+    [ask, call, { type: "function_call_output", call_id: nativePart.id, output: "Matched" }]);
+  assert.deepEqual(next.messages[1].content, [nativePart]);
+  assert.deepEqual(externalDesktopPayload("gemini", "gemini-4-neon", "medium", "instruction", tools, [ask])
+    .tools[0].functionDeclarations[0].parametersJsonSchema, schema);
+  replyInput = originalArguments;
+  await assert.rejects(send, /external_model_unusable_response/);
+  replyInput = { arguments: originalArguments, unrelated: true };
+  await assert.rejects(send, /external_model_unusable_response/);
 });
