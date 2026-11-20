@@ -29,42 +29,58 @@ export function projectDraftingFrontier(snapshot:AssignmentSnapshotV2) {
  const records=snapshot.work_plan.items.flatMap(item=>(item.location_history??[]).filter(valid).map(record=>({item,record})))
   .sort((a,b)=>a.record.recorded_at.localeCompare(b.record.recorded_at)||a.item.item_id.localeCompare(b.item.item_id));
  if(!records.length)return null;
- const latest=new Map<string,typeof records[number]>(),seenChecked=new Set<string>();
+ const latest=new Map<string,typeof records[number]>();
+ const latestPass=new Map<string,typeof records[number]>();
+ const checkedTargets=new Set<string>();
+ let checkedScopes=0;
  let since=Date.parse(records[0]!.record.recorded_at);
  for(const row of records){
   latest.set(row.item.item_id,row);
   const r=row.record,d=r.drafting!,s=r.source!;
-  // New images/reads/timestamps for the same checked subset do not buy another
-  // coverage window. Intent verification and recheck currentness stay separate.
-  const key=JSON.stringify([s.attachment_id,s.sha256,s.page,s.region,r.native!.view_id,d.pass,[...d.element_ids].sort((a,b)=>a-b)]);
-  if(d.stage==='checked'&&!seenChecked.has(key)){seenChecked.add(key);since=Math.max(since,Date.parse(r.recorded_at));}
+  latestPass.set(JSON.stringify([row.item.item_id,d.pass]),row);
+  if(d.stage!=='checked')continue;
+  // Moving the crop, splitting a subset or recoloring the same targets is
+  // useful bookkeeping, but earns no new coverage window for this pass.
+  const scope=[s.attachment_id,s.sha256,s.page,r.native!.view_id,d.pass];
+  const keys=d.element_ids.length?d.element_ids.map(id=>JSON.stringify([...scope,id]))
+   :[JSON.stringify([...scope,row.item.item_id])];
+  if(keys.some(key=>!checkedTargets.has(key))){
+   checkedScopes++;
+   since=Math.max(since,Date.parse(r.recorded_at));
+   keys.forEach(key=>checkedTargets.add(key));
+  }
  }
  const calls=Object.values(snapshot.provider_calls).filter(c=>c.binding&&sameAssignmentBindingV2(c.binding,snapshot.current_binding)
   &&['admitted','dispatched','completed','failed'].includes(c.state)&&Number.isFinite(Date.parse(c.admitted_at))
   &&Date.parse(c.admitted_at)>since).length;
  const rows=[...latest.values()].sort((a,b)=>b.record.recorded_at.localeCompare(a.record.recorded_at)||a.item.item_id.localeCompare(b.item.item_id));
+ const isOpen=(item:typeof rows[number]['item'])=>!item.completed_at&&!item.deferrals?.some(d=>!d.resumed_at);
  const short=(v:string,max=112)=>{let result='',bytes=0;for(const c of typeof v==='string'?v:''){
   bytes+=Buffer.byteLength(c,'utf8');if(bytes>max)break;result+=c;}return result;};
- const project=(row:typeof rows[number])=>{
+ const project=(row:typeof rows[number],maxText:number)=>{
   const r=row.record,d=r.drafting!,s=r.source!;
+  const actionable=isOpen(row.item)&&(d.stage==='attempted'||d.stage==='drafted');
   return {item_id:row.item.item_id,recorded_at:r.recorded_at,source:{attachment_id:s.attachment_id,sha256:s.sha256,page:s.page,region:s.region},
-   view_id:r.native!.view_id,pass:d.pass,stage:d.stage,remaining:short(d.remaining),next_action:short(d.next_action),
-   text_truncated:Buffer.byteLength(d.remaining,'utf8')>112||Buffer.byteLength(d.next_action,'utf8')>112,
-   passes:projectDraftingPasses({location_history:row.item.location_history?.filter(valid)},snapshot)
-    .map(p=>({pass:p.pass,stage:p.stage,needs_recheck:p.needs_recheck}))};
+   view_id:r.native!.view_id,pass:d.pass,stage:d.stage,remaining:short(d.remaining,maxText),
+   ...(actionable?{next_action:short(d.next_action,maxText)}:{}),
+   text_truncated:Buffer.byteLength(d.remaining,'utf8')>maxText||(actionable&&Buffer.byteLength(d.next_action,'utf8')>maxText)};
  };
  const focus=rows[0]!;
- const scope=(r:WorkPlanLocationRecordV2)=>{
+ const address=(r:WorkPlanLocationRecordV2)=>{
   const {attachment_id,sha256,page}=r.source!,region=r.source!.region!;
-  return JSON.stringify([attachment_id,sha256,page,region.min_u,region.min_v,region.max_u,region.max_v,r.native!.view_id,r.drafting!.pass]);
+  return JSON.stringify([attachment_id,sha256,page,region.min_u,region.min_v,region.max_u,region.max_v,r.native!.view_id]);
  };
- const isOpen=(item:typeof focus.item)=>!item.completed_at&&!item.deferrals?.some(d=>!d.resumed_at);
- const focusScope=scope(focus.record);
- // Keep the oldest usable alternatives visible, even when the recent area is
- // still producing small commits. Checked records cover only the linked subset.
- const others=rows.filter(({item,record})=>item.item_id!==focus.item.item_id&&isOpen(item)
-  &&['attempted','drafted'].includes(record.drafting!.stage)&&scope(record)!==focusScope)
-  .reverse().slice(0,2).map(project);
+ const focusAddress=address(focus.record);
+ const focusDrafting=focus.record.drafting!;
+ // Retain other open passes in the same area. An earlier pass tied to obsolete
+ // framing stays in history and must be reconciled before acting on it.
+ const alternatives=[...latestPass.values()].filter(({item,record})=>isOpen(item)
+  &&['attempted','drafted'].includes(record.drafting!.stage)
+  &&address(record)===address(latest.get(item.item_id)!.record)
+  &&(address(record)!==focusAddress||record.drafting!.pass!==focusDrafting.pass
+   ||record.drafting!.element_ids.some(id=>!focusDrafting.element_ids.includes(id))))
+  .sort((a,b)=>Number(address(a.record)===focusAddress)-Number(address(b.record)===focusAddress)
+   ||a.record.recorded_at.localeCompare(b.record.recorded_at)||a.item.item_id.localeCompare(b.item.item_id));
  // A partial spatial journal must not hide the rest of the declared scope.
  // These are prose pointers only: no invented crop, element IDs or completion.
  const unlocated=snapshot.work_plan.items.filter(item=>!latest.has(item.item_id)&&isOpen(item));
@@ -79,14 +95,25 @@ export function projectDraftingFrontier(snapshot:AssignmentSnapshotV2) {
   :snapshot.provider_budget_exhausted||snapshot.progress_blocker?'resource_or_progress_hold':null;
  const result={schema:'operator.drafting-frontier.v1',advisory_only:true,complete:false,
   state:hold?'hold':calls>=12?'coverage_sweep_due':'working',hold_reason:hold,
-  calls_since_new_checked_scope:calls,checked_scope_count:seenChecked.size,recorded_region_count:rows.length,
-  recent_focus:project(focus),other_recorded_regions:others,
-  omitted_region_count:Math.max(0,rows.length-1-others.length),
+  calls_since_new_checked_scope:calls,checked_scope_count:checkedScopes,recorded_region_count:rows.length,
+  recent_focus:{...project(focus,112),passes:projectDraftingPasses({location_history:focus.item.location_history?.filter(valid)},snapshot)
+   .map(p=>({pass:p.pass,stage:p.stage,needs_recheck:p.needs_recheck}))},
+  other_recorded_regions:alternatives.slice(0,2).map(row=>project(row,80)),omitted_region_count:rows.length-1,
   declared_items_without_region_count:unlocated.length,declared_items_without_region:declared,
   omitted_declared_items_without_region_count:unlocated.length-declared.length,
-  notice:'Actor tracking only; checked covers linked subset/pass, not an entire crop. Unmarked source remains undiscovered. Unlocated declarations are not proof of missing model work; reconcile before editing. Retained records are not fresh pixels or native proof. No allowance, permission or completion changes.'};
- while(Buffer.byteLength(JSON.stringify(result),'utf8')>3072&&result.other_recorded_regions.length){result.other_recorded_regions.pop();result.omitted_region_count++;}
+  notice:'Actor tracking only; checked covers linked subset/pass, not an entire crop. Leave current checked work off your queue. Other recorded regions may include open passes in this crop. Unmarked source remains undiscovered. Unlocated declarations are not proof of missing model work; reconcile before editing.'};
+ // Prefer an actionable source-linked pass over duplicate prose for a pointer
+ // whose full scope is already available in the work plan.
+ if(Buffer.byteLength(JSON.stringify(result),'utf8')>3072&&result.other_recorded_regions.length){
+  result.declared_items_without_region=declared.map(item=>({...item,
+   description:short(item.description,40),source_basis:'',text_truncated:true}));
+ }
+ while(Buffer.byteLength(JSON.stringify(result),'utf8')>3072&&result.other_recorded_regions.length&&result.declared_items_without_region.length>1){
+  result.declared_items_without_region.shift();result.omitted_declared_items_without_region_count++;
+ }
+ while(Buffer.byteLength(JSON.stringify(result),'utf8')>3072&&result.other_recorded_regions.length)result.other_recorded_regions.pop();
  while(Buffer.byteLength(JSON.stringify(result),'utf8')>3072&&result.declared_items_without_region.length){result.declared_items_without_region.pop();result.omitted_declared_items_without_region_count++;}
+ result.omitted_region_count=rows.length-new Set([focus.item.item_id,...result.other_recorded_regions.map(r=>r.item_id)]).size;
  return result;
 }
 

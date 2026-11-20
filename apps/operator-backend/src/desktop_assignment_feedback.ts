@@ -14,14 +14,14 @@ export function desktopAssignmentFeedbackInputV2(input:unknown,snapshot:Assignme
  const construction=draftingConstructionProgressV2(snapshot,DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2.max_no_progress_epochs);
  const frontier=projectDraftingFrontier(snapshot);
  const sweepDue=frontier?.state==='coverage_sweep_due';
- const nextAction=(snapshot.work_plan?.items??[]).flatMap(item=>(item.location_history??[])
+ const nextAction=frontier?undefined:(snapshot.work_plan?.items??[]).flatMap(item=>(item.location_history??[])
    .filter(location=>location.drafting?.next_action).map(location=>({item_id:item.item_id,at:location.recorded_at,next_action:location.drafting!.next_action})))
    .sort((a,b)=>b.at.localeCompare(a.at))[0];
  const text=JSON.stringify({schema:'operator.desktop-assignment-feedback.v1',
    assignment_version:snapshot.assignment_version,binding:snapshot.current_binding,
    native_feedback:recentObservationIndex(JSON.parse(feedback),snapshot,previousResponseId),construction_progress:construction,
    ...(frontier?{drafting_frontier:frontier}:{}),
-   ...(construction&&construction.state!=='working'&&nextAction&&(!frontier||frontier.state==='working')
+   ...(construction&&construction.state!=='working'&&nextAction
      ?{recorded_next_action:nextAction}:{})});
  const previous=typeof input==='string'?[{role:'user',content:input}]:input;
  return [...previous,{role:'user',content:[{type:'input_text',text:'HOST CURRENT CHECK FEEDBACK. '

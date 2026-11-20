@@ -110,7 +110,7 @@ export function projectCompactWorkPlanLocationV2(item: { location_history?: read
       native:{view_id:n.view_id,view_name:n.view_name},
       binding_current:snapshot?sameAssignmentBindingV2(current.binding,snapshot.current_binding):null,
       drafting:{pass:d.pass,stage:d.stage,element_ids:d.element_ids.slice(0,16),element_count:d.element_ids.length,
-        next_action:d.next_action,remaining:d.remaining},
+        ...(d.stage==='attempted'||d.stage==='drafted'?{next_action:d.next_action}:{}),remaining:d.remaining},
       drafting_passes:projectDraftingPasses(item,snapshot).map(p=>({pass:p.pass,stage:p.stage,needs_recheck:p.needs_recheck})),
       history_count:item.location_history!.length,projection_only:true,
       notice:'Compact actor tracking; full records retained in journal. First 16 element IDs shown. Not host completion proof. Refresh source/model imagery and reconcile on recovery.'};
@@ -139,7 +139,7 @@ export function projectDraftingPasses(item:{location_history?:readonly WorkPlanL
     const regionChanged=JSON.stringify(record.source)!==JSON.stringify(current?.source)||record.native?.view_id!==current?.native?.view_id;
     const needs_recheck=d.stage==='checked'&&(regionChanged||!snapshot||!sameAssignmentBindingV2(record.binding,snapshot.current_binding)
       ||!!snapshot.unresolved_unknown_operation_ids.length||!!laterChange);
-    return {pass:d.pass,stage:d.stage,needs_recheck,recorded_at:record.recorded_at,
+    return {pass:d.pass,stage:d.stage,needs_recheck,recorded_at:record.recorded_at,linked_element_count:d.element_ids.length,
       checked_by:'execution_actor',host_certified:false};
   });
 }

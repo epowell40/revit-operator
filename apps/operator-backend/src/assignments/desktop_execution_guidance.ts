@@ -2,7 +2,7 @@
  * tool defaults, dispatch authority, verification or ledger semantics. */
 import type {AssignmentSnapshotV2} from '../domain/assignment-kernel/snapshot.js';
 import {advisoryVerificationV2} from '../domain/assignment-kernel/execution_policy.js';
-import {projectWorkPlanLocationV2} from '../domain/assignment-kernel/work_plan_location.js';
+import {projectCompactWorkPlanLocationV2} from '../domain/assignment-kernel/work_plan_location.js';
 import {DRAFTING_COVERAGE_SWEEP_ADVICE,projectDraftingFrontier} from './drafting_frontier.js';
 
 /** Already-loaded canonical task state, not prefetched Revit content or a
@@ -21,7 +21,7 @@ export function desktopNativeInitialContext(snapshot:AssignmentSnapshotV2):strin
   declared_items:snapshot.work_plan?.items.length??0,...(frontier?{drafting_frontier:frontier}:{}),
   resume_regions:(snapshot.work_plan?.items??[]).filter(i=>i.location_history?.at(-1)?.drafting)
     .sort((a,b)=>b.location_history!.at(-1)!.recorded_at.localeCompare(a.location_history!.at(-1)!.recorded_at)).slice(0,2)
-    .map(i=>({item_id:i.item_id,location:projectWorkPlanLocationV2(i,snapshot)}))};
+    .map(i=>({item_id:i.item_id,location:projectCompactWorkPlanLocationV2(i,snapshot)}))};
  return 'Current canonical task state at catalog load: '+JSON.stringify(context)+'. '
   +(context.work_plan_required&&!context.work_plan_declared
    ?'Declare the compact requested scope once alongside needed independent reads; no separate status request is needed just to discover that no plan exists. '

@@ -85,8 +85,41 @@ test('highlighted reference keeps clean pixels and transforms source regions int
  assert.deepEqual(result.content[1],image);assert.equal(result.content.filter((v:any)=>v.type==='image').length,2);
  const tracking=JSON.parse(result.content[2].text).drafting_tracking;
  assert.equal(tracking.marks[0].item_id,'branch');assert.match(tracking.legend,/Unmarked areas remain undiscovered/);
+ assert.equal(tracking.marks[0].passes[0].linked_element_count,1);
+ assert.match(tracking.legend,/linked subset/);
+ const checked=hint(s);
+ s.operations.read={requested_effect:'read',persistent_effect:'none',settlement_state:'settled',binding:s.current_binding,opened_at:'2026-10-31T20:59:00Z',
+  result:{authority:'native-host',status:'succeeded',binding:s.current_binding,completed_at:at}};
+ Object.assign(checked.drafting,{stage:'checked',source_image_sha256:'b'.repeat(64),model_image_sha256:'c'.repeat(64),read_operation_ids:['read']});
+ s.work_plan=recordWorkPlanLocationV2(s,'branch',checked,at);
+ const annotations=hint(s);annotations.drafting.pass='annotations';annotations.drafting.element_ids=[];
+ s.work_plan=recordWorkPlanLocationV2(s,'branch',annotations,at);
+ const mixed=await addDraftingReferenceTracking({content:[{type:'text',text:JSON.stringify(metadata)},image]},s);
+ assert.deepEqual(mixed.content[1],image);
+ assert.deepEqual(JSON.parse(mixed.content[2].text).drafting_tracking.marks[0].passes
+  .map((p:any)=>[p.pass,p.stage,p.linked_element_count]),[['geometry','checked',1],['annotations','drafted',0]]);
+ assert.equal(s.work_plan.items[0].completed_at,undefined);
  const foreign=await addDraftingReferenceTracking({content:[{type:'text',text:JSON.stringify({...metadata,sha256:'f'.repeat(64)})},image]},s);
  assert.equal(foreign.content.length,2);
+});
+
+test('dense reference tracking stays within the clean-image pairing limit and reports omitted marks',async()=>{
+ const {createCanvas}=await import('@napi-rs/canvas'),s=fixture();
+ for(const pass of ['geometry','sizes_properties','connections','elevation','annotations','coverage']){
+  const h=hint(s);h.drafting.pass=pass;
+  s.work_plan=recordWorkPlanLocationV2(s,'branch',h,at);
+ }
+ const item=s.work_plan.items[0];
+ s.work_plan.items=Array.from({length:128},(_,n)=>({...item,item_id:'area_'+n}));
+ const metadata={page:1,sha256:'a'.repeat(64),attachment_id:'pdf',image_geometry:{pixel_to_normalized_page:{u_offset:0,v_offset:0,u_per_pixel:.01,v_per_pixel:.01}}};
+ const image={type:'image',mimeType:'image/png',data:createCanvas(100,100).toBuffer('image/png').toString('base64')};
+ const overlay=await addDraftingReferenceTracking({content:[{type:'text',text:JSON.stringify(metadata)},image]},s);
+ assert.deepEqual(overlay.content[1],image);
+ assert.equal(overlay.content.filter((v:any)=>v.type==='image').length,2);
+ assert(Buffer.byteLength(overlay.content[2].text,'utf8')<32768);
+ const tracking=JSON.parse(overlay.content[2].text).drafting_tracking;
+ assert(tracking.omitted_visible_mark_count>0);
+ assert.equal(tracking.marks.length+tracking.omitted_visible_mark_count,128);
 });
 test('execution continuation honors every ordinary stop and never counts repeated reads as construction progress',()=>{
  const s=fixture(),first=projectExecutionContinuation(s,at);assert.equal(first.state,'ready');

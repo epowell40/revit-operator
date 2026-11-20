@@ -107,6 +107,52 @@ test('new checked scopes advance coverage advice; duplicate check images/read ID
  assert.equal(projectDraftingFrontier(s)!.state,'working');assert.equal(projectDraftingFrontier(s)!.checked_scope_count,2);
  assert.match(projectDraftingFrontier(s)!.recent_focus.remaining,/not checked/,'No whole-area completion inferred');
 });
+
+test('checking geometry leaves the same crop annotations in the queue after reopen',()=>{
+ const s=fixture(),checked=row(s,'west',2,'checked');
+ checked.drafting.next_action='Repeat the resolved geometry change';
+ const annotations=structuredClone(checked);
+ annotations.recorded_at=at(1);
+ Object.assign(annotations.drafting,{pass:'annotations',stage:'drafted',remaining:'Add a missing size label',next_action:'Add the size label'});
+ s.work_plan.items[0].location_history.unshift(annotations);
+ calls(s);
+ const restored=JSON.parse(JSON.stringify(s));
+ const f=record(restored).drafting_frontier;
+ assert.equal(f.recent_focus.stage,'checked');
+ assert.equal(f.recent_focus.next_action,undefined);
+ assert.deepEqual(f.other_recorded_regions.map((r:any)=>[r.item_id,r.pass,r.stage]),[['west','annotations','drafted']]);
+ assert.match(desktopNativeInitialContext(restored),/Add the size label/);
+ assert.doesNotMatch(desktopNativeInitialContext(restored),/Repeat the resolved geometry change/);
+ assert.equal(f.complete,false);
+});
+
+test('checking one element subset leaves another subset in the same crop and pass visible',()=>{
+ const s=fixture();
+ row(s,'west-other',1).drafting.element_ids=[20];
+ row(s,'west-alias',2).drafting.element_ids=[10];
+ row(s,'west-checked',3,'checked');
+ const f=projectDraftingFrontier(s)!;
+ assert.deepEqual(f.other_recorded_regions.map(r=>r.item_id),['west-other']);
+ assert.equal(f.omitted_region_count,1);
+});
+
+test('rechecking existing linked elements with changed crop or subset earns no new coverage window',()=>{
+ const s=fixture(),checked=row(s,'west',1,'checked');
+ checked.drafting.element_ids=[10,11];
+ calls(s);
+ const repeat=structuredClone(checked);
+ repeat.source.region.max_u=.201;
+ repeat.recorded_at=at(24);
+ repeat.drafting.element_ids=[11];
+ s.work_plan.items[0].location_history.push(repeat);
+ assert.equal(projectDraftingFrontier(s)?.state,'coverage_sweep_due');
+ assert.equal(projectDraftingFrontier(s)?.checked_scope_count,1);
+ const newTarget=structuredClone(repeat);
+ newTarget.drafting.element_ids=[11,12];
+ s.work_plan.items[0].location_history.push(newTarget);
+ assert.equal(projectDraftingFrontier(s)?.state,'working');
+ assert.equal(projectDraftingFrontier(s)?.checked_scope_count,2);
+});
 test('actual model-visible feedback and recovery carry the same bounded frontier without changing native checks',()=>{
  const s=fixture();row(s,'older',1).source.region.min_u=.09;row(s,'current',3);calls(s);const baseline=record({...s,work_plan:undefined}),r=record(s);
  assert.deepEqual(r.native_feedback,baseline.native_feedback);assert.equal(r.drafting_frontier.state,'coverage_sweep_due');
