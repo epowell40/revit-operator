@@ -1,6 +1,12 @@
 import {createHash} from 'node:crypto';
 import type {AssignmentSnapshotV2} from '../domain/assignment-kernel/snapshot.js';
-import {projectDraftingPasses} from '../domain/assignment-kernel/work_plan_location.js';
+import {projectDraftingPasses,type WorkPlanLocationRecordV2} from '../domain/assignment-kernel/work_plan_location.js';
+
+type TrackingMark={
+  item_id:string;
+  region:NonNullable<NonNullable<WorkPlanLocationRecordV2['source']>['region']>;
+  passes:Pick<ReturnType<typeof projectDraftingPasses>[number],'pass'|'stage'|'needs_recheck'|'linked_element_count'>[];
+};
 
 /** A derived visual index of the existing journal. Clean source pixels remain
  * adjacent to the overlay. No independent status store or completion verdict. */
@@ -13,7 +19,7 @@ export async function addDraftingReferenceTracking(result:any,snapshot:Assignmen
     content.push(item);
     if(item.type==='text'){try{const m=JSON.parse(item.text);if(m.page&&m.image_geometry)page=m;}catch{}continue;}
     if(item.type!=='image'||!page)continue;
-    const marks=snapshot.work_plan.items.flatMap(work=>{
+    const marks=snapshot.work_plan.items.flatMap<TrackingMark>(work=>{
       const location=work.location_history?.at(-1),source=location?.source;
       if(!source?.region||source.sha256!==page.sha256||source.page!==page.page||source.attachment_id!==page.attachment_id)return [];
       const passes=projectDraftingPasses(work,snapshot).map(({pass,stage,needs_recheck,linked_element_count})=>
@@ -23,7 +29,7 @@ export async function addDraftingReferenceTracking(result:any,snapshot:Assignmen
     if(!marks.length)continue;
     const image=await loadImage(Buffer.from(item.data,'base64')),canvas=createCanvas(image.width,image.height),ctx=canvas.getContext('2d');
     ctx.drawImage(image,0,0);const t=page.image_geometry.pixel_to_normalized_page;
-    const labels:typeof marks=[];let labelBytes=0,omittedMarks=0;
+    const labels:TrackingMark[]=[];let labelBytes=0,omittedMarks=0;
     for(const mark of marks){
       const r=mark.region,x=(r.min_u-t.u_offset)/t.u_per_pixel,y=(r.min_v-t.v_offset)/t.v_per_pixel;
       const w=(r.max_u-r.min_u)/t.u_per_pixel,h=(r.max_v-r.min_v)/t.v_per_pixel;
