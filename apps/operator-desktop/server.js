@@ -2649,6 +2649,7 @@ async function readBackendComputerConfig(options = {}) {
   const data = await readBackendJson("/desktop/computer/config", { method: "GET", signal: options.signal });
   return {
     available: !!data?.available,
+    optional_models: Array.isArray(data?.optional_models) ? data.optional_models : [],
     desktop_native_tools: data?.desktop_native_tools === true,
     provider: `${data?.provider || "backend"}`.trim() || "backend",
     model: `${data?.model || COMPUTER_MODEL}`.trim() || COMPUTER_MODEL,
@@ -4758,7 +4759,8 @@ function modelCallReceiptTokenCount(value) {
 
 function normalizeModelCallReceipt(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  if (value.schema !== MODEL_CALL_RECEIPT_SCHEMA || value.provider !== "openai") return null;
+  if (value.schema !== MODEL_CALL_RECEIPT_SCHEMA || !["openai", "gemini", "anthropic"].includes(value.provider)
+      || (value.provider !== "openai" && value.route !== "desktop_computer")) return null;
   const callId = boundedModelCallReceiptString(value.call_id);
   const requestedModel = boundedModelCallReceiptString(value.requested_model);
   const model = boundedModelCallReceiptString(value.model);
@@ -4790,7 +4792,7 @@ function normalizeModelCallReceipt(value) {
   return {
     schema: MODEL_CALL_RECEIPT_SCHEMA,
     call_id: callId,
-    provider: "openai",
+    provider: value.provider,
     route,
     requested_model: requestedModel,
     model,
@@ -13928,6 +13930,7 @@ app.get("/api/config", async (_req, res) => {
       inputEnabled: INPUT_ENABLED,
       shellEnabled: SHELL_ENABLED,
       computerUseAvailable: !!backendComputer.available,
+      optionalAgentModels: backendComputer.optional_models || [],
       localExecutor: isLocalBackendUrl(resolveBackendUrl()) && authMode === "shared_token"
         ? backendComputer.local_executor || null
         : null,

@@ -9,6 +9,7 @@ import {getAssignmentKernelSnapshotV2} from './assignments/assignment_kernel_v2_
 import {resolveOpenAiDataPolicy} from './openai_data_policy.js';
 import {packHistoricalObservationFields} from './desktop_observation_replay.js';
 import {desktopToolHistoryCacheSupported} from './desktop_prompt_cache.js';
+import {availableExternalDesktopModels,externalDesktopProvider} from './external_desktop_models.js';
 
 function writeDurable(file: string, value: unknown): void {
   const fd = fs.openSync(file, "wx");
@@ -19,9 +20,14 @@ function writeDurable(file: string, value: unknown): void {
 type Binding = AssignmentKernelBindingInputV2 & { kernelVersion: 1 | 2 };
 /** Immutable transport/account-configuration pin, never native or completion
  * authority. Used by owner and independent review; no credentials are stored. */
-function pinProviderDataPolicy(binding:Binding):void {
+function pinProviderDataPolicy(binding:Binding,request:any):void {
  const key=createHash('sha256').update(canonicalJsonV2(binding)).digest('hex');
- const file=identity(binding,'provider-policy-'+key).file+'.policy',policy=resolveOpenAiDataPolicy();
+ const alternate=externalDesktopProvider(request?.model);
+ if(alternate && (binding.kernelVersion!==2 || !availableExternalDesktopModels().includes(request.model)))
+   throw Error('Selected provider model is unavailable in this Operator runtime.');
+ const policy=alternate ? {schema:'operator.external-desktop-data-policy/v1',storage:'host',provider:alternate,model:request.model}
+   : resolveOpenAiDataPolicy();
+ const file=identity(binding,'provider-policy-'+key).file+'.policy';
  const validate=()=>{let old:any;
   try{const stat=fs.lstatSync(file);if(!stat.isFile()||stat.isSymbolicLink()||stat.size>16_384)throw Error();old=JSON.parse(fs.readFileSync(file,'utf8'));}
   catch{throw Error('provider_data_policy_custody_invalid');}
@@ -102,7 +108,7 @@ export async function retainDesktopResponse<T>(binding: Binding, messageId: unkn
     // Even completed responses must be recovered explicitly, never executed twice.
     throw new Error("desktop_response_already_dispatched_use_result");
   }
-  pinProviderDataPolicy(binding);
+  pinProviderDataPolicy(binding,request);
   const pending: Stored = { binding, message_id: id.messageId, request_hash: requestHash, status: "pending" };
   writeDurable(id.file, pending);
   // A new dispatch invalidates the previous resumable boundary before any
@@ -475,7 +481,7 @@ export function desktopModelInputPackage(body: any) {
 }
 
 export function prepareDesktopProviderInput(binding: Binding, messageId: unknown, body: any,
-  internal: { hostFeedback?: unknown; cacheStableHistory?: boolean } = {}): any {
+  internal: { hostFeedback?: unknown; cacheStableHistory?: boolean; preserveSignedHistory?: boolean } = {}): any {
   if (!desktopResponseOwnsContext(body)) return body;
   const current = loadContext(binding);
   if (!current || current.message_id !== messageId) return body; // legacy/direct relay
@@ -497,12 +503,13 @@ export function prepareDesktopProviderInput(binding: Binding, messageId: unknown
         || !outputsMatch)
       throw Error('desktop_context_window_predecessor_mismatch');
     const known = feedbackMarkers(prior.window, prior.feedback_markers);
-    const superseded = new Set(latestFeedback ? known.map(x => x.index) : []);
-    const startup = supersededStartupImages(prior.window, body);
+    const signed = internal.preserveSignedHistory === true;
+    const superseded = new Set(latestFeedback && !signed ? known.map(x => x.index) : []);
+    const startup = signed ? {input:prior.window,omitted:0} : supersededStartupImages(prior.window, body);
     omittedStartupImages = startup.omitted;
     const retained = startup.input.filter((_item: any, i: number) => !superseded.has(i));
     omittedFeedback = superseded.size;
-    const visuals = boundedHistoricalVisuals(retained, body.input, Boolean(body.tools?.some((tool: any) => tool?.type === 'computer')));
+    const visuals = boundedHistoricalVisuals(retained, body.input, !signed && Boolean(body.tools?.some((tool: any) => tool?.type === 'computer')));
     omittedVisuals = visuals.omitted;
     // Deduplicating small repeated fields rewrites earlier tool outputs and
     // invalidates the larger cached prefix. Preserve those already-delivered
@@ -510,14 +517,14 @@ export function prepareDesktopProviderInput(binding: Binding, messageId: unknown
     // retirement, window limits and genuine compaction remain independent.
     // Legacy forward references remain valid because their literal anchors
     // are retained; no new reference chains or verification claims are made.
-    const observations = internal.cacheStableHistory && desktopToolHistoryCacheSupported(body.model)
+    const observations = signed || (internal.cacheStableHistory && desktopToolHistoryCacheSupported(body.model))
       ? {input:visuals.input,omittedFields:0,bytesSaved:0}
       : packHistoricalObservationFields(visuals.input, body.input);
     omittedObservationFields = observations.omittedFields;
     observationBytesSaved = observations.bytesSaved;
-    const pixels = uniqueHistoricalPixels(observations.input, body.input);
+    const pixels = signed ? {input:observations.input,omitted:0} : uniqueHistoricalPixels(observations.input, body.input);
     omittedImages = pixels.omitted;
-    if (!latestFeedback) markers = known;
+    if (signed || !latestFeedback) markers = [...known];
     const input = [...pixels.input, ...body.input];
     if (Buffer.byteLength(JSON.stringify(input), 'utf8') > WINDOW_BYTES)
       throw Error('desktop_context_window_budget_exceeded');

@@ -30,6 +30,8 @@ import {resolveOpenAiDataPolicy} from './openai_data_policy.js';
 import {getWorkspaceRoot} from './workspace.js';
 import {desktopToolHistoryCache,boundedPromptCacheDiagnostic} from './desktop_prompt_cache.js';
 import {desktopNativeInteractionTools,retainNativeInteractiveProviderResponse,withDesktopNativeProviderReadiness} from './assignments/desktop_native_tools.js';
+import {assertExternalDesktopModel, availableExternalDesktopModels, externalDesktopProvider,
+  ExternalDesktopResponseError, requestExternalDesktopModel} from './external_desktop_models.js';
 
 export type DesktopComputerRelayRequest = {
   model?: string;
@@ -137,6 +139,7 @@ export function getDesktopComputerConfig(): {
   sidecar_agent_profile: SidecarAgentProfileState;
   local_executor: LocalExecutorCapabilityV1 | null;
   desktop_native_tools: boolean;
+  optional_models: string[];
 } {
   return {
     available: !!resolveOpenAiApiKey(),
@@ -145,7 +148,8 @@ export function getDesktopComputerConfig(): {
     reasoning_effort: resolveDesktopComputerReasoningEffort(),
     sidecar_agent_profile: getSidecarAgentProfileState(),
     local_executor: localExecutorCapability(),
-    desktop_native_tools: localDesktopNativeTransportAvailable()
+    desktop_native_tools: localDesktopNativeTransportAvailable(),
+    optional_models: availableExternalDesktopModels()
   };
 }
 
@@ -239,11 +243,7 @@ function simplifyRelayResponse(response: any, modelCallReceipt: ModelCallReceipt
 
 export async function relayDesktopComputerResponse(rawBody: unknown,
   retainedTurnUsage?: ModelEvidencePayloadUsage,
-  internal: {cacheToolHistory?:boolean;comparisonResponseId?:string} = {}): Promise<DesktopComputerRelayResponse> {
-  const apiKey = resolveOpenAiApiKey();
-  if (!apiKey) {
-    throw new Error("OPERATOR_OPENAI_API_KEY (or OPENAI_API_KEY) is not set.");
-  }
+  internal: {cacheToolHistory?:boolean;comparisonResponseId?:string;externalBound?:boolean} = {}): Promise<DesktopComputerRelayResponse> {
 
   const body = normalizeRelayRequest(rawBody);
   // Only the bound relay supplies this internal argument, after validating the
@@ -252,11 +252,14 @@ export async function relayDesktopComputerResponse(rawBody: unknown,
   // count historical context again against one turn's evidence-envelope cap.
   if (!retainedTurnUsage) body.input = prepareBoundedModelEvidenceInput(body.input);
   const evidenceUsage = retainedTurnUsage ?? assertBoundedModelEvidencePayload(body.input);
-  const dataPolicy=resolveOpenAiDataPolicy();
-  const client = createOpenAiClient(apiKey);
   const model = body.model || resolveDesktopComputerModel();
   const reasoningEffort = body.reasoning_effort || resolveDesktopComputerReasoningEffort();
   assertModelReasoningEffort(model, reasoningEffort);
+  assertExternalDesktopModel(model, reasoningEffort, internal.externalBound === true);
+  const alternate = externalDesktopProvider(model);
+  const apiKey = alternate ? null : resolveOpenAiApiKey();
+  if (!alternate && !apiKey) throw new Error("OPERATOR_OPENAI_API_KEY (or OPENAI_API_KEY) is not set.");
+  const dataPolicy = alternate ? undefined : resolveOpenAiDataPolicy();
   const startedAtUtc = new Date().toISOString();
   const startedMs = Date.now();
   const instructions = body.instructions?.includes(REUSED_DETAIL_GUIDANCE)
@@ -267,7 +270,9 @@ export async function relayDesktopComputerResponse(rawBody: unknown,
   const contextPackage = {...desktopModelInputPackage({...body,input:cache.input,instructions}),prompt_cache:cache.diagnostic};
   let response: unknown;
   try {
-    response = await client.responses.create({
+    if (alternate && body.previous_response_id) throw Error('external_model_exact_input_window_required');
+    response = alternate ? await requestExternalDesktopModel(alternate, model, reasoningEffort, instructions, body.tools ?? [], cache.input)
+      : await createOpenAiClient(apiKey!).responses.create({
       model,
       reasoning: { effort: reasoningEffort },
       // Host-owned context management for the same execution owner. Preserve
@@ -292,8 +297,9 @@ export async function relayDesktopComputerResponse(rawBody: unknown,
       reasoning_effort: reasoningEffort,
       started_at_utc: startedAtUtc,
       duration_ms: Date.now() - startedMs,
-      error
+      error, ...(error instanceof ExternalDesktopResponseError ? {response:error.observed} : {})
     });
+    if (alternate) receipt.provider = alternate;
     recordDesktopEvidenceUsage(evidenceUsage, body.evidence_scope, receipt);
     throw new DesktopComputerProviderError(receipt, error, contextPackage);
   }
@@ -305,6 +311,7 @@ export async function relayDesktopComputerResponse(rawBody: unknown,
     duration_ms: Date.now() - startedMs,
     response
   });
+  if (alternate) receipt.provider = alternate;
   recordDesktopEvidenceUsage(evidenceUsage, body.evidence_scope, receipt);
   const cacheDiagnostic=boundedPromptCacheDiagnostic((response as any)?.prompt_cache_diagnostics);
   return {...simplifyRelayResponse(response, receipt), provider_data_policy:dataPolicy,input_images:imageInputManifest(body.input),model_context_package:contextPackage,
@@ -319,7 +326,7 @@ export async function relayBoundDesktopComputerResponse(rawBody: unknown,
   const messageId = request.message_id;
   let providerBody:unknown=rawBody;
   let retainedTurnUsage: ModelEvidencePayloadUsage | undefined;
-  let cacheContext: {cacheToolHistory?:boolean;comparisonResponseId?:string} = {};
+  let cacheContext: {cacheToolHistory?:boolean;comparisonResponseId?:string;externalBound?:boolean} = {};
   if (messageId !== undefined && (typeof messageId !== "string" || !messageId.length || messageId.length > 256 || /[\u0000-\u001f]/.test(messageId)))
     throw new Error("desktop_provider_message_identity_invalid");
   const usage = (receipt: ModelCallReceipt) => messageId === undefined ? undefined : parseProviderResponseUsageV1({
@@ -343,9 +350,14 @@ export async function relayBoundDesktopComputerResponse(rawBody: unknown,
   const model = body.model || resolveDesktopComputerModel();
   const reasoning = body.reasoning_effort || resolveDesktopComputerReasoningEffort();
   assertModelReasoningEffort(model, reasoning);
+  const alternate = externalDesktopProvider(model);
+  assertExternalDesktopModel(model, reasoning, typeof messageId === "string");
+  if (alternate && Array.isArray(body.input) && body.input.some(item =>
+    item && typeof item === "object" && ("provider_part" in item || "provider_transport" in item)))
+    throw Error("external_model_client_provider_history_refused");
   body.input = prepareBoundedModelEvidenceInput(body.input);
   assertBoundedModelEvidencePayload(body.input);
-  if (!resolveOpenAiApiKey()) throw new Error("OPERATOR_OPENAI_API_KEY (or OPENAI_API_KEY) is not set.");
+  if (!alternate && !resolveOpenAiApiKey()) throw new Error("OPERATOR_OPENAI_API_KEY (or OPENAI_API_KEY) is not set.");
   // The HTTP caller may leave while its upstream request is still settling.
   // Serialize only this outer relay; the canonical admission guard remains
   // authoritative for other in-flight work, pause, unknown effects and budget.
@@ -365,11 +377,13 @@ export async function relayBoundDesktopComputerResponse(rawBody: unknown,
       instructions:(body.instructions??'')+'\nAn existing native placement call is outstanding. Only operate that Revit placement UI, then Escape and use native__await_interactive_placement for its actual result. Do not save, report or finish the task, call another native tool, or treat input readiness as a committed edit.'};
     retainedTurnUsage=assertBoundedModelEvidencePayload((providerBody as DesktopComputerRelayRequest).input);
     providerBody=prepareDesktopProviderInput(binding,messageId,{
-      ...providerBody as Record<string,unknown>,model,reasoning_effort:reasoning },ownerContext?{hostFeedback:ownerInput!.at(-1),cacheStableHistory:true}:{});
+      ...providerBody as Record<string,unknown>,model,reasoning_effort:reasoning },ownerContext?{
+        hostFeedback:ownerInput!.at(-1),cacheStableHistory:true,preserveSignedHistory:!!alternate}:{});
     // Only after the bound predecessor and raw tool outputs have passed the
     // existing checks. Neither client JSON nor the actor selects cache policy.
-    cacheContext=ownerContext?{cacheToolHistory:true,comparisonResponseId:body.previous_response_id}:{};
+    cacheContext=alternate?{externalBound:true}:ownerContext?{cacheToolHistory:true,comparisonResponseId:body.previous_response_id}:{};
     const response=await executeExternalProviderCallV2({ binding, model, reasoning_effort: reasoning,
+      ...(alternate?{provider:alternate}:{}),
       ...(interactiveTools?{nativeInteractiveInput:true as const}:{}),
       invoke, receipt: result => result.model_call_receipt,
       errorReceipt: getDesktopComputerProviderErrorReceipt });

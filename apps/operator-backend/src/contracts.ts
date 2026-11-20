@@ -109,7 +109,7 @@ export type ModelCallTokenUsage = {
 export type ModelCallReceipt = {
   schema: "revit-operator.model-call-receipt.v1";
   call_id: string;
-  provider: "openai";
+  provider: "openai" | "gemini" | "anthropic";
   route: "classic" | "planner" | "executor" | "codex_agent" | "desktop_computer";
   requested_model: string;
   model: string;
