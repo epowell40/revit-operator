@@ -19,6 +19,7 @@ import {boundDesktopNativeOutput,boundDesktopNativeToolContract} from './desktop
 import {DESKTOP_EXECUTION_EFFICIENCY_GUIDANCE,desktopNativeInitialContext} from './desktop_execution_guidance.js';
 import {nativeInteractiveInputOwnership,withNativeInteractiveInvocation,afterNativeInteractiveReadback} from './native_interactive_input.js';
 import {buildAssignmentKernelPublicationV2} from './assignment_kernel_v2_publication.js';
+import {externalDesktopProvider} from '../external_desktop_models.js';
 
 const PREFIX='native__';
 type Tool = {name:string;description:string;inputSchema:Record<string,unknown>;deferLoading?:boolean};
@@ -52,7 +53,12 @@ export function desktopNativeResponseCall(record:ReturnType<typeof readDesktopRe
   const item=matches[0];
   const args=object(typeof item.arguments==='string'?JSON.parse(item.arguments):item.arguments);
   const tool=item.name===PREFIX+'invoke'?id(args.tool):item.name.slice(PREFIX.length);
-  return {tool, arguments:item.name===PREFIX+'invoke'?object(args.arguments):args};
+  const requested=response.model_call_receipt.requested_model;
+  const alternate=externalDesktopProvider(requested);
+  if(alternate && response.model_call_receipt.provider!==alternate)
+    throw Error('desktop_native_provider_identity_mismatch');
+  return {tool, arguments:item.name===PREFIX+'invoke'?object(args.arguments):args,
+    ...(alternate?{providerModel:requested as string}:{})};
 }
 
 export function assertDesktopNativeState(snapshot:AssignmentSnapshotV2, responseId?:string):void {
@@ -305,7 +311,10 @@ async function executeDesktopNativeCallSettled(binding:AssignmentKernelBindingIn
     // Reuse durable once-only transport claims. Pending/error/completed claims
     // never redispatch. Canonical operation settlement is still in the handler.
     const transportId='native-call:'+createHash('sha256').update(canonicalJsonV2([responseId,callId])).digest('hex');
-    return await retainDesktopResponse(storedBinding,transportId,{messageId,responseId,callId,selected,target},async()=>{
+    // The authenticated retained receipt identifies the provider. A native
+    // transport claim must validate the same policy without reclassifying it.
+    return await retainDesktopResponse(storedBinding,transportId,{messageId,responseId,callId,selected,target,
+      ...(selected.providerModel?{model:selected.providerModel}:{})},async()=>{
       if(description){
         const scope={session_id:binding.session_id,assignment_id:binding.assignment_id,run_id:binding.run_id,generation:binding.generation};
         return {schema:'operator.desktop-native-result.v1',result:description.success
