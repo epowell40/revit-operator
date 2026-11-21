@@ -16,6 +16,19 @@ function fixture():any{
  s.work_plan={schema:'revit-operator.assignment-work-plan/v2',assumptions:[],items:[{item_id:'branch',description:'West branch',source_basis:'PDF page 1 west',declared_at:at,operation_ids:[]}]};
  return s;
 }
+test('active actor continuation carries measured token reserve and keeps Pause and unknown holds',()=>{
+ const s=fixture();
+ s.provider_calls={a:{binding:s.current_binding,admitted_at:at,completed_at:at,state:'completed',usage:{total_tokens:227767}}};
+ const before=JSON.stringify(s),c:any=projectExecutionContinuation(s,at);
+ assert.equal(c.state,'ready');
+ assert.equal(c.token_runway.tokens_per_call,227767);
+ assert.equal(c.token_runway.estimated_calls_remaining,Math.floor(c.remaining_resources.total_tokens.remaining/227767));
+ assert.equal(JSON.stringify(s),before);
+ for(const patch of [{execution_control:{state:'paused'}},{unresolved_unknown_operation_ids:['unknown']},{provider_usage_hold:{reason:'pending'}}]){
+  const held:any=projectExecutionContinuation({...s,...patch},at);
+  assert.equal(held.state,'hold');assert.equal(held.token_runway,undefined);
+ }
+});
 function hint(s:any):any{return {status:'candidate',reason:'Matched corridor and room boundary.',source:{attachment_id:'pdf',filename:'source.pdf',sha256:'a'.repeat(64),page:1,page_count:1,region:{min_u:.1,min_v:.2,max_u:.4,max_v:.5}},
  native:{document_fingerprint:s.current_binding.document_fingerprint,view_id:20,view_name:'Plan'},
  drafting:{pass:'geometry',stage:'drafted',element_ids:[42],read_operation_ids:[],next_action:'Connect the branch outlet.',remaining:'Outlet and annotation.',boundary_context:'Main continues east beyond crop.'}};}

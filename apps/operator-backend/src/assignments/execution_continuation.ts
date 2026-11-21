@@ -34,7 +34,7 @@ export function projectExecutionContinuation(snapshot: AssignmentSnapshotV2, now
     .filter(r=>r.drafting?.stage==='checked').map(r=>i.item_id+':'+r.drafting!.pass)))].sort();
   const progress_key=createHash('sha256').update(JSON.stringify({applied,checked,claims,backchecked})).digest('hex');
   return {...base,state:'ready',reason:'ready_work_remaining',progress_key,next_items:next,
-    remaining_resources:budget.resources,checkpoint_recommended:budget.checkpoint_recommended,
+    remaining_resources:budget.resources,checkpoint_recommended:budget.checkpoint_recommended,token_runway:budget.token_runway,
     construction_progress:draftingConstructionProgressV2(snapshot,DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2.max_no_progress_epochs),
     notice:'A completed response is not a completed assignment. Continue one useful discrepancy, inspect and check off the result, then select the next. Existing native/provider admission remains authoritative.'};
 }

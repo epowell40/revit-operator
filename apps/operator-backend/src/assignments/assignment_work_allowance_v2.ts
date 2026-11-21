@@ -2,6 +2,7 @@ import { assignmentWorkAllowanceV2, defaultAssignmentWorkBudgetV2 } from "../dom
 export { assignmentWorkAllowanceV2, defaultAssignmentWorkBudgetV2 } from "../domain/assignment-kernel/effective_work_budget.js";
 import type { AssignmentSnapshotV2, AssignmentProgressBudgetV2 } from "../domain/assignment-kernel/index.js";
 import { assignmentActiveExecutionTimeMsV2 } from "../domain/assignment-kernel/progress/execution_time.js";
+import {providerTokenRunway} from './provider_token_runway.js';
 import { ordinaryInputTokens, standardProviderTextTokenCostUsd, validTokenCount, PROVIDER_TOKEN_PRICING_SNAPSHOT } from "../provider_token_cost.js";
 
 /** Resource telemetry, not permission to extend a lease or certify a result.
@@ -58,6 +59,7 @@ export function assignmentWorkBudgetStatusV2(snapshot: AssignmentSnapshotV2, ord
   }).map(([key])=>key);
   const allowance=assignmentWorkAllowanceV2(snapshot);
   return { resources, cached_input_tokens: cached,
+    token_runway:providerTokenRunway(calls,snapshot.current_binding,resources.total_tokens.remaining,now),
     allocation: { source_work_allowance: snapshot.spec.execution_policy?.source_work_allowance ?? null,
       ...(allowance.source_required_plan?{source_required_plan:{
         basis:'Immutable exact intake requires a durable work plan, with a retained edit batch and dependent inspection; one bounded planning window, not checked work or completion.'}}:{}),

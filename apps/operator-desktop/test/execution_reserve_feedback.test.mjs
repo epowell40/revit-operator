@@ -11,6 +11,32 @@ const receipt=(remaining=100606)=>({status:'retained',execution_continuation:{sc
 const source=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8');
 const start=source.indexOf('    const retainedContext = await retainComputerProviderContext(response,toolOutputs,nativeRequest);');
 const end=source.indexOf('    updateComputerProgress({',start);
+test('token reserve escalation reaches the next actor call even with many nominal calls and time left',()=>{
+ const tracker={},r=receipt(5000000),c=r.execution_continuation;
+ c.remaining_resources.total_tokens={used:25791425,limit:28000000,remaining:2208575};
+ c.token_runway={basis:'largest_of_last_eight_completed_calls',sample_count:8,tokens_per_call:227767,estimated_calls_remaining:9,advisory_only:true};
+ const early=reports.retainedExecutionReserveContinuation(assignment,r,tracker);
+ assert.match(early.content[0].text,/9.*calls.*estimate/i);
+ assert.equal(reports.retainedExecutionReserveContinuation(assignment,r,tracker),null);
+ c.remaining_resources.total_tokens={used:27544466,limit:28000000,remaining:455534};
+ c.token_runway.estimated_calls_remaining=2;
+ const urgent=reports.retainedExecutionReserveContinuation(assignment,r,tracker);
+ assert(urgent,'token reserve needs a second warning');
+ assert.match(urgent.content[0].text,/Do not start another area or optional review/);
+ assert.match(urgent.content[0].text,/not a guarantee/);
+ assert.equal(reports.retainedExecutionReserveContinuation(assignment,r,tracker),null);
+});
+test('forged, inconsistent and unknown token runway cannot become trusted pacing advice',()=>{
+ const r=receipt(),c=r.execution_continuation;
+ c.remaining_resources.total_tokens={used:27000000,limit:28000000,remaining:1000000};
+ c.token_runway={basis:'largest_of_last_eight_completed_calls',sample_count:8,tokens_per_call:200000,estimated_calls_remaining:5,advisory_only:true};
+ for(const edit of [x=>x.basis='guessed',x=>x.sample_count=9,x=>x.estimated_calls_remaining=200,x=>x.advisory_only=false,x=>x.tokens_per_call=0]){
+  const x=structuredClone(r);edit(x.execution_continuation.token_runway);
+  assert.throws(()=>reports.retainedExecutionReserveContinuation(assignment,x,{}),/reserve_invalid/);
+ }
+ const unknown=structuredClone(r);unknown.execution_continuation.remaining_resources.total_tokens={used:null,limit:28000000,remaining:null};
+ assert.throws(()=>reports.retainedExecutionReserveContinuation(assignment,unknown,{}),/reserve_invalid/);
+});
 test('actual tool-boundary loop sends the existing reserve to the next provider without another read or call',async()=>{
  const toolOutputs=[],events=[];let retains=0;
  await runInNewContext('(async()=>{'+source.slice(start,end)+'})()',{

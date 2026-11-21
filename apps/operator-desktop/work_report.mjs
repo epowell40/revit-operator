@@ -125,8 +125,17 @@ export function retainedExecutionReserveContinuation(assignment, retained, track
     meters[key]=m;
   }
   if(!Object.values(meters).some(m=>m.remaining!==null))return null;
+  const runway=c.token_runway;
+  if(runway!=null&&(runway.basis!=='largest_of_last_eight_completed_calls'||runway.advisory_only!==true
+    ||!Number.isSafeInteger(runway.sample_count)||runway.sample_count<1||runway.sample_count>8
+    ||!Number.isSafeInteger(runway.tokens_per_call)||runway.tokens_per_call<1
+    ||!Number.isSafeInteger(runway.estimated_calls_remaining)||runway.estimated_calls_remaining<0
+    ||meters.total_tokens?.remaining==null
+    ||runway.estimated_calls_remaining!==Math.floor(meters.total_tokens.remaining/runway.tokens_per_call)))
+    throw Error('execution_continuation_reserve_invalid');
   const near=(key,n)=>meters[key]?.remaining!=null&&meters[key].remaining<=n;
-  const stage=near('active_execution_ms',30000)||near('provider_calls',1)?2:1;
+  const urgentTokens=runway!=null&&runway.estimated_calls_remaining<=2;
+  const stage=near('active_execution_ms',30000)||near('provider_calls',1)||urgentTokens?2:1;
   const window=JSON.stringify(Object.entries(meters).map(([key,m])=>[key,m.limit]));
   if(tracker.window===window&&tracker.stage>=stage)return null;
   tracker.window=window;tracker.stage=stage;
@@ -134,6 +143,8 @@ export function retainedExecutionReserveContinuation(assignment, retained, track
   return {role:'user',content:[{type:'input_text',text:
     'Host checkpoint warning: current remaining allocation '+JSON.stringify(remaining)+'. '+
     'These are cumulative task resources, not a fresh allowance for this response. '+
+    (runway?'At recent context sizes, about '+runway.estimated_calls_remaining+' more calls fit the token reserve (estimate, not a guarantee; based on the largest of the last '+runway.sample_count+' completed calls, including cached tokens). ':'')+
+    (urgentTokens?'The token reserve is nearly exhausted. Do not start another area or optional review. Prioritize focused readback of any unsaved work, an authorized useful save if needed, and an honest partial handoff using retained evidence. Do not repeat checks already supported by current evidence merely to polish the report. ':'')+
     'Before starting more drafting, leave enough for focused readback, any authorized save of useful work, and an honest partial handoff. '+
     'If that does not fit, preserve and report the current work and specific remaining items instead of beginning another batch. '+
     'A save is not verification; never call unsaved changes saved. This warning grants no extra calls, time, native permission or completion and does not override Pause or unknown effects.'}]};
