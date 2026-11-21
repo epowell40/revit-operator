@@ -226,6 +226,9 @@ export function parseAssignmentKernelPublicationV2(value) {
   if (!publication || publication.schema !== ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA) publicationInvalid("schema");
   if (publication.supports_explicit_resource_renewal_v1 !== undefined
       && publication.supports_explicit_resource_renewal_v1 !== true) publicationInvalid("resource_renewal_capability");
+  if (publication.supports_active_time_renewal_v1 !== undefined
+      && (publication.supports_active_time_renewal_v1 !== true
+        || publication.supports_explicit_resource_renewal_v1 !== true)) publicationInvalid("active_time_renewal_capability");
   const assignmentId = requiredString(publication.assignment_id);
   const assignmentVersion = publication.assignment_version;
   const snapshot = record(publication.snapshot);

@@ -8,9 +8,9 @@ import { sameAssignmentBindingV2 } from './identity.js';
 export const USER_FOLLOWUP_ALLOCATION_V1 = 'continue_advisory_checkpoint_with_work_allowance_v1';
 const keys = ['max_provider_calls','max_operations','max_total_tokens','max_wall_clock_ms'] as const;
 type Limits = Pick<AssignmentProgressBudgetV2, typeof keys[number]>;
-export type UserResourceRenewalRequestV1 = Readonly<{ provider_calls: number; total_tokens: number }>;
+export type UserResourceRenewalRequestV1 = Readonly<{ provider_calls: number; total_tokens: number; active_execution_ms?: number }>;
 type RenewalAuthorization = Readonly<{ command_id: string; authorized_at: string;
-  request: UserResourceRenewalRequestV1; ceilings: Pick<Limits,'max_provider_calls'|'max_total_tokens'> }>;
+  request: UserResourceRenewalRequestV1; ceilings: Pick<Limits,'max_provider_calls'|'max_total_tokens'> & Partial<Pick<Limits,'max_wall_clock_ms'>> }>;
 export type UserFollowupAllocationV1 = Readonly<{
   command_id: string; allocated_at: string; earned_baseline: Limits; limits: Limits;
   resource_renewal?: RenewalAuthorization;
@@ -18,8 +18,9 @@ export type UserFollowupAllocationV1 = Readonly<{
 
 export function userFollowupLimitV1(snapshot: AssignmentSnapshotV2, key: typeof keys[number], earned: number): number {
   const allocation = snapshot.user_followup_allocation;
-  const hard = (key==='max_provider_calls'||key==='max_total_tokens') && allocation?.resource_renewal
-    ? allocation.resource_renewal.ceilings[key] : snapshot.spec.execution_policy?.progress_allowance?.[key];
+  const hard = (key==='max_provider_calls'||key==='max_total_tokens'||key==='max_wall_clock_ms')
+    ? allocation?.resource_renewal?.ceilings[key] ?? snapshot.spec.execution_policy?.progress_allowance?.[key]
+    : snapshot.spec.execution_policy?.progress_allowance?.[key];
   return !allocation || hard === undefined ? earned : Math.min(hard, Math.max(earned,
     allocation.limits[key] + Math.max(0, earned - allocation.earned_baseline[key])));
 }
@@ -45,10 +46,13 @@ export function allocateUserFollowupV1(snapshot: AssignmentSnapshotV2, commandId
     && sameAssignmentBindingV2(snapshot.spec.binding,snapshot.current_binding);
   if (renewal !== undefined) {
     kernelAssertV2(Boolean(renewal) && typeof renewal==='object' && !Array.isArray(renewal)
-      && Object.keys(renewal).length===2 && Object.keys(renewal).every(k=>['provider_calls','total_tokens'].includes(k))
+      && Object.keys(renewal).length>=2 && Object.keys(renewal).length<=3
+      && Object.keys(renewal).every(k=>['provider_calls','total_tokens','active_execution_ms'].includes(k))
       && Number.isSafeInteger(renewal.provider_calls) && renewal.provider_calls>0 && renewal.provider_calls<=64
-      && Number.isSafeInteger(renewal.total_tokens) && renewal.total_tokens>0 && renewal.total_tokens<=16_000_000,
-      'advisory_resource_renewal_invalid','Explicit renewal is bounded to64 additional provider calls and16M total tokens.');
+      && Number.isSafeInteger(renewal.total_tokens) && renewal.total_tokens>0 && renewal.total_tokens<=16_000_000
+      && (!Object.hasOwn(renewal,'active_execution_ms') || Number.isSafeInteger(renewal.active_execution_ms)
+        && renewal.active_execution_ms!>0 && renewal.active_execution_ms!<=1_800_000),
+      'advisory_resource_renewal_invalid','Explicit renewal is bounded to64 additional provider calls,16M total tokens and optionally30 active minutes.');
     kernelAssertV2((policy?.mode==='local_advisory_v1' && Boolean(ceiling) || product) && snapshot.spec.requested_effect==='apply'
       && snapshot.execution_control?.state!=='paused', 'advisory_resource_renewal_not_enabled',
       'Only an open, unpaused advisory apply checkpoint accepts explicit resource renewal.');
@@ -67,7 +71,7 @@ export function allocateUserFollowupV1(snapshot: AssignmentSnapshotV2, commandId
     baseline[key] = earned[key];
     if (renewal) { limits[key]=current[key]; continue; }
     // Old policies without an explicit time ceiling never acquire more time.
-    const authorized=(key==='max_provider_calls'||key==='max_total_tokens')
+    const authorized=(key==='max_provider_calls'||key==='max_total_tokens'||key==='max_wall_clock_ms')
       ? snapshot.user_followup_allocation?.resource_renewal?.ceilings[key]??ceiling?.[key] : ceiling?.[key];
     limits[key] = authorized === undefined ? current[key]
       : Math.min(authorized, Math.max(current[key], consumed[key] + policy![key]));
@@ -79,9 +83,18 @@ export function allocateUserFollowupV1(snapshot: AssignmentSnapshotV2, commandId
       'Renewal exceeds the bounded cumulative advisory resource ceiling.');
     limits.max_provider_calls=Math.max(current.max_provider_calls,calls);
     limits.max_total_tokens=Math.max(current.max_total_tokens,tokens);
+    const priorTimeCeiling=authorization?.ceilings.max_wall_clock_ms;
+    if(renewal.active_execution_ms!==undefined){
+      const time=consumed.max_wall_clock_ms+renewal.active_execution_ms;
+      kernelAssertV2(time<=28_800_000,'advisory_resource_renewal_ceiling',
+        'Renewal exceeds the bounded eight-hour cumulative active-execution ceiling.');
+      limits.max_wall_clock_ms=Math.max(current.max_wall_clock_ms,time);
+    }
     authorization={command_id:commandId,authorized_at:now,request:{...renewal},ceilings:{
       max_provider_calls:Math.max(ceiling?.max_provider_calls??policy!.max_provider_calls,limits.max_provider_calls),
-      max_total_tokens:Math.max(ceiling?.max_total_tokens??policy!.max_total_tokens,limits.max_total_tokens)}};
+      max_total_tokens:Math.max(ceiling?.max_total_tokens??policy!.max_total_tokens,limits.max_total_tokens),
+      ...((renewal.active_execution_ms!==undefined||priorTimeCeiling!==undefined)
+        ?{max_wall_clock_ms:Math.max(priorTimeCeiling??0,ceiling?.max_wall_clock_ms??policy!.max_wall_clock_ms,limits.max_wall_clock_ms)}:{})}};
   }
   return {...snapshot,user_followup_allocation:{command_id:commandId,allocated_at:now,earned_baseline:baseline,limits,
     ...(authorization?{resource_renewal:authorization}:{})}};

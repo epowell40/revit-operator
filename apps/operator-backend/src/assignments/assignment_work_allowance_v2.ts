@@ -48,7 +48,11 @@ export function assignmentWorkBudgetStatusV2(snapshot: AssignmentSnapshotV2, ord
     && bounded(renewal.ceilings?.max_total_tokens,256_000_000) && renewal.ceilings.max_total_tokens>=budget.max_total_tokens
     && calls.every(call=>validTokenCount(call.usage?.total_tokens)) ? request : undefined;
   const near = Object.entries(resources).filter(([key,value]) => {
-    const window = renewedWindow && (key==='provider_calls'||key==='total_tokens') ? renewedWindow[key] : undefined;
+    const timeWindow=renewedWindow && bounded(renewedWindow.active_execution_ms,1_800_000)
+      && bounded(renewal?.ceilings.max_wall_clock_ms,28_800_000)
+      && renewal!.ceilings.max_wall_clock_ms!>=budget.max_wall_clock_ms ? renewedWindow.active_execution_ms : undefined;
+    const window = key==='active_execution_ms' ? timeWindow
+      : renewedWindow && (key==='provider_calls'||key==='total_tokens') ? renewedWindow[key] : undefined;
     return value.used===null || (window===undefined ? value.used>=value.limit*.75
       : value.remaining!<=Math.min(value.limit,window)*.25);
   }).map(([key])=>key);

@@ -321,3 +321,24 @@ test("retained C43 32-call stop had two verified native placements and six uncom
  assert.equal(assignmentWorkAllowanceV2(s).verified_changes,2);assert.equal(assignmentWorkAllowanceV2(s).provider_calls,80);
  assert(s.observed_provider_call_count<defaultAssignmentWorkBudgetV2(s,ordinary).max_provider_calls);
 });
+
+test('explicit active-time window warns on its remaining reserve rather than lifetime percentage',()=>{
+ const s=renewedFixture(),at='2026-11-21T09:00:00Z';
+ Object.assign(s.provider_calls.call0,{admitted_at:'2026-11-21T07:00:00Z',completed_at:at});
+ s.user_followup_allocation.allocated_at=at;
+ const r=s.user_followup_allocation.resource_renewal;r.authorized_at=at;
+ r.request.active_execution_ms=1_200_000;r.ceilings.max_wall_clock_ms=8_400_000;
+ s.user_followup_allocation.limits.max_wall_clock_ms=8_400_000;
+ const result=assignmentWorkBudgetStatusV2(s,ordinary,at);
+ assert.equal(result.resources.active_execution_ms.used,7_200_000);
+ assert.equal(result.resources.active_execution_ms.remaining,1_200_000);
+ assert(!result.approaching_limits.includes('active_execution_ms'));
+ Object.assign(s.provider_calls.call0,{completed_at:'2026-11-21T09:16:00Z'});
+ const later=assignmentWorkBudgetStatusV2(s,ordinary,'2026-11-21T09:16:00Z');
+ assert(later.approaching_limits.includes('active_execution_ms'));
+ for(const change of [(r:any)=>r.request.active_execution_ms=0,(r:any)=>delete r.ceilings.max_wall_clock_ms,
+   (r:any)=>r.ceilings.max_wall_clock_ms=1]){
+   const x=structuredClone(s);change(x.user_followup_allocation.resource_renewal);
+   assert(assignmentWorkBudgetStatusV2(x,ordinary,'2026-11-21T09:16:00Z').approaching_limits.includes('active_execution_ms'));
+ }
+});

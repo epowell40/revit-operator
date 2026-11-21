@@ -30,6 +30,7 @@ export interface AssignmentKernelPublicationV2 {
   provider_ledger: AssignmentProviderLedgerPublicationV2;
   /** Server control discovery only; not a journal fact or permission. */
   supports_explicit_resource_renewal_v1?: true;
+  supports_active_time_renewal_v1?: true;
 }
 
 export type AssignmentKernelSessionIndexEntryV2 = AssignmentKernelV2SessionIndexEntry;
@@ -49,6 +50,7 @@ export function buildAssignmentKernelPublicationV2(snapshot: AssignmentSnapshotV
     assignment_id: snapshot.current_binding.assignment_id,
     assignment_version: snapshot.assignment_version,
     supports_explicit_resource_renewal_v1: true,
+    supports_active_time_renewal_v1: true,
     snapshot: structuredClone(snapshot),
     provider_ledger: {
       schema: ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA,

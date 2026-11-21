@@ -30,6 +30,8 @@ test('product renewal presentation requires advertised server support as well as
  s.completion_proposal={review_id:'review',verified:false};s.pending_review_ids=['review'];
  assert.equal(assignmentWorkspaceGoalV2(p)._canRenewResources,false,'Older backend is not silently assumed to support renewal');
  p.supports_explicit_resource_renewal_v1=true;assert.equal(assignmentWorkspaceGoalV2(p)._canRenewResources,true);
+ assert.equal(assignmentWorkspaceGoalV2(p)._resourceRenewalAddsTime,false);
+ p.supports_active_time_renewal_v1=true;assert.equal(assignmentWorkspaceGoalV2(p)._resourceRenewalAddsTime,true);
  s.unresolved_unknown_operation_ids=['unknown'];assert.equal(assignmentWorkspaceGoalV2(p)._canRenewResources,false);
  s.unresolved_unknown_operation_ids=[];s.execution_control={state:'paused',command_id:'pause',changed_at:'2026-09-04T10:01:00Z'};
  assert.equal(assignmentWorkspaceGoalV2(p)._canRenewResources,false);

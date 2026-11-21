@@ -5899,6 +5899,8 @@ function renderCompactWork() {
   document.querySelector("#taskResumeButton").disabled = Boolean(state.assignmentResumePending);
   const renewalButton=document.querySelector('#taskBudgetContinueButton');
   if(renewalButton){
+    renewalButton.textContent=goal?._resourceRenewalAddsTime===true
+      ?'Continue with +20 min / +64 calls / +16M tokens':'Continue with +64 calls / +16M tokens';
     renewalButton.hidden=state.streaming||state.goalSelectionPinned||goal?._assignmentPhase!=='awaiting_user_review'
       ||goal?._canRenewResources!==true;
     renewalButton.disabled=Boolean(state.composerSubmissionPending||state.assignmentResumePending||goal?._providerUsageHold);

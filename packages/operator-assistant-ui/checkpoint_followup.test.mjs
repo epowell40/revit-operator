@@ -133,3 +133,11 @@ test("only a fresh active release can proceed to Resume, with Pause, newer revie
   publication.snapshot.execution_control = goal._executionControl = { state: "paused", command_id: "pause" };
   assert.equal(checkpointResumeReady(publication, goal, command), false);
 });
+
+test('time-aware backend advertises and authorizes a bounded clock window in the existing checkpoint',()=>{
+ const {publication,goal}=fixture();publication.snapshot.spec.requested_effect='apply';
+ publication.snapshot.spec.execution_policy.progress_allowance={mode:'observed_native_work_v1'};
+ publication.supports_active_time_renewal_v1=true;
+ assert.deepEqual(checkpointTools.checkpointResourceRenewalContext(publication,goal).resource_renewal,
+   {provider_calls:64,total_tokens:16_000_000,active_execution_ms:1_200_000});
+});
