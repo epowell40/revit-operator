@@ -3,6 +3,7 @@ import type { AssignmentBindingV2 } from './identity.js';
 import type { AssignmentWorkPlanV2 } from './work_plan.js';
 import { sameAssignmentBindingV2 } from './identity.js';
 import { kernelAssertV2 } from './errors.js';
+import { nativeDocumentCheckpointRequestMatchesV2 } from '@revitoperator/assignment-kernel-v2-contracts';
 
 /** Assistant interpretation for resuming work. Never target authority or proof. */
 export type WorkPlanLocationHintV2 = Readonly<{
@@ -31,8 +32,19 @@ const object = (v: unknown, allowed: readonly string[]) => Boolean(v && typeof v
 
 /** Actor backcheck eligibility only; never semantic or whole-task verification. */
 function latestEffectTime(snapshot:AssignmentSnapshotV2):number {
-  return Object.values(snapshot.operations).reduce((latest,op)=>op.requested_effect==='apply'&&op.persistent_effect!=='none'
-    ?Math.max(latest,Date.parse(op.result?.completed_at??op.opened_at)):latest,0);
+  return Object.values(snapshot.operations).reduce((latest,op)=>{
+    if(op.requested_effect!=='apply'||op.persistent_effect==='none')return latest;
+    // A bound, settled save checkpoints the same document. It does not make
+    // preceding model reads stale. Images still have their own freshness checks.
+    const checkpoint=op.persistent_effect==='applied'&&op.admission_state==='admitted'&&op.dispatch_state==='dispatched'
+      &&op.settlement_state==='settled'&&!snapshot.input_invalidated_operation_ids?.includes(op.operation_id)
+      &&sameAssignmentBindingV2(op.binding,snapshot.current_binding)
+      &&Boolean(op.result&&sameAssignmentBindingV2(op.result.binding,snapshot.current_binding))
+      &&/^[a-f0-9]{64}$/.test(op.request_identity?.request_signature??'')
+      &&op.request_identity?.request_signature===op.result?.request_identity?.request_signature
+      &&nativeDocumentCheckpointRequestMatchesV2(op,snapshot.current_binding.document_fingerprint);
+    return checkpoint?latest:Math.max(latest,Date.parse(op.result?.completed_at??op.opened_at));
+  },0);
 }
 export function draftingReadbackReasonV2(snapshot:AssignmentSnapshotV2,id:string,at:string,lastEdit=latestEffectTime(snapshot)):string|null {
   const op=snapshot.operations[id];
