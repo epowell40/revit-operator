@@ -520,7 +520,7 @@ export async function reviewCurrentWork(input,host){
   };
   const retained=result=>{Object.defineProperty(result,'raw_review_evidence',{value:raw,enumerable:false});return result;};
   const control=async()=>{await host.assertControl();if(!sameVisualReviewOwner(owner,host.owner()))throw Error('visual_review_owner_changed');};
-  let reference=null,codePacket=null;
+  let reference=null,codePacket=null,restoreObservationBounds=false;
   try{
     // Resolve immutable owned reference pixels before navigation or native capture.
     // Existing source/hash/receipt validation and subsequent current-scene guards remain.
@@ -541,6 +541,11 @@ export async function reviewCurrentWork(input,host){
           .filter(key=>previous.request?.[key]!==undefined).map(key=>[key,previous.request[key]]));
         const framing=normalizeVisualReviewRequest({...savedFrame,review_mode:'observe'});
         if(framing.view_id!==request.view_id||framing.review_mode!=='observe')throw Error('visual_review_observation_frame_invalid');
+        // A correction may remove a formerly focused tag or line. For a paired
+        // observation with retained native bounds, restore that same area via
+        // the existing bounds-only navigation path. Do not require deleted
+        // objects to exist merely to capture their former location again.
+        restoreObservationBounds=Boolean(framing.context_bbox_min_xyz&&framing.context_bbox_max_xyz);
         for(const key of ['focus_element_ids','context_bbox_min_xyz','context_bbox_max_xyz','capture_mode','image_size'])
           if(framing[key]!==undefined)request[key]=structuredClone(framing[key]);
       }
@@ -564,14 +569,15 @@ export async function reviewCurrentWork(input,host){
       const focusObserved=async()=>{const value=await host.readTargetContext();raw.native_identity_observations.push(value);return value;};
       const beforeFocus=targetScene(await focusObserved(),request.view_id,owner);
       if(typeof host.focusTarget!=='function')throw Error('visual_review_focus_host_unavailable');
-      const focusTarget={view_id:request.view_id,show_element_ids:[...request.focus_element_ids],
+      const focusTarget={view_id:request.view_id,...(!restoreObservationBounds?{show_element_ids:[...request.focus_element_ids]}:{}),
         ...(request.context_bbox_min_xyz?{bbox_min_xyz:[...request.context_bbox_min_xyz],bbox_max_xyz:[...request.context_bbox_max_xyz]}:{})};
       await control();const focus=await host.focusTarget(focusTarget,beforeFocus.active_view_id);
       raw.focus_navigation=focus;
       await control();const afterFocus=targetScene(await focusObserved(),request.view_id,owner);
       if(!sameTargetScene(beforeFocus,afterFocus))throw Error('visual_review_scene_changed_during_focus');
       if(focus?.ok!==true||focus.active_view?.id!==request.view_id||focus.focus?.confirmed!==true
-        ||focus.focus.kind!==(request.context_bbox_min_xyz?'elements_and_bounds':'elements')||focus.focus.native_navigation_only!==true||afterFocus.active_view_id!==request.view_id)throw Error('visual_review_focus_unconfirmed');
+        ||focus.focus.kind!==(restoreObservationBounds?'bounds':request.context_bbox_min_xyz?'elements_and_bounds':'elements')||focus.focus.native_navigation_only!==true||afterFocus.active_view_id!==request.view_id)throw Error('visual_review_focus_unconfirmed');
+      if(restoreObservationBounds)raw.observation_frame_restored_from_bounds=true;
       focusedScene=afterFocus;
       // Native focus may resolve a model element through its unique placed
       // viewport. This is navigation, never appearance or inspection proof.

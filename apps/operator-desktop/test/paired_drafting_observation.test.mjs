@@ -13,7 +13,7 @@ function setup(){let clock=Date.now();const calls={contexts:0,captures:[],provid
 
 test('an observation refresh restores the retained area and returns fresh pixels without a reviewer',async()=>{
  const f=setup(),focus=[];
- f.h.focusTarget=async t=>{focus.push(t);return {ok:true,active_view:{id:41},focus:{confirmed:true,kind:'elements_and_bounds',native_navigation_only:true}};};
+ f.h.focusTarget=async t=>{focus.push(t);return {ok:true,active_view:{id:41},focus:{confirmed:true,kind:t.show_element_ids?'elements_and_bounds':'bounds',native_navigation_only:true}};};
  const area={...request,review_mode:'observe',focus_element_ids:[101,102],context_bbox_min_xyz:[-1,-1,0],context_bbox_max_xyz:[1,1,0]};
  const first=await reviewCurrentWork(area,f.h);
  assert.equal(first.state,'observed');
@@ -21,14 +21,14 @@ test('an observation refresh restores the retained area and returns fresh pixels
  f.h.readBaseline=async()=>({evidence_ref:{evidence_id:'ev1_area'},review:first,capture:pixels,reference:null});
  const refreshed=await reviewCurrentWork({view_id:41,review_mode:'observe',recheck_evidence_id:'ev1_area'},f.h);
  assert.equal(refreshed.state,'observed',refreshed.reason);
- assert.deepEqual(focus[1],focus[0]);
+ assert.deepEqual(focus[1],{view_id:41,bbox_min_xyz:area.context_bbox_min_xyz,bbox_max_xyz:area.context_bbox_max_xyz});
  assert.equal(f.calls.captures.length,2);
  assert.equal(f.calls.providers.length,0);
  assert.equal(refreshed.native_postcondition_verified,false);
  f.h.readBaseline=async()=>({evidence_ref:{evidence_id:'ev1_area2'},review:refreshed,capture:{...pixels,evidence_ref:{...pixels.evidence_ref,evidence_id:refreshed.capture.evidence_id}},reference:null});
  const again=await reviewCurrentWork({view_id:41,review_mode:'observe',recheck_evidence_id:'ev1_area2'},f.h);
  assert.equal(again.state,'observed',again.reason);
- assert.deepEqual(focus[2],focus[0]);
+ assert.deepEqual(focus[2],focus[1]);
  f.h.readBaseline=async()=>({evidence_ref:{evidence_id:'ev1_area'},review:first,capture:pixels,reference:null});
  const shown=visualWorkReviewModelOutput({output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{evidence_id:'ev1_new'}]})},refreshed,'ev1_new');
  assert(Array.isArray(shown.output));
@@ -36,4 +36,31 @@ test('an observation refresh restores the retained area and returns fresh pixels
  const forbidden=await reviewCurrentWork({view_id:41,recheck_evidence_id:'ev1_area'},f.h);
  assert.equal(forbidden.state,'unavailable');
  assert.equal(f.calls.providers.length,0);
+});
+
+test('rechecking a corrected area retains its frame after a previously focused tag was deleted',async()=>{
+ const f=setup(),focus=[];let corrected=false;
+ f.h.focusTarget=async t=>{focus.push(t);return {ok:true,active_view:{id:41},focus:{confirmed:!corrected||!t.show_element_ids?.includes(101),
+  kind:t.show_element_ids?'elements_and_bounds':'bounds',native_navigation_only:true}};};
+ const first=await reviewCurrentWork({...request,review_mode:'observe',focus_element_ids:[101,102],context_bbox_min_xyz:[-1,-1,0],context_bbox_max_xyz:[1,1,0]},f.h);
+ assert.equal(first.state,'observed');corrected=true;
+ f.h.readBaseline=async()=>({evidence_ref:{evidence_id:'ev1_deleted_tag'},review:first,
+  capture:{evidence_ref:{evidence_id:first.capture.evidence_id,content_hash:first.capture.content_hash,byte_count:bytes.length,media_type:'image/png'},image_url:'data:image/png;base64,'+image},reference:null});
+ const result=await reviewCurrentWork({view_id:41,review_mode:'observe',recheck_evidence_id:'ev1_deleted_tag'},f.h);
+ assert.equal(result.state,'observed',result.reason);
+ assert.deepEqual(focus[1],{view_id:41,bbox_min_xyz:[-1,-1,0],bbox_max_xyz:[1,1,0]});
+ assert.equal(f.calls.captures.length,2);assert.equal(f.calls.providers.length,0);
+ assert.equal(result.native_postcondition_verified,false);assert.equal(result.whole_task_verified,false);
+});
+
+test('initial element focus and bounds-less rechecks still require their actual native targets',async()=>{
+ const f=setup();let missing=false;
+ f.h.focusTarget=async()=>({ok:true,active_view:{id:41},focus:{confirmed:!missing,kind:'elements',native_navigation_only:true}});
+ const first=await reviewCurrentWork({...request,review_mode:'observe',focus_element_ids:[101]},f.h);assert.equal(first.state,'observed');missing=true;
+ f.h.readBaseline=async()=>({evidence_ref:{evidence_id:'ev1_without_bounds'},review:first,
+  capture:{evidence_ref:{evidence_id:first.capture.evidence_id,content_hash:first.capture.content_hash,byte_count:bytes.length,media_type:'image/png'},image_url:'data:image/png;base64,'+image},reference:null});
+ const again=await reviewCurrentWork({view_id:41,review_mode:'observe',recheck_evidence_id:'ev1_without_bounds'},f.h);
+ assert.equal(again.state,'unavailable');assert.equal(again.reason,'visual_review_focus_unconfirmed');
+ const initial=await reviewCurrentWork({...request,review_mode:'observe',focus_element_ids:[101],context_bbox_min_xyz:[-1,-1,0],context_bbox_max_xyz:[1,1,0]},f.h);
+ assert.equal(initial.state,'unavailable');assert.equal(f.calls.captures.length,1);assert.equal(f.calls.providers.length,0);
 });
