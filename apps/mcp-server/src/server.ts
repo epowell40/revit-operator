@@ -98,6 +98,7 @@ import {
 } from "./lib/executionStrategyEvidence.js";
 import { runDynamicRevitProgram } from "./lib/dynamicRevitProgramRunner.js";
 import { presentDynamicProgramResult } from "./lib/dynamicProgramPresentation.js";
+import { projectConnectorWorkGuidance } from "./lib/connectorWorkGuidance.js";
 import { DYNAMIC_REVIT_SOURCE_GUIDE, DYNAMIC_REVIT_TOOL_GUIDE } from "./lib/dynamicRevitSdkGuide.js";
 import { createOperatorBackendClient } from "./lib/operatorBackendClient.js";
 import { runWithOperatorBackendAuth } from "./lib/operatorBackendAuth.js";
@@ -1616,7 +1617,9 @@ server.tool("revit_call_tool", "Generic Revit bridge call by method/path. Use wh
         ? projectFindElementsResultForAgent(data)
         : pathInput === "/revit/view-owned-detailing"
           ? projectViewOwnedDetailingForAgent(data, dispatchBody)
-          : data;
+          : pathInput === "/revit/get-connectors"
+            ? projectConnectorWorkGuidance(data, dispatchBody)
+            : data;
       const output =
         projected && typeof projected === "object" && !Array.isArray(projected)
           ? addWorkspaceLinks(projected as Record<string, any>)
@@ -3398,7 +3401,7 @@ server.tool("revit_get_connectors", "Get connector origins/sizes/directions for 
       const data = await callRevit("/revit/get-connectors", "POST", req, {
         assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
       });
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+      return { content: [{ type: "text", text: JSON.stringify(projectConnectorWorkGuidance(data, req), null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
 );
