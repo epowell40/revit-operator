@@ -2,7 +2,7 @@ import { advisoryVerificationV2 } from "../execution_policy.js";
 import { workUnitInputVariableIdsV2 } from "../input_registry.js";
 import { CONVERSATION_EVIDENCE_GUIDANCE } from "../../../conversation_evidence_guidance.js";
 import { allRemainingWorkPlanItemsDeferredV2, inspectionIsCurrentV2, workPlanPendingV2 } from "../work_plan.js";
-import { canonicalJsonV2 } from "../canonical.js";
+import { canonicalJsonV2, utf8TextSha256V2 } from "../canonical.js";
 import { assignmentActiveExecutionTimeMsV2 } from "./execution_time.js";
 import { readyNativeRollbackPreviewV2 } from "./ready_native_preview.js";
 import { nativeCommitProgressIdentityV2, nativeVerificationProgressIdentityV2, nativeVerificationAttemptIsRetainedV2, draftingConstructionProgressV2 } from "./native_work_progress.js";
@@ -692,7 +692,9 @@ export function buildProgressEpochV2(input: Readonly<{
   if (input.before.outcome !== input.after.outcome && input.after.outcome !== "active") progressReasons.push("terminal_derived");
   return {
     schema: PROGRESS_EPOCH_V2_SCHEMA,
-    epoch_id: canonicalJsonV2({ assignment_id: input.after.current_binding.assignment_id, before: input.before.assignment_version, after: input.after.assignment_version, gaps: input.stated_gap_ids }),
+    // Opaque identities must not duplicate growing drawing/history payloads in every epoch.
+    // Retained legacy JSON identities remain valid and are never rewritten on replay.
+    epoch_id: `epoch:${utf8TextSha256V2(canonicalJsonV2({ assignment_id: input.after.current_binding.assignment_id, before: input.before.assignment_version, after: input.after.assignment_version, gaps: input.stated_gap_ids }))}`,
     binding: input.after.current_binding,
     before_assignment_version: input.before.assignment_version,
     after_assignment_version: input.after.assignment_version,
@@ -702,7 +704,7 @@ export function buildProgressEpochV2(input: Readonly<{
     new_observation_ids: newObservations,
     new_fact_identities: newFacts,
     criterion_deltas: criterionDeltas,
-    progress_fingerprint: canonicalJsonV2({ gaps: afterGaps, criteria: input.after.criteria, observations: Object.keys(input.after.observations).sort(), work_units: input.after.work_unit_states, generation: input.after.current_binding.generation }),
+    progress_fingerprint: `sha256:${utf8TextSha256V2(canonicalJsonV2({ gaps: afterGaps, criteria: input.after.criteria, observations: Object.keys(input.after.observations).sort(), work_units: input.after.work_unit_states, generation: input.after.current_binding.generation }))}`,
     genuine_progress: progressReasons.length > 0,
     progress_reasons: progressReasons,
     recorded_at: input.recorded_at

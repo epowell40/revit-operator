@@ -34,6 +34,7 @@ import { observationAdmissibilityForCriterionV2 } from "../src/domain/assignment
 import { DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2 } from "../src/assignments/assignment_kernel_v2_progress.js";
 import { defaultAssignmentWorkBudgetV2 } from "../src/assignments/assignment_work_allowance_v2.js";
 import { buildHostProgressEpochV2 as buildProgressEpochV2 } from "../src/assignments/supporting_discovery_progress.js";
+import { canonicalJsonV2, utf8TextSha256V2 } from "../src/domain/assignment-kernel/canonical.js";
 
 const binding: AssignmentBindingV2 = {
   assignment_id: "assignment-progress",
@@ -122,6 +123,56 @@ function journal(withCriteria = true): AssignmentJournalV2 {
   result.append(event(result, { event_type: "assignment_created", spec: spec(withCriteria) }));
   return result;
 }
+
+test("progress identities stay bounded as retained drawing gaps and observations grow", () => {
+  const before = journal().snapshot();
+  const gaps = Array.from({ length: 500 }, (_, i) => `drawing-area-${i}:` + "remaining-visible-work".repeat(12));
+  const input = { before, after: before, stated_gap_ids: gaps, recorded_at: "2026-08-26T20:00:02.000Z" };
+  const epoch = buildKernelProgressEpochV2(input);
+  assert.match(epoch.epoch_id, /^epoch:[a-f0-9]{64}$/);
+  assert.match(epoch.progress_fingerprint, /^sha256:[a-f0-9]{64}$/);
+  const identity = { assignment_id: before.current_binding.assignment_id, before: before.assignment_version,
+    after: before.assignment_version, gaps };
+  assert.equal(epoch.epoch_id, `epoch:${utf8TextSha256V2(canonicalJsonV2(identity))}`);
+  assert.deepEqual(epoch.unresolved_gap_ids, [...gaps].sort(), "the actual gaps remain available once");
+  assert.equal(epoch.genuine_progress, false, "smaller metadata does not manufacture progress");
+  assert.deepEqual(epoch.progress_reasons, []);
+  assert.deepEqual(buildKernelProgressEpochV2(JSON.parse(JSON.stringify(input))), epoch, "restart is deterministic");
+  assert.notEqual(buildKernelProgressEpochV2({ ...input, stated_gap_ids: gaps.slice(1) }).epoch_id, epoch.epoch_id);
+  assert.notEqual(buildKernelProgressEpochV2({ ...input, after: { ...before, assignment_version: 2 } }).epoch_id, epoch.epoch_id);
+  assert.notEqual(buildKernelProgressEpochV2({ ...input, after: { ...before,
+    current_binding: { ...before.current_binding, generation: 2 } } }).progress_fingerprint, epoch.progress_fingerprint);
+  assert.notEqual(buildKernelProgressEpochV2({ ...input, after: { ...before,
+    work_unit_states: { ...before.work_unit_states, "work-inventory": "active" } } }).progress_fingerprint, epoch.progress_fingerprint);
+  const settled = journal(); settleObservation(settled);
+  const observed = buildKernelProgressEpochV2({ ...input, after: settled.snapshot() });
+  assert.notEqual(observed.progress_fingerprint, epoch.progress_fingerprint);
+  assert.equal(observed.genuine_progress, true, "native observation progress keeps its existing semantics");
+});
+
+test("retained legacy progress and new bounded identities replay together without rewriting history", () => {
+  const j = journal();
+  const before = j.snapshot();
+  j.append(event(j, { event_type: "provider_call_recorded", call_id: "legacy-call", provider: "openai", model: "model", reasoning_effort: "medium", success: true }));
+  const after = j.snapshot();
+  const input = { before, after, stated_gap_ids: ["criterion:criterion-inventory"], recorded_at: "2026-08-26T20:00:02.000Z" };
+  const legacy = { ...buildKernelProgressEpochV2(input),
+    epoch_id: canonicalJsonV2({ assignment_id: binding.assignment_id, before: 1, after: 2, gaps: input.stated_gap_ids }),
+    progress_fingerprint: canonicalJsonV2({ gaps: deriveProgressGapsV2(before).map(g => g.gap_id), criteria: before.criteria,
+      observations: [], work_units: before.work_unit_states, generation: 1 }) };
+  j.append(event(j, { event_type: "progress_epoch_recorded", epoch: legacy }));
+  const next = j.snapshot();
+  j.append(event(j, { event_type: "provider_call_recorded", call_id: "next-call", provider: "openai", model: "model", reasoning_effort: "medium", success: true }));
+  const bounded = buildKernelProgressEpochV2({ ...input, before: next, after: j.snapshot() });
+  j.append(event(j, { event_type: "progress_epoch_recorded", epoch: bounded }));
+  assert.deepEqual(j.snapshot().progress_epochs, [legacy, bounded]);
+  assert.throws(() => j.append(event(j, { event_type: "progress_epoch_recorded", epoch: bounded })), /identity already exists/);
+  const replay = new AssignmentJournalV2();
+  for (const retained of JSON.parse(JSON.stringify(j.events()))) replay.append(retained);
+  assert.deepEqual(replay.snapshot().progress_epochs, [legacy, bounded]);
+  assert.deepEqual(replay.snapshot().execution_control, j.snapshot().execution_control);
+  assert.deepEqual(replay.snapshot().unresolved_unknown_operation_ids, []);
+});
 
 function operation(id = "operation-inventory"): OperationV2 {
   return {
