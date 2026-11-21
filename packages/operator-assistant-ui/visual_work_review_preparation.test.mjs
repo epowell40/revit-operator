@@ -8,6 +8,24 @@ function setup(){let clock=Date.now();const calls={contexts:0,captures:[],provid
  const capture=()=>({image_base64:image,mime_type:'image/png',native_result:{processId:123,documentSessionId:'doc',projectFingerprint:'project',viewId:41,activeViewId:41,viewUniqueId:'target-unique',viewName:'Notes, Symbols & Schedules',viewType:'DrawingSheet',sheetNumber:'M002',timestamp:new Date(clock).toISOString(),exportMode:'visible_region',widthPx:40,heightPx:40,bytes:bytes.length,sha256:sha,viewport:{source:'UIDocument.ActiveView/UIView.GetZoomCorners',viewId:41,viewType:'DrawingSheet',zoomCornersXyz:[[-1,1,0],[1,-1,0]],coordinateUnits:'feet',displayPlaneOnly:true,placementMappingAvailable:false},canonical_attempt_settlement:{method:'POST',path:'/revit/export-image',requested_effect:'read',effect_state:'none'}}});
  const h={prepareFocusedInspection:async r=>({state:'prepared',item_id:r.complete_inspection_item_id}),owner:()=>owner,assertControl:async()=>{},now:()=>clock,readContext:async()=>{throw Error('No screenshot context fallback');},capture:async()=>{throw Error('No UI pixels/tooltips fallback');},readTargetContext:async()=>{calls.contexts++;return context();},captureTarget:async(location,args)=>{calls.captures.push(args);return capture();},retainImage:async pixels=>{calls.images.push(pixels);const b=Buffer.from(pixels,'base64');return{ref:{evidence_id:'ev1_image'+calls.images.length,content_hash:'sha256:'+createHash('sha256').update(b).digest('hex'),byte_count:b.length}};},settings:()=>({model:'gpt-6.1-sol',reasoning_effort:'medium'}),userRequest:()=> 'Fix blank row in AIR DEVICE SCHEDULE on M002 and preserve borders.',requestResponse:async body=>{calls.providers.push(body);clock+=60000;return{id:'resp_region',status:'completed',output:[],output_text:JSON.stringify({checks:[{id:'gap',status:'matched',observed:'Synthetic relevant native view pixels.',correction:''}]})};}};
  return{h,calls,context,capture};}
+
+test('focused observation brackets pixels without an immediate duplicate post-focus native read',async()=>{
+ const f=setup();f.h.focusTarget=async()=>({ok:true,active_view:{id:41},focus:{confirmed:true,kind:'elements',native_navigation_only:true}});
+ const r=await reviewCurrentWork({...request,review_mode:'observe',focus_element_ids:[101]},f.h);
+ assert.equal(r.state,'observed');assert.equal(f.calls.providers.length,0);
+ assert.equal(f.calls.contexts,4,'before navigation, after navigation/before capture, capture bracket, final delivery');
+ assert.equal(r.raw_review_evidence.native_identity_observations.length,4);
+ assert.equal(f.calls.captures.length,1);assert.equal(r.whole_task_verified,false);
+});
+
+for(const change of ['document','epoch','sequence'])test('focused observation rejects '+change+' drift during capture',async()=>{
+ const f=setup();let captured=false;
+ f.h.focusTarget=async()=>({ok:true,active_view:{id:41},focus:{confirmed:true,kind:'elements',native_navigation_only:true}});
+ f.h.captureTarget=async()=>{captured=true;return f.capture();};
+ f.h.readTargetContext=async()=>{const c=f.context();if(captured){if(change==='document')c.document.sessionId='other';if(change==='epoch')c.nativeChangeObservations.epoch='other';if(change==='sequence')c.nativeChangeObservations.throughSequence=1;}return c;};
+ const r=await reviewCurrentWork({...request,review_mode:'observe',focus_element_ids:[101]},f.h);
+ assert.equal(r.state,'unavailable');assert.equal(r.reason,change==='document'?'visual_review_target_context_unavailable':'visual_review_scene_changed_during_capture');assert.equal(f.calls.providers.length,0);
+});
 test('one explicit final review can focus native elements then review without extra owner turns',async()=>{
  const f=setup(),sequence=[];f.h.focusTarget=async t=>{sequence.push(t);return{ok:true,active_view:{id:41},focus:{confirmed:true,kind:'elements',native_navigation_only:true}};};
  const r=await reviewCurrentWork({...request,complete_inspection_item_id:'inspect',focus_element_ids:[101,102]},f.h);

@@ -585,7 +585,11 @@ export async function reviewCurrentWork(input,host){
       // viewport. This is navigation, never appearance or inspection proof.
       if(request.context_bbox_min_xyz)raw.context_navigation=focus;
     }
-    await control();const before=await observed();initial=makeScene(before);
+    // The confirmed post-navigation native context is already the pre-capture
+    // observation. Do not enqueue an identical native read immediately after it.
+    // Screen capture still needs its distinct UI identity, and the fresh
+    // post-capture/final-delivery brackets remain mandatory in both modes.
+    await control();initial=target&&focusedScene?{...focusedScene}:makeScene(await observed());
     if(focusedScene&&!['process_id','document_session_id','epoch','through_sequence','view_id'].every(k=>focusedScene[k]===initial[k]))throw Error('visual_review_scene_changed_after_focus');
     await control();const {image,frame,mime}=await captured(initial);raw.capture_frame=frame;
     if(target)Object.assign(initial,{view_name:frame.view_name,view_unique_id:frame.view_unique_id,view_type:frame.view_type,sheet_number:frame.sheet_number});

@@ -72,7 +72,7 @@ test('production default identity reader preserves a rejected post-review ping a
  const start=source.indexOf('async function reviewCurrentRevitWork('),end=source.indexOf('function formatRevitContextMessage(',start);
  const o=options();delete o.readContext;let pings=0;
  const invoke=runInNewContext(source.slice(start,end)+';reviewCurrentRevitWork',{
-  JSON,Buffer,Date,Error,AbortSignal,reviewCurrentWork:shared.reviewCurrentWork,visualReviewOwner:shared.visualReviewOwner,sameVisualReviewOwner:shared.sameVisualReviewOwner,
+  JSON,Buffer,Date,Error,AbortSignal,performance,reviewCurrentWork:shared.reviewCurrentWork,visualReviewOwner:shared.visualReviewOwner,sameVisualReviewOwner:shared.sameVisualReviewOwner,
   readVisualReviewUiIdentityV1:shared.readVisualReviewUiIdentityV1,
   fetchRevitBridge:async route=>{assert.equal(route,'/revit/ping');pings++;return pings===3
    ?new Response(JSON.stringify({code:'REVIT_CONTEXT_HOST_UNAVAILABLE',request_dispatched:false,outcome_unknown:false,retryable:true,reconciliation_required:false,error:'private response details'}),{status:409})
@@ -150,6 +150,18 @@ test('production focused native review uses protected visible-region export and 
   return new Response(JSON.stringify({processId:123,documentSessionId:'doc',projectFingerprint:'project',viewId:41,activeViewId:41,viewName:'Notes, Symbols & Schedules',viewUniqueId:'region-unique',viewType:'DrawingSheet',sheetNumber:'M002',exportMode:'visible_region',viewport:{source:'UIDocument.ActiveView/UIView.GetZoomCorners',viewId:41,viewType:'DrawingSheet',zoomCornersXyz:[[-1,1,0],[1,-1,0]],coordinateUnits:'feet',displayPlaneOnly:true,placementMappingAvailable:false},path:file,widthPx:40,heightPx:40,bytes:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex'),timestamp:new Date().toISOString(),canonical_attempt_settlement:settlement}));};
  o.retainImage=async pixels=>({ref:{evidence_id:'ev1_region',content_hash:'sha256:'+createHash('sha256').update(Buffer.from(pixels,'base64')).digest('hex'),byte_count:bytes.length}});
  const r=await desktop.reviewCurrentRevitWork({...args,capture_mode:'native_visible_region'},o);assert.equal(r.state,'mismatch');assert.equal(r.capture.frame.export_mode,'visible_region');assert.deepEqual(r.capture.frame.viewport.zoomCornersXyz,[[-1,1,0],[1,-1,0]]);assert.equal(routes.filter(r=>r==='/revit/export-image').length,2);assert.equal(admissions.length,routes.length);assert.equal(o.calls.filter(x=>typeof x==='object').length,1);assert.equal(r.native_postcondition_verified,false);assert.equal(r.whole_task_verified,false);
+ const timing=r.raw_review_evidence.host_stage_timings;assert.equal(timing.schema,'operator.visual_review_host_timing.v1');assert(timing.elapsed_ms>=0);
+ assert.equal(timing.stages.native_read.calls,routes.length);assert.equal(timing.stages.native_read_admission.calls,admissions.length);
+ assert.equal(timing.stages.ui_identity.calls,routes.length);assert(timing.stages.assignment_control.calls>routes.length);
+ for(const row of Object.values(timing.stages)){assert.deepEqual(Object.keys(row).sort(),['calls','elapsed_ms']);assert(row.elapsed_ms>=0);}
+ assert.equal(Object.keys(r).includes('raw_review_evidence'),false,'timing stays in retained host evidence, not model context');
+ routes.length=0;admissions.length=0;o.calls.length=0;
+ o.focusTarget=async()=>({ok:true,active_view:{id:41},focus:{confirmed:true,kind:'elements',native_navigation_only:true}});
+ const observed=await desktop.reviewCurrentRevitWork({...args,capture_mode:'native_visible_region',review_mode:'observe',focus_element_ids:[101]},o);
+ assert.equal(observed.state,'observed');assert.equal(routes.filter(r=>r==='/revit/context').length,4);assert.equal(routes.filter(r=>r==='/revit/export-image').length,1);
+ assert.equal(admissions.length,routes.length,'every remaining native read still has modal admission');
+ assert.equal(o.calls.filter(x=>typeof x==='object').length,0,'observation does not invoke another model');
+ assert.equal(observed.raw_review_evidence.host_stage_timings.stages.native_read.calls,5);
 });
 
 test('modal native-read admission stops target export before any queued Revit callback or provider; no hidden screen fallback',async()=>{

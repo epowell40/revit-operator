@@ -11597,21 +11597,29 @@ function computerProviderSettings(backendComputer = {}) {
 }
 
 async function reviewCurrentRevitWork(args, options = {}) {
-  const readContext = options.readContext || (async () => {
+  const startedAt=performance.now(),stageTimings={};
+  const timed=async(stage,action)=>{
+    const started=performance.now();
+    try{return await action();}
+    finally{const row=stageTimings[stage]??={calls:0,elapsed_ms:0};row.calls++;row.elapsed_ms+=performance.now()-started;}
+  };
+  const contextReader = options.readContext || (async () => {
     // Ping reads serialized UI identity only, never an ExternalEvent. Review
     // must remain usable while a normal Revit dialog is open; attributes still
     // require separate native reads after the dialog is closed.
     return readVisualReviewUiIdentityV1(() => fetchRevitBridge("/revit/ping"));
   });
+  const readContext=()=>timed('ui_identity',contextReader);
   const owner = options.owner || (() => computerState.sidecarAssignment);
-  const assertControl = options.assertControl || (() => assertComputerActionControl());
+  const controlReader = options.assertControl || (() => assertComputerActionControl());
+  const assertControl = ()=>timed('assignment_control',controlReader);
   let canonicalCodeSnapshot=null;
   const transientRequest=()=>computerState.messages.filter(m=>m.role==='user').map(m=>m.text).join('\n\n');
   let reviewUserRequest=options.userRequest||transientRequest;
   if(options.sourceRead!==true&&!options.userRequest&&owner()?.kernel_version===2){
     await assertControl();
-    const publication=await attachSidecarAssignmentKernelPublication(
-      options.readBackend||readBackendJson,{},owner(),{retryDelaysMs:[]});
+    const publication=await timed('canonical_task_context',()=>attachSidecarAssignmentKernelPublication(
+      options.readBackend||readBackendJson,{},owner(),{retryDelaysMs:[]}));
     await assertControl();
     canonicalCodeSnapshot=publication.assignment_snapshot_v2;
     const originalTransient=transientRequest();
@@ -11667,15 +11675,17 @@ async function reviewCurrentRevitWork(args, options = {}) {
       || expected && (context.process_id!==expected.process_id || context.document.sessionId!==expected.document_session_id || observation.epoch!==expected.epoch))
       throw Error("visual_review_native_read_identity_unavailable");
     const location={process_id:context.process_id,visual_capture_context:context.visual_capture_context};
-    const admission=JSON.parse(await (options.runCaptureScript || runDesktopScript)([
+    const admission=JSON.parse(await timed('native_read_admission',()=>(options.runCaptureScript || runDesktopScript)([
       "-Action","review_native_read_admission","-ReviewSceneBase64",Buffer.from(JSON.stringify(location),"utf8").toString("base64")
-    ]));
+    ])));
     if(admission?.schema!=="operator.visual_review_native_read_admission.v1" || admission.main_window_enabled!==true
       || admission.process_id!==context.process_id || admission.main_window_handle!==location.visual_capture_context?.main_window_handle)
       throw Error("visual_review_native_read_admission_invalid");
     await assertControl();if(!sameVisualReviewOwner(binding,owner()))throw Error("visual_review_owner_changed");
-    const response=await nativeFetch(route,{method:body?"POST":"GET",...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(90000)});
-    return await response.json(); // Keep failed native read receipts in raw evidence too.
+    return await timed('native_read',async()=>{
+      const response=await nativeFetch(route,{method:body?"POST":"GET",...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(90000)});
+      return await response.json(); // Keep failed native read receipts in raw evidence too.
+    });
   };
   const result = await reviewCurrentWork(args, {
     ...codeHost,
@@ -11773,6 +11783,10 @@ async function reviewCurrentRevitWork(args, options = {}) {
     requestResponse: options.requestResponse || (body => requestComputerResponse(body, {allowTransientGatewayRetry:false})),
     evidenceScope: options.evidenceScope || evidenceScopeForModelRelay
   });
+  // Aggregate durations only: no model/image/source payloads or new journal
+  // events. These retained host measurements separate admission/control costs
+  // from native execution; they are not provider timing or completion proof.
+  result.raw_review_evidence.host_stage_timings={schema:'operator.visual_review_host_timing.v1',elapsed_ms:performance.now()-startedAt,stages:stageTimings};
   addComputerEvent(`Independent visual review: ${result.state}. This is supporting visual assessment, not whole-task or native proof.`);
   return result;
 }
