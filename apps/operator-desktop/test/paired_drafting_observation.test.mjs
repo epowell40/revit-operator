@@ -73,3 +73,40 @@ for(const checks of [undefined,[]])test('observation recheck preserves optional 
  assert.equal(second.native_postcondition_verified,false);assert.equal(second.whole_task_verified,false);
  const independent=await reviewCurrentWork({view_id:41,recheck_evidence_id:'ev1_optional_checks'},f.h);assert.equal(independent.state,'unavailable');assert.equal(f.calls.providers.length,0);
 });
+
+test('a later drafting pass can change its working questions while refreshing the same area and reference',async()=>{
+ const f=setup(),focus=[];
+ f.h.focusTarget=async t=>{focus.push(t);return{ok:true,active_view:{id:41},focus:{confirmed:true,kind:t.show_element_ids?'elements_and_bounds':'bounds',native_navigation_only:true}};};
+ const reference={filename:'reference.png',evidence_ref:{evidence_id:'ev1_source',content_hash:'sha256:'+sha,byte_count:bytes.length,media_type:'image/png'},image_url:'data:image/png;base64,'+image};
+ f.h.referenceImage=async()=>reference;
+ const first=await reviewCurrentWork({...request,review_mode:'observe',reference_filename:'reference.png',focus_element_ids:[101],context_bbox_min_xyz:[-1,-1,0],context_bbox_max_xyz:[1,1,0]},f.h);
+ assert.equal(first.state,'observed',first.reason);
+ const prior=structuredClone(first);
+ f.h.readBaseline=async()=>({evidence_ref:{evidence_id:'ev1_geometry_area'},review:first,capture:{evidence_ref:{...first.capture,media_type:'image/png'},image_url:'data:image/png;base64,'+image},reference});
+ const questions=[{id:'sizes',expected:'Compare visible duct size labels and their leaders with the reference in this area.'}];
+ const second=await reviewCurrentWork({view_id:41,review_mode:'observe',recheck_evidence_id:'ev1_geometry_area',checks:questions},f.h);
+ assert.equal(second.state,'observed',second.reason);
+ assert.deepEqual(second.request.checks,questions);
+ assert.deepEqual(first,prior,'A later working pass cannot rewrite the retained original observation');
+ assert.deepEqual(focus[1],{view_id:41,bbox_min_xyz:[-1,-1,0],bbox_max_xyz:[1,1,0]});
+ assert.equal(f.calls.captures.length,2);assert.equal(f.calls.providers.length,0);
+ assert.equal(second.reference.evidence_id,'ev1_source');
+ assert.equal(second.native_postcondition_verified,false);assert.equal(second.whole_task_verified,false);
+ const shown=visualWorkReviewModelOutput({output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{evidence_id:'ev1_later_pass'}]})},second,'ev1_later_pass');
+ const images=shown.output.filter(i=>i.type==='input_image');
+ assert.equal(images.length,2,'Both actual model and source pixels must reach the actor');
+ assert(images.every(i=>i.image_url==='data:image/png;base64,'+image));
+});
+
+test('new working questions never change independent-review or observation authority',()=>{
+ const check={id:'sizes',expected:'Compare visible size labels.'};
+ assert.throws(()=>normalizeVisualReviewRequest({view_id:41,recheck_evidence_id:'ev1_area',checks:[check]}),/recheck_or_checks_invalid/);
+ assert.throws(()=>normalizeVisualReviewRequest({view_id:41,review_mode:'observe',recheck_evidence_id:'ev1_area',checks:[check],complete_inspection_item_id:'final'}),/observation_scope_invalid/);
+ assert.throws(()=>normalizeVisualReviewRequest({view_id:41,review_mode:'observe',recheck_evidence_id:'ev1_area',checks:[check],code_evidence_ids:['ev1_code']}),/observation_scope_invalid/);
+ for(const checks of [null,{},'sizes',Array(9).fill(check),[check,check],[{id:'bad',expected:''}]])
+  assert.throws(()=>normalizeVisualReviewRequest({view_id:41,review_mode:'observe',recheck_evidence_id:'ev1_area',checks}),/visual_review_/);
+ const omitted=normalizeVisualReviewRequest({view_id:41,review_mode:'observe',recheck_evidence_id:'ev1_area'});
+ assert.equal(Object.hasOwn(omitted,'checks'),false);
+ const cleared=normalizeVisualReviewRequest({view_id:41,review_mode:'observe',recheck_evidence_id:'ev1_area',checks:[]});
+ assert.deepEqual(cleared.checks,[]);
+});
