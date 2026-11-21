@@ -1,6 +1,7 @@
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import {createServer} from 'node:http';
 import test from 'node:test';import assert from 'node:assert/strict';
-import {createGoal,__testOnlyResetGoalListCache} from '../src/goals/service.js';
+import {execFileSync} from 'node:child_process';
+import {createGoal,getGoalStoragePath,__testOnlyResetGoalListCache} from '../src/goals/service.js';
 import {startExternalAssignmentRun} from '../src/assignments/external_assignment_start.js';
 import {getAssignmentKernelSnapshotV2} from '../src/assignments/assignment_kernel_v2_store.js';
 import {controlAssignmentExecutionV2} from '../src/assignments/assignment_kernel_v2_controls.js';
@@ -35,9 +36,30 @@ test('authenticated GET opt-in returns fresh compact dispatch control; default p
   await runWithRequestContext(context,async()=>controlAssignmentExecutionV2({binding,action:'pause',command_id:'new-pause',expected_command_id:current.execution_control?.command_id??null}));
   const paused:any=await(await fetch(url,{headers})).json();assert.equal(paused.assignment_dispatch_control_v1.snapshot.execution_control.state,'paused');
   assert(paused.assignment_dispatch_control_v1.assignment_version>compact.assignment_dispatch_control_v1.assignment_version);
+  // A separate writer extends the persisted journal, bypassing this process's
+  // cache. The ordinary authenticated route must see the new valid tail.
+  const outside=`import {getAssignmentKernelSnapshotV2} from ${JSON.stringify(new URL('../src/assignments/assignment_kernel_v2_store.js',import.meta.url).href)};
+    import {controlAssignmentExecutionV2} from ${JSON.stringify(new URL('../src/assignments/assignment_kernel_v2_controls.js',import.meta.url).href)};
+    import {runWithRequestContext} from ${JSON.stringify(new URL('../src/request_context.js',import.meta.url).href)};
+    import {createOperatorBackendAuth} from ${JSON.stringify(new URL('../src/operator_backend_auth.js',import.meta.url).href)};
+    runWithRequestContext({operator_backend_auth:createOperatorBackendAuth('shared_token','fixture-only')},()=>{
+      const s=getAssignmentKernelSnapshotV2(${JSON.stringify(goal.id)});
+      controlAssignmentExecutionV2({binding:s.current_binding,action:'resume',command_id:'outside-resume',expected_command_id:'new-pause'});
+    });`;
+  execFileSync(process.execPath,['--input-type=module','-e',outside],{env:process.env,timeout:20000,stdio:'pipe'});
+  const resumed:any=await(await fetch(url,{headers})).json();
+  assert.equal(resumed.assignment_dispatch_control_v1.snapshot.execution_control.state,'running');
+  assert.equal(resumed.assignment_dispatch_control_v1.snapshot.execution_control.command_id,'outside-resume');
+  assert(resumed.assignment_dispatch_control_v1.assignment_version>paused.assignment_dispatch_control_v1.assignment_version);
   authorized=false;const denied=await fetch(url,{headers});assert.equal(denied.status,403);assert(!await denied.text());
   authorized=true;foreign=true;
   for(const options of [{headers},{}]){const denied=await fetch(url,options);assert([403,404].includes(denied.status));assert(!(await denied.text()).includes('current_binding'));}
+  foreign=false;
+  const file=getGoalStoragePath(goal.id)!;const altered=JSON.parse(fs.readFileSync(file,'utf8'));
+  altered.assignment_kernel_v2.events[0].binding.generation+=1;
+  fs.writeFileSync(file,JSON.stringify(altered));
+  const corrupted=await fetch(url,{headers});assert.equal(corrupted.status,500,'Changed earlier bytes cannot reuse a valid cached prefix');
+  assert(!(await corrupted.text()).includes('current_binding'));
  }finally{
   server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));__closeForTests();__testOnlyResetGoalListCache();
   if(old===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=old;
