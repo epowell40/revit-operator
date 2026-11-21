@@ -29,7 +29,10 @@ export function projectWorkPlanStatus(ref: EvidenceRefV1, raw: unknown, maxBytes
     verification_policy: value.verification_policy,
     work_plan_required: value.work_plan_required,
     work_plan: plan,
-    continuation: { state: continuation?.state, reason: continuation?.reason, next_items: continuation?.next_items },
+    continuation: { state: continuation?.state, reason: continuation?.reason, next_items: continuation?.next_items,
+      ...(continuation && Object.hasOwn(continuation, 'remaining_resources') ? {remaining_resources: continuation.remaining_resources} : {}),
+      ...(continuation && Object.hasOwn(continuation, 'checkpoint_recommended') ? {checkpoint_recommended: continuation.checkpoint_recommended} : {}),
+      ...(continuation && Object.hasOwn(continuation, 'construction_progress') ? {construction_progress: continuation.construction_progress} : {}) },
     limitation: 'The returned plan is retained task bookkeeping. Preserve its page boundaries, source interpretations, unverified claims, blockers and pass-specific checks. It does not establish current model state or whole-drawing completion. Other status fields remain retrievable from this evidence ID.'
   };
   // Never silently cut an item, crop, ID, blocker, check state or page boundary.

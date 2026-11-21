@@ -68,6 +68,26 @@ test('work-plan status preserves paused, blocked, unverified and pending-page st
   }
 }));
 
+test('work-plan model envelope preserves the active time reserve and checkpoint warning without renewing it', () => withWorkspace(() => {
+  for (const remaining of [100606, 0, null]) {
+    const raw=workPlanStatusFixture();
+    const resources={provider_calls:{used:705,limit:720,remaining:15},active_execution_ms:{used:10237308,limit:10337914,remaining}};
+    Object.assign(raw.execution_continuation,{remaining_resources:resources,checkpoint_recommended:true,
+      construction_progress:{calls_since_construction:3,notice:'Inspect existing work; repeated reads are not progress.'}});
+    const saved=storeEvidence({scope,source:'desktop_native_transport:call_reserve:0',trust_level:'untrusted_caller',raw});
+    const context=assembleBoundedEvidenceContext({projections:[saved.projection],...scope});
+    const shown=modelEvidenceEnvelope(context.projections,context.omitted).evidence_projections[0]!;
+    const next=shown.work_plan_status?.continuation as any;
+    assert.deepEqual(next.remaining_resources,resources);
+    assert.equal(next.checkpoint_recommended,true);
+    assert.equal(next.construction_progress.calls_since_construction,3);
+    assert.deepEqual(shown.work_plan_status?.work_plan,raw.work_plan);
+    assert.equal(shown.work_plan_status?.whole_task_verified,false);
+    assert.equal(shown.effect_state,null);assert(shown.projected_bytes<=8192);
+    assert.deepEqual(JSON.parse(readAuthoritativeEvidence(saved.ref,scope).toString()),raw);
+  }
+}));
+
 test('foreign, malformed and oversized work-plan pages retain ordinary retrieval rather than a partial working map', () => withWorkspace(() => {
   for(const variant of ['foreign','schema','page','source','oversized']) {
     const raw=workPlanStatusFixture(); let source='desktop_native_transport:call_negative:0';

@@ -6172,7 +6172,7 @@ async function journalSidecarComputerToolReceipt(receipt, options = {}) {
 async function settleSidecarComputerAssignment(outcome, summary, options = {}) {
   const assignment = computerState.sidecarAssignment;
   if (!assignment?.session_id) return null;
-  if (outcome === "complete" && desktopHandoffReadinessRequired()) {
+  if (assignment.kernel_version !== 2 && outcome === "complete" && desktopHandoffReadinessRequired()) {
     // Plain-text/provider termination must not bypass the report-tool guard.
     const probe = options.checkRevitBridgeHealth || checkRevitBridgeHealth;
     assertDesktopHandoffNativeReady(await probe());
@@ -6210,6 +6210,15 @@ async function settleSidecarComputerAssignment(outcome, summary, options = {}) {
       });
     }
     const workReturn = await refreshSidecarWorkReturnAfterSettlement({ readBackendJson: request });
+    // The native loop can return normally after the host stops an unfinished
+    // task. Read its bound outcome before applying the successful-handoff gate:
+    // displaying a recorded failure needs no fresh Revit read and grants no
+    // completion, retry, save, or permission to clear an unknown effect.
+    if (outcome === "complete" && !["blocked", "failed"].includes(workReturn?.status)
+        && desktopHandoffReadinessRequired()) {
+      const probe = options.checkRevitBridgeHealth || checkRevitBridgeHealth;
+      assertDesktopHandoffNativeReady(await probe());
+    }
     const authoritativeStates = new Set([
       "awaiting_user_input", "awaiting_user_review", "complete", "complete_with_issues",
       "verified_noop", "blocked", "failed"
