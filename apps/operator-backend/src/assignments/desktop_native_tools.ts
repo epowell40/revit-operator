@@ -1,6 +1,7 @@
 import {createHash} from 'node:crypto';
 import {canonicalJsonV2, type AssignmentSnapshotV2} from '../domain/assignment-kernel/index.js';
 import {assignmentKernelV2ForBinding} from './assignment_kernel_v2_factory.js';
+import {getAssignmentKernelSnapshotV2} from './assignment_kernel_v2_store.js';
 import type {AssignmentKernelBindingInputV2} from './assignment_kernel_v2_lifecycle.js';
 import {desktopExecutorOwnsAssignmentV2} from './desktop_executor_owner.js';
 import {localDesktopNativeTransportAvailable} from './desktop_native_transport_policy.js';
@@ -16,6 +17,7 @@ import {revitCourierTargetFromContext} from '../courier/revit_courier_target.js'
 import {OPERATOR_BACKEND_CONTRACT_VERSION} from '../contracts.js';
 import {REVIT_ARTIFACT_DELIVERY_GUIDANCE} from '../brains/revit_artifact_delivery_guidance.js';
 import {boundDesktopNativeOutput,boundDesktopNativeToolContract} from './desktop_native_output.js';
+import {desktopDraftingLocationOutput} from './desktop_drafting_location_output.js';
 import {DESKTOP_EXECUTION_EFFICIENCY_GUIDANCE,desktopNativeInitialContext} from './desktop_execution_guidance.js';
 import {nativeInteractiveInputOwnership,withNativeInteractiveInvocation,afterNativeInteractiveReadback} from './native_interactive_input.js';
 import {buildAssignmentKernelPublicationV2} from './assignment_kernel_v2_publication.js';
@@ -341,9 +343,14 @@ async function executeDesktopNativeCallSettled(binding:AssignmentKernelBindingIn
         const result=await handleCodexDynamicToolCall(runtime,{id:callId,method:'item/tool/call',
           params:{namespace:'revit_operator',tool:selected.tool,arguments:selected.arguments,turnId}});
         runtime.flushAssignmentKernelV2TurnStop(turnId);
-        return {schema:'operator.desktop-native-result.v1',result:boundDesktopNativeOutput(result as any,{
+        const outputScope={
           session_id:binding.session_id,assignment_id:binding.assignment_id,run_id:binding.run_id,generation:binding.generation
-        },callId),stop_reason:stopReason};
+        };
+        const presentation=stopReason?null:desktopDraftingLocationOutput(result as any,{tool:selected.tool,
+          arguments:selected.arguments,snapshot:getAssignmentKernelSnapshotV2(binding.assignment_id),
+          beforeVersion:current.snapshot.assignment_version,scope:outputScope,callId});
+        return {schema:'operator.desktop-native-result.v1',result:boundDesktopNativeOutput(presentation??result as any,
+          outputScope,callId),stop_reason:stopReason};
       }finally{
         endRevitCourierTurnContext(courier);
         runtime.clearAssignmentKernelV2TurnStop(turnId);
