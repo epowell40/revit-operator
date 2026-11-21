@@ -64,3 +64,12 @@ test('initial element focus and bounds-less rechecks still require their actual 
  const initial=await reviewCurrentWork({...request,review_mode:'observe',focus_element_ids:[101],context_bbox_min_xyz:[-1,-1,0],context_bbox_max_xyz:[1,1,0]},f.h);
  assert.equal(initial.state,'unavailable');assert.equal(f.calls.captures.length,1);assert.equal(f.calls.providers.length,0);
 });
+
+for(const checks of [undefined,[]])test('observation recheck preserves optional empty checks: '+(checks===undefined?'omitted':'empty'),async()=>{
+ const f=setup();const first=await reviewCurrentWork({...request,review_mode:'observe',checks},f.h);assert.equal(first.state,'observed',first.reason);
+ f.h.readBaseline=async()=>({evidence_ref:{evidence_id:'ev1_optional_checks'},review:first,capture:{evidence_ref:{evidence_id:first.capture.evidence_id,content_hash:first.capture.content_hash,byte_count:bytes.length,media_type:'image/png'},image_url:'data:image/png;base64,'+image},reference:null});
+ const second=await reviewCurrentWork({view_id:41,review_mode:'observe',recheck_evidence_id:'ev1_optional_checks'},f.h);
+ assert.equal(second.state,'observed',second.reason);assert.deepEqual(second.request.checks,[]);assert.equal(f.calls.captures.length,2);assert.equal(f.calls.providers.length,0);
+ assert.equal(second.native_postcondition_verified,false);assert.equal(second.whole_task_verified,false);
+ const independent=await reviewCurrentWork({view_id:41,recheck_evidence_id:'ev1_optional_checks'},f.h);assert.equal(independent.state,'unavailable');assert.equal(f.calls.providers.length,0);
+});

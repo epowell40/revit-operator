@@ -345,7 +345,7 @@ export function validateVisualReviewBaseline(value,request,owner,location,frame)
     ||!Number.isSafeInteger(old.through_sequence)||old.through_sequence<0||old.through_sequence>location.through_sequence
     ||prior.request?.view_id!==request.view_id||prior.capture?.frame?.kind!==frame.kind&&!sheetScreenTransition
     ||old.view_unique_id&&location.view_unique_id&&old.view_unique_id!==location.view_unique_id)throw Error('visual_review_baseline_identity_invalid');
-  const checks=normalizeVisualReviewRequest({view_id:request.view_id,checks:prior.request.checks}).checks;
+  const checks=normalizeVisualReviewRequest({view_id:request.view_id,review_mode:request.review_mode,checks:prior.request.checks}).checks;
   const validateImage=(value,expected)=>{
     const ref=value?.evidence_ref,url=value?.image_url;
     if(!ref||ref.evidence_id!==expected?.evidence_id||ref.content_hash!==expected.content_hash||!positive(ref.byte_count)||ref.byte_count>5*1024*1024
