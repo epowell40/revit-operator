@@ -221,7 +221,7 @@ export function parseAssignmentKernelSessionIndexResponseV2(value) {
  * benchmark, Work Packet, and Protocol V2 consumers. This checks envelope and
  * provider-ledger coherence without reconstructing canonical Assignment truth.
  */
-export function parseAssignmentKernelPublicationV2(value) {
+function validateAssignmentKernelPublicationV2(value) {
   const publication = record(value);
   if (!publication || publication.schema !== ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA) publicationInvalid("schema");
   if (publication.supports_explicit_resource_renewal_v1 !== undefined
@@ -339,8 +339,14 @@ export function parseAssignmentKernelPublicationV2(value) {
       }
     }
   }
+  if (snapshot.provider_usage_hold !== undefined) parseProviderUsageHoldV1(snapshot.provider_usage_hold, binding);
+  return publication;
+}
+
+export function parseAssignmentKernelPublicationV2(value) {
+  const publication = validateAssignmentKernelPublicationV2(value);
   const parsed = structuredClone(publication);
-  if (snapshot.provider_usage_hold !== undefined) parsed.snapshot.provider_usage_hold = parseProviderUsageHoldV1(snapshot.provider_usage_hold, binding);
+  if (publication.snapshot.provider_usage_hold !== undefined) parsed.snapshot.provider_usage_hold = parseProviderUsageHoldV1(publication.snapshot.provider_usage_hold, publication.snapshot.current_binding);
   return parsed;
 }
 
@@ -354,7 +360,9 @@ function dispatchControlInvalid(reason) { throw new TypeError('assignment_dispat
  * authority. Validate the SAME complete publication/ledger before projecting;
  * keep every field consumed by the existing dispatch guard. No control cache. */
 export function projectAssignmentDispatchControlV1(value) {
-  const publication = parseAssignmentKernelPublicationV2(value), source = publication.snapshot;
+  // Validate the same complete ledger, but copy only the returned control fields.
+  // The full parser keeps its independent-copy contract for its other callers.
+  const publication = validateAssignmentKernelPublicationV2(value), source = publication.snapshot;
   const snapshot = {
     assignment_version: publication.assignment_version,
     current_binding: structuredClone(source.current_binding),

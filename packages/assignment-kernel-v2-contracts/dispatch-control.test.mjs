@@ -30,6 +30,24 @@ test('dispatch projection validates the original publication and refuses incoher
   const p=fixture();change(p);assert.throws(()=>contracts.projectAssignmentDispatchControlV1(p));
  }
 });
+test('compact control validates without cloning discarded drawing history and returns isolated fields',()=>{
+ const source=fixture(), before=structuredClone(source), clone=globalThis.structuredClone;
+ let fullCopies=0;
+ try{
+  globalThis.structuredClone=(value,...args)=>{
+   if(value?.schema==='revit-operator.assignment-kernel-publication/v2'||value?.schema==='revit-operator.assignment-snapshot/v2')fullCopies++;
+   return clone(value,...args);
+  };
+  const control=contracts.projectAssignmentDispatchControlV1(source);
+  control.snapshot.current_binding.run_id='changed';control.snapshot.pending_review_ids.push('changed');
+  control.snapshot.execution_control.state='paused';
+ }finally{globalThis.structuredClone=clone;}
+ assert.equal(fullCopies,0,'Compact reads must not copy unrelated retained model evidence.');
+ assert.deepEqual(source,before);
+ const parsed=contracts.parseAssignmentKernelPublicationV2(source);
+ parsed.snapshot.work_plan.items[0].source='changed';
+ assert.deepEqual(source,before,'The full public parser still returns an isolated value.');
+});
 test('initial absence of a control command and a real provider usage hold remain explicit',()=>{
  const p=fixture();delete p.snapshot.execution_control;
  assert.equal(contracts.projectAssignmentDispatchControlV1(p).snapshot.execution_control,null);
