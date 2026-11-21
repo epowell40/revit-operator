@@ -186,6 +186,15 @@ test("durable multi-room plan uses authenticated host binding and rejects invali
     next_action:'Read the outlet and compare its reference crop.',remaining:'Outlet connection and size label.'};
   assert.notEqual((await client.callTool({name:'operator_manage_work_plan',arguments:{action:'locate',itemId:'room_a_supply',locationHint:{...locationHint,drafting}},_meta})).isError,true);
   assert.deepEqual(requests.at(-1).body.location_hint.drafting,drafting,'Existing authenticated locate path carries the drafting record.');
+  const reusedHint={status:'candidate',reason:'Check the next pass in this retained area.',drafting};
+  assert.notEqual((await client.callTool({name:'operator_manage_work_plan',arguments:{action:'locate',itemId:'room_a_supply',reuseLocation:true,locationHint:reusedHint},_meta})).isError,true);
+  assert.equal(requests.at(-1).body.reuse_location,true);
+  assert.deepEqual(requests.at(-1).body.location_hint,reusedHint);
+  const beforeInvalidReuse=requests.length;
+  for(const args of [{action:'status',reuseLocation:true},{action:'locate',itemId:'room_a_supply',reuseLocation:true,locationHint}]){
+    assert.equal((await client.callTool({name:'operator_manage_work_plan',arguments:args,_meta})).isError,true);
+  }
+  assert.equal(requests.length,beforeInvalidReuse);
   const draftCount=requests.length;
   for(const invalid of [{...drafting,pass:'all'},{...drafting,stage:'complete'},{...drafting,host_certified:true},{...drafting,element_ids:[-1]}])
     assert.equal((await client.callTool({name:'operator_manage_work_plan',arguments:{action:'locate',itemId:'room_a_supply',locationHint:{...locationHint,drafting:invalid}},_meta})).isError,true);

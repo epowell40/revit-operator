@@ -71,6 +71,37 @@ export function retainedRetrievalStallContinuation(assignment, retained) {
     'Keep checked partial work and save a useful verified milestone when applicable. Do not repeat mutations, invent missing values, mark work complete, or override Pause/unknown effects. Four failures without a successful read stop this loop.'}]};
 }
 
+/** Consume the existing canonical progress clock at a completed tool boundary.
+ * Successful read-only activity cannot bypass this pacing check. */
+export function retainedDraftingProgressContinuation(assignment, retained, tracker) {
+  const continuation=retained?.execution_continuation;
+  if(retained?.status!=='retained'||assignment?.kernel_version!==2||!continuation)return null;
+  if(continuation.schema!=='operator.execution-continuation.v1'
+    ||continuation.binding?.assignment_id!==(assignment.goal_id??assignment.assignment_id)
+    ||!['session_id','run_id','generation'].every(key=>continuation.binding?.[key]===assignment[key]))
+    throw Error('execution_continuation_binding_mismatch');
+  if(continuation.state!=='ready')return null;
+  const progress=continuation.construction_progress;
+  if(!progress)return null;
+  const calls=progress.calls_since_construction;
+  if(!Number.isSafeInteger(calls)||calls<0||!Number.isFinite(Date.parse(progress.since)))
+    throw Error('execution_continuation_progress_invalid');
+  const window=progress.since;
+  const stage=Math.floor(calls/8);
+  if(stage<1)return null;
+  if(tracker.window===window&&stage<=tracker.stage)return null;
+  tracker.window=window;
+  tracker.stage=stage;
+  if(stage>=3)throw Error('drafting_no_progress: 24 model calls since the last observed construction/check progress. Existing work and evidence are retained. Report the specific unresolved discrepancy and change the approach before resuming.');
+  return {role:'user',content:[{type:'input_text',text:
+    'You have used '+calls+' model calls since new construction or native checked-target progress. '+
+    'Choose one concrete remaining discrepancy now. Finish a supported annotation/property pass or another ready branch when a connection is blocked. '+
+    'Record the specific blocked pass and continue independent work. Reuse the paired reference/model area and current readbacks. '+
+    'Further inspection must answer a named missing fact needed for that action. Repeated successful inspections, reviews and saves do not reset this progress clock. '+
+    (stage>=2?'If the bounded alternative cannot make progress, preserve an authorized useful milestone and report the checked partial with the exact blocker. ':'')+
+    'This changes no budget, native admission, Pause or unknown-effect requirement.'}]};
+}
+
 export async function missingWorkReportContinuation(assignment, request, reminderCount = 0, progress = {}, options = {}) {
   if (assignment?.kernel_version !== 2) return null;
   if (!assignment.session_id || !assignment.goal_id || !assignment.run_id

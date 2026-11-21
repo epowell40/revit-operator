@@ -1,3 +1,4 @@
+import {draftingConstructionProgressV2} from '../domain/assignment-kernel/progress/native_work_progress.js';
 import { createHash } from 'node:crypto';
 import type { AssignmentSnapshotV2 } from '../domain/assignment-kernel/snapshot.js';
 import { projectWorkPlan } from './work_plan_projection.js';
@@ -34,5 +35,6 @@ export function projectExecutionContinuation(snapshot: AssignmentSnapshotV2, now
   const progress_key=createHash('sha256').update(JSON.stringify({applied,checked,claims,backchecked})).digest('hex');
   return {...base,state:'ready',reason:'ready_work_remaining',progress_key,next_items:next,
     remaining_resources:budget.resources,checkpoint_recommended:budget.checkpoint_recommended,
+    construction_progress:draftingConstructionProgressV2(snapshot,DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2.max_no_progress_epochs),
     notice:'A completed response is not a completed assignment. Continue one useful discrepancy, inspect and check off the result, then select the next. Existing native/provider admission remains authoritative.'};
 }

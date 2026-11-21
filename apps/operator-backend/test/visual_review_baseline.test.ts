@@ -16,6 +16,19 @@ test('host baseline HTTP reads canonical scoped before pixels, excludes prior ve
   const read=async(body:unknown)=>fetch(`http://127.0.0.1:${address.port}/evidence/visual-review-baseline`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
   const body={scope,evidence_id:evidence.ref.evidence_id,content_hash:evidence.ref.content_hash},response=await read(body);assert.equal(response.status,200);
   const result=(await response.json() as any).result;assert.equal(result.capture.image_url,'data:image/png;base64,'+pixels.toString('base64'));assert.deepEqual(result.review.request,raw.request);assert.deepEqual(result.review.capture_resolution,raw.capture_resolution);assert.equal(result.review.checks,undefined);assert.equal(result.review.raw_review_evidence,undefined);assert.equal(result.review.native_postcondition_verified,false);
+  const observed={...raw,state:'observed',request_dispatched:false,request:{...raw.request,review_mode:'observe'}};
+  const observation=storeEvidence({scope,source:'operator_desktop.function.review_current_work',trust_level:'untrusted_caller',raw:observed},8192);
+  const restored=await read({...body,evidence_id:observation.ref.evidence_id,content_hash:observation.ref.content_hash});
+  assert.equal(restored.status,200);
+  const observedResult=(await restored.json() as any).result;
+  assert.equal(observedResult.review.state,'observed');
+  assert.equal(observedResult.review.request_dispatched,false);
+  assert.equal(observedResult.review.native_postcondition_verified,false);
+  for(const modify of [(r:any)=>delete r.request.review_mode,(r:any)=>{r.request_dispatched=true;}]){
+    const bad=structuredClone(observed);modify(bad);
+    const forged=storeEvidence({scope,source:'operator_desktop.function.review_current_work',trust_level:'untrusted_caller',raw:bad},8192);
+    assert.equal((await read({...body,evidence_id:forged.ref.evidence_id,content_hash:forged.ref.content_hash})).status,400);
+  }
   for(const invalid of [{...body,scope:{...scope,session_id:'foreign'}},{...body,scope:{...scope,generation:2}},{...body,scope:{session_id:'session'}},{...body,content_hash:'sha256:'+'0'.repeat(64)}])assert.equal((await read(invalid)).status,400);
   for(const modify of [(r:any)=>{r.ok=false;r.state='unavailable';},(r:any)=>{r.capture.content_hash='sha256:'+'0'.repeat(64);},(r:any)=>{r.native_postcondition_verified=true;}]){const altered=structuredClone(raw);modify(altered);const saved=storeEvidence({scope,source:'operator_desktop.function.review_current_work',trust_level:'untrusted_caller',raw:altered},8192);assert.equal((await read({...body,evidence_id:saved.ref.evidence_id,content_hash:saved.ref.content_hash})).status,400);}
  }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));if(prior===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=prior;fs.rmSync(root,{recursive:true,force:true});}

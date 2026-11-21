@@ -326,7 +326,7 @@ export async function handleAssignmentHttpRoute(
       requireV2Principal(getAssignmentKernelSnapshotV2(binding.assignment_id));
       const result = manageAssignmentWorkPlan({ binding, action: String(body?.action), declaration: body?.declaration as any, completion_proposal: body?.completion_proposal as any,
         expected_assignment_version: body?.expected_assignment_version as number | undefined,
-        location_hint: body?.location_hint as any,
+        location_hint: body?.location_hint as any, reuse_location: body?.reuse_location as boolean | undefined,
         scope_check: body?.scope_check as any,
         item_id: body?.item_id as string, reason: body?.reason as string, operation_ids: body?.operation_ids as string[], start: body?.start as number,
         operation_start: body?.operation_start as number, assumption_start: body?.assumption_start as number,

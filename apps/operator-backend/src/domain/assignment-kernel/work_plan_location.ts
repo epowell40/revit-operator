@@ -46,6 +46,15 @@ export function draftingReadbackReasonV2(snapshot:AssignmentSnapshotV2,id:string
   return null;
 }
 
+/** Reuse an existing area's address without copying its prior check verdict. */
+export function reuseWorkPlanLocationV2(snapshot:AssignmentSnapshotV2,itemId:string,hint:WorkPlanLocationHintV2):WorkPlanLocationHintV2 {
+  kernelAssertV2(!hint.source&&!hint.native,'work_plan_reuse_location_invalid','A reused location cannot replace the source crop or native view.');
+  const previous=snapshot.work_plan?.items.find(item=>item.item_id===itemId)?.location_history?.at(-1);
+  kernelAssertV2(Boolean(previous?.source?.region&&previous.native&&sameAssignmentBindingV2(previous.binding,snapshot.current_binding)),
+    'work_plan_reuse_location_unavailable','Locate this area with a current source crop and model view first.');
+  return {...structuredClone(hint),source:structuredClone(previous!.source),native:structuredClone(previous!.native)};
+}
+
 export function recordWorkPlanLocationV2(snapshot: AssignmentSnapshotV2, itemId: string,
   hint: WorkPlanLocationHintV2, at: string): AssignmentWorkPlanV2 {
   const plan = snapshot.work_plan, item = plan?.items.find(i=>i.item_id===itemId);

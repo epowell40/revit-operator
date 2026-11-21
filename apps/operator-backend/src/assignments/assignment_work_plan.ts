@@ -1,3 +1,4 @@
+import {reuseWorkPlanLocationV2} from '../domain/assignment-kernel/work_plan_location.js';
 import { projectAdvisoryFollowupsV2 } from "./advisory_followups_projection.js";
 import { projectExecutionContinuation } from './execution_continuation.js';
 import { readImageInputDelivery } from '../desktop_image_delivery.js';
@@ -36,12 +37,17 @@ export function manageAssignmentWorkPlan(input: { binding: AssignmentKernelBindi
   expected_assignment_version?: number;
   scope_check?: WorkPlanScopeV1;
   reason?: string;
-  location_hint?: WorkPlanLocationHintV2;
+  location_hint?: WorkPlanLocationHintV2; reuse_location?: boolean;
   followup?: AdvisoryFollowupDispositionV2; followup_start?: number;
   completion_proposal?: AdvisoryCompletionProposalV1; declaration?: WorkPlanDeclarationV2; item_id?: string; operation_ids?: readonly string[]; start?: number; operation_start?: number; assumption_start?: number }) {
   const resolved = assignmentKernelV2ForBinding(input.binding);
   if (!resolved || resolved.snapshot.terminal) throw new Error("work_plan_binding_stale_or_terminal");
   if (resolved.snapshot.execution_control?.state === "paused" && input.action !== "status" && input.action !== "update_followup") throw new Error("assignment_execution_paused");
+  if(input.reuse_location!==undefined){
+    if(input.action!=='locate'||input.reuse_location!==true||!input.item_id||!input.location_hint
+      ||input.location_hint.source||input.location_hint.native)throw Error('work_plan_reuse_location_invalid');
+    input={...input,location_hint:reuseWorkPlanLocationV2(resolved.snapshot,input.item_id,input.location_hint)};
+  }
   let snapshot = resolved.snapshot;
   assertWorkPlanCommandVersion(snapshot, input.action, input.expected_assignment_version);
   if(input.action!=='check_scope'&&input.scope_check!==undefined)throw Error('work_plan_scope_arguments_invalid');
