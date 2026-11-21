@@ -401,7 +401,10 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
       && currentIdentity.path === "/revit/get-element-summary"
       && Number.isSafeInteger(object(verifies.input.body).sourceElementId)
     || verifies?.request_identity?.path === "/revit/place-mep-accessory-interactively"
-      && nativeAccessoryReadRequestMatchesV2(snapshot, verifies, input.arguments);
+      && nativeAccessoryReadRequestMatchesV2(snapshot, verifies, input.arguments)
+    || verifies?.request_identity?.path === '/revit/connect-existing-mep-branch'
+      && object(verifies.input.body).connectionMode==='air_terminal_on_duct'
+      && existingMepConnectionReadRequestMatchesV2(snapshot,verifies,input.arguments);
   const boundTargetTokens = comparisonIncludesReference
     ? targetTokens.filter(token => verificationTargetMatchesAppliedOperation(verifies, [token]))
     : targetTokens;
