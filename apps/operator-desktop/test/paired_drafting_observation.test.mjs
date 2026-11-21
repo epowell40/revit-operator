@@ -1,5 +1,8 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {createHash}from'node:crypto';import fs from 'node:fs';
-import {reviewCurrentWork,normalizeVisualReviewRequest,visualWorkReviewModelOutput,VISUAL_WORK_REVIEW_TOOL}from'../visual_work_review.mjs';import {reviewTestPng}from'../../../packages/operator-assistant-ui/fixtures/visual-review-image.mjs';
+import {reviewCurrentWork,normalizeVisualReviewRequest,visualWorkReviewModelOutput,VISUAL_WORK_REVIEW_TOOL}from'../visual_work_review.mjs';
+const imageFixture=[new URL('../../packages/operator-assistant-ui/fixtures/visual-review-image.mjs',import.meta.url),new URL('../../../packages/operator-assistant-ui/fixtures/visual-review-image.mjs',import.meta.url)].find(p=>fs.existsSync(p));
+assert(imageFixture,'The shared review image fixture must exist in either supported layout');
+const {reviewTestPng}=await import(imageFixture.href);
 const bytes=reviewTestPng(40,40),image=bytes.toString('base64'),sha=createHash('sha256').update(bytes).digest('hex');
 const owner={assignment_id:'assignment',session_id:'session',run_id:'run',generation:1,principal_id:'principal',document_fingerprint:'project'},request={view_id:41,capture_mode:'native_visible_region',checks:[{id:'gap',expected:'No extra blank row below headings; keep visible borders.'}]};
 function setup(){let clock=Date.now();const calls={contexts:0,captures:[],providers:[],images:[]};
