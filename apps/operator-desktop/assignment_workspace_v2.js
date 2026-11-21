@@ -94,6 +94,7 @@ export function assignmentWorkspaceGoalV2(raw) {
     _canRecover: !snapshot.terminal && (snapshot.in_flight_operation_ids || []).length > 0,
     _pendingInputs: Object.values(snapshot.clarifications || {}).filter(item => !item.resolved_at).map(item => ({
       clarification_id: item.clarification_id, variable_id: item.variable_id, question: item.question,
+      ...(typeof item.work_summary === "string" && item.work_summary ? {work_summary: item.work_summary} : {}),
       ...assignmentInputMetadata(spec, item.variable_id)
     })),
     _projection: {

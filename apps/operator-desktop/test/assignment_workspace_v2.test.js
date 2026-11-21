@@ -249,11 +249,12 @@ test("canonical workspace separates pause from completion and retains pending qu
   delete snapshot.terminal_reason;
   snapshot.execution_control = { state: "paused", command_id: "pause-1", changed_at: "2026-09-04T10:00:00Z" };
   snapshot.pending_input_variable_ids = ["replacement_text"];
-  snapshot.clarifications = { question: { clarification_id: "question", variable_id: "replacement_text", question: "What exact replacement wording?" } };
+  snapshot.clarifications = { question: { clarification_id: "question", variable_id: "replacement_text", question: "What exact replacement wording?", work_summary: "Saved and checked Repair.rvt." } };
   let view = assignmentWorkspaceGoalV2(publication);
   assert.equal(view.status, "paused");
   assert.equal(view._canResume, false);
   assert.equal(view._pendingInputs[0].clarification_id, "question");
+  assert.equal(view._pendingInputs[0].work_summary, "Saved and checked Repair.rvt.");
   assert.equal(view._bindingV2.assignment_id, publication.assignment_id);
   snapshot.quiescent = false;
   assert.equal(assignmentWorkspaceGoalV2(publication).status, "pausing");

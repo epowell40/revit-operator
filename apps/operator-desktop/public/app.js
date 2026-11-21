@@ -4778,6 +4778,15 @@ function renderAssignmentInputsV2(goal) {
     const form = document.createElement("form");
     const label = document.createElement("label");
     label.textContent = question.question;
+    if (question.work_summary) {
+      const details = document.createElement("details");
+      const heading = document.createElement("summary");
+      heading.textContent = "Review saved work";
+      const content = document.createElement("div");
+      renderAssistantBlocks(content, question.work_summary, renderLinkedText);
+      details.append(heading, content);
+      container.appendChild(details);
+    }
     const control = createAssignmentInputControl(document, question);
     const input = control.input;
     label.appendChild(input);
