@@ -139,11 +139,14 @@ export function requestAssignmentInputV2(input: Readonly<{
   clarification_id: string;
   variable_ids: readonly string[];
   new_variable_ids?: readonly string[];
+  work_summary?: string;
   question: string;
 }>): AssignmentSnapshotV2 {
   let snapshot = context(input.binding).snapshot;
   const clarificationId = input.clarification_id.trim();
   const question = input.question.trim();
+  if (input.work_summary !== undefined && (typeof input.work_summary !== "string" || !input.work_summary.trim() || input.work_summary.length > 4000)) throw new Error("assignment_kernel_v2_input_summary_invalid");
+  const summary = input.work_summary?.trim();
   const variableIds = [...new Set(input.variable_ids.map(value => value.trim()).filter(Boolean))];
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,239}$/.test(clarificationId)) throw new Error("assignment_kernel_v2_clarification_id_invalid");
   if (!question) throw new Error("assignment_kernel_v2_clarification_question_required");
@@ -174,7 +177,7 @@ export function requestAssignmentInputV2(input: Readonly<{
     if (declarations.has(variableId) || snapshot.discovered_inputs?.[variableId]) {
       const prior = snapshot.clarifications[clarificationId];
       if (prior) {
-        if (prior.variable_id !== variableId || prior.question !== question.slice(0, 1_200))
+        if (prior.variable_id !== variableId || prior.question !== question.slice(0, 1_200) || prior.work_summary !== summary)
           throw new Error("assignment_kernel_v2_input_declaration_integrity_conflict");
         if (!prior.resolved_at && snapshot.pending_input_variable_ids.includes(variableId)) continue;
       }
@@ -184,7 +187,7 @@ export function requestAssignmentInputV2(input: Readonly<{
       binding: snapshot.current_binding,
       event_id: `input-requested:${clarificationId}:${variableId}`,
       actor: "operator-runtime",
-      body: { event_type: "input_requested", variable_id: variableId, clarification_id: clarificationId, question: question.slice(0, 1_200),
+      body: { event_type: "input_requested", variable_id: variableId, clarification_id: clarificationId, question: question.slice(0, 1_200), ...(summary ? {work_summary: summary} : {}),
         ...(declarations.has(variableId) ? { declaration: declarations.get(variableId)! } : {}) }
     });
     snapshot = appended.snapshot;

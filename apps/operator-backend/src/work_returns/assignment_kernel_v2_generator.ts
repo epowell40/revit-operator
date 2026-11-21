@@ -59,6 +59,8 @@ export function generateWorkReturnFromKernelV2(
       ...snapshot.unresolved_unknown_operation_ids.map(id => `Operation ${id} requires reconciliation.`)
     ])],
     question: pending?.question ?? null,
+    ...(pending ? {missing_fields: [pending.variable_id]} : {}),
+    ...(pending?.work_summary ? {work_summary: pending.work_summary} : {}),
     clarification_id: pending?.clarification_id ?? null,
     recommended_next_step: pending
       ? "Answer the focused question so this same Assignment can resume from retained work."

@@ -1,4 +1,5 @@
 import {stoppedWorkReturnMessage,canonicalWorkReturnResultMessage} from './stopped_work_return.mjs';
+import {taskInputMessage} from './task_input.mjs';
 // Created only after the exact bound Work Return was fetched and validated.
 // This is a pending check, never proof that the requested work succeeded.
 export class AssignmentVerificationPending extends Error {
@@ -17,7 +18,7 @@ export function computerCompletionPresentation(settlement, pendingClarification 
   const choices = {
     active: ['verification_pending', 'The response is saved; verification is still pending. Review the retained results before retrying changes.'],
     awaiting_user_review: ['awaiting_user_review', 'The response is saved and needs review. Task completion has not been verified.'],
-    awaiting_user_input: ['awaiting_user_input', pendingClarification?.question || 'The task needs your input. Open Tasks to review the questions.'],
+    awaiting_user_input: ['awaiting_user_input', taskInputMessage(pendingClarification) || 'The task needs your input. Open Tasks to review the questions.'],
     complete_with_issues: ['complete_with_issues', 'The task finished with issues. Open Tasks to review the remaining items.'],
     complete: ['completed', 'Task completion verified.'],
     verified_noop: ['completed', 'The requested state was already satisfied and verified.'],

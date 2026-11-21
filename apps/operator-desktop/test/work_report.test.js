@@ -11,10 +11,10 @@ test('partial repairs and a blocking decision share a recoverable clarification 
  const result=await submitWorkReportForReview(binding,report,status,{requestInput:input=>requestTaskInput(binding,input,async(_url,options)=>{
    if(options.method==='GET')return {assignment_kernel_v2:{snapshot:{current_binding:owner,spec:{input_variables:[]}}}};
    saved=JSON.parse(options.body);
-   return {ok:true,assignment_snapshot_v2:{current_binding:owner,outcome:'awaiting_user_input',pending_input_variable_ids:['inline_device'],clarifications:{[saved.clarification_id]:{variable_id:'inline_device',question:saved.question}}}};
+   return {ok:true,assignment_snapshot_v2:{current_binding:owner,outcome:'awaiting_user_input',pending_input_variable_ids:['inline_device'],clarifications:{[saved.clarification_id]:{variable_id:'inline_device',question:saved.question,work_summary:saved.work_summary}}}};
  })});
  const message=retainedTaskInputMessage({name:'report_work_for_review'},{output:JSON.stringify(result)});
- assert.equal(message,saved.question);assert.equal(result.verified,false);
+ assert.equal(saved.question,report.needs_input.question);assert.ok(message.includes(saved.work_summary));assert.equal(result.verified,false);
  for(const text of [report.needs_input.question,...report.claimed_completed,...report.remaining_work,...report.uncertainties])assert.ok(message.includes(text));
  for(const state of [{outcome:'active',verification_policy:'strict'},{outcome:'paused',verification_policy:'advisory'}])await assert.rejects(submitWorkReportForReview(binding,report,async()=>({ok:true,...state}),{requestInput:()=>assert.fail('unexpected write')}),/active_advisory/);
 });

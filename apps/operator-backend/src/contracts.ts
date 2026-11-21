@@ -144,6 +144,7 @@ export type CanonicalAssignmentOutcomeV1 = {
   pending_clarification: {
     clarification_id: string;
     question: string;
+    work_summary?: string;
     missing_fields: string[];
   } | null;
   pending_review_id: string | null;

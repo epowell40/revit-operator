@@ -398,7 +398,8 @@ export async function handleAssignmentHttpRoute(
         clarification_id: String(body?.clarification_id ?? "").trim(),
         variable_ids: Array.isArray(body?.variable_ids) ? body.variable_ids.map(String) : [],
         ...(Array.isArray(body?.new_variable_ids) ? { new_variable_ids: body.new_variable_ids.map(String) } : {}),
-        question: String(body?.question ?? "").trim()
+        question: String(body?.question ?? "").trim(),
+        ...(body?.work_summary !== undefined ? {work_summary: body.work_summary as string} : {})
       });
       writeJson(res, 202, { ok: true, assignment_snapshot_v2: snapshot });
     } catch (error) {

@@ -65,6 +65,7 @@ function exactV2Outcome(
     pending_clarification: clarification ? {
       clarification_id: bounded(clarification.clarification_id, 240),
       question: bounded(clarification.question, 1_200),
+      ...(clarification.work_summary ? {work_summary: clarification.work_summary} : {}),
       missing_fields: [bounded(clarification.variable_id, 160)].filter(Boolean)
     } : null,
     pending_review_id: bounded(snapshot.pending_review_ids[0], 240) || null,

@@ -679,6 +679,7 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         snapshot = { ...snapshot, work_unit_states: { ...snapshot.work_unit_states, [event.work_unit_id]: event.state } };
         break;
       case "input_requested": {
+        if (event.work_summary !== undefined) kernelAssertV2(typeof event.work_summary === "string" && event.work_summary.trim().length > 0 && event.work_summary.length <= 4000, "input_summary_invalid", "Reported work must be a bounded nonempty string.");
         if (event.declaration) {
           kernelAssertV2(event.declaration.variable?.variable_id === event.variable_id, "input_declaration_binding_invalid", "Question and declared variable must agree.");
           snapshot = appendDiscoveredInputV2(snapshot, event.declaration);
@@ -692,7 +693,7 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
           pending_input_variable_ids: [...new Set([...snapshot.pending_input_variable_ids, event.variable_id])].sort(),
           clarifications: { ...snapshot.clarifications, [event.clarification_id]: {
             clarification_id: event.clarification_id, variable_id: event.variable_id,
-            question: event.question, requested_at: event.occurred_at
+            question: event.question, ...(event.work_summary ? {work_summary: event.work_summary} : {}), requested_at: event.occurred_at
           } }
         };
         break;

@@ -5741,6 +5741,7 @@ function recordCanonicalAssignmentOutcome(value, binding = computerState.sidecar
     ? {
         clarification_id: `${rawClarification.clarification_id || ""}`.trim(),
         question: trimToolText(rawClarification.question, 1200),
+        ...(rawClarification.work_summary ? {work_summary: trimToolText(rawClarification.work_summary, 4000)} : {}),
         missing_fields: Array.isArray(rawClarification.missing_fields)
           ? rawClarification.missing_fields.map((item) => trimToolText(item, 160)).filter(Boolean).slice(0, 32)
           : []
@@ -5775,6 +5776,7 @@ function recordCanonicalAssignmentOutcome(value, binding = computerState.sidecar
       run_id: expectedRunId,
       generation: expectedGeneration,
       question: pendingClarification.question,
+      ...(pendingClarification.work_summary ? {work_summary: pendingClarification.work_summary} : {}),
       missing_fields: pendingClarification.missing_fields
     };
   }
@@ -6000,7 +6002,8 @@ function sidecarPendingClarification(workReturn = computerState.workReturn) {
   const clarificationId = `${workReturn.clarification_id || ""}`.trim();
   const question = `${workReturn.question || ""}`.trim();
   if (!clarificationId || !question) return null;
-  const existing = computerState.pendingClarification;
+  const prior = computerState.pendingClarification;
+  const existing = prior?.clarification_id === clarificationId && prior.assignment_id === workReturn.assignment_id && prior.run_id === workReturn.run_id && prior.generation === workReturn.generation ? prior : null;
   return {
     schema: "revit-operator.sidecar-pending-clarification/v1",
     clarification_id: clarificationId,
@@ -6008,7 +6011,8 @@ function sidecarPendingClarification(workReturn = computerState.workReturn) {
     run_id: workReturn.run_id,
     generation: workReturn.generation,
     question,
-    missing_fields: Array.isArray(existing?.missing_fields) ? existing.missing_fields : [],
+    ...(workReturn.work_summary ? {work_summary:workReturn.work_summary} : {}),
+    missing_fields: workReturn.missing_fields ?? existing?.missing_fields ?? [],
     work_return_id: `${workReturn.work_return_id || ""}`.trim() || null,
     work_return_hash: `${workReturn.work_return_hash || ""}`.trim() || null
   };
@@ -12893,7 +12897,7 @@ async function executeFunctionToolCall(toolCall) {
   async function retainTaskInput(args) {
     const result=await requestTaskInput(computerState.sidecarAssignment,args,readBackendJson);
     computerState.pendingClarification={schema:'revit-operator.sidecar-pending-clarification/v1',clarification_id:result.clarification_id,
-      assignment_id:result.assignment_id,run_id:result.run_id,generation:result.generation,question:result.question,missing_fields:result.missing_fields};
+      assignment_id:result.assignment_id,run_id:result.run_id,generation:result.generation,question:result.question,...(result.work_summary ? {work_summary:result.work_summary} : {}),missing_fields:result.missing_fields};
     addComputerEvent('Focused question saved; the same assignment is awaiting user input.');
     return result;
   }
@@ -13611,7 +13615,7 @@ async function executeComputerLoop(options = {}) {
     // delegate instructions to the single executor. Safety rules stay intact.
     instructions=singleExecutionInstructions(instructions,catalog.guidance,catalog.execution_mode);
     instructions+=workVisibilityInstructions(computerState.speedSettings);
-    if(catalog.execution_mode==='single_actor_review_v1') {
+    if(['single_actor_review_v1','local_advisory_v1'].includes(catalog.execution_mode)) {
       if(!tools.some(tool=>tool.name==='native__operator_manage_work_plan')) instructions+='\nThe planning tool is unavailable in this session. Skip checklist declarations, locations and status calls. Track scope in your own context and use the drawing, native evidence and direct handoff tools.';
       instructions+='\nAfter checking and saving actionable repairs, return the result immediately when the remainder needs a user decision. Use report_work_for_review with needs_input, or request_task_input with work_summary. Include the saved result and specific question. No plan entry, additional image of unchanged work, or guessed graphic replacement is required to ask. Continue independent actionable work first.';
     }
