@@ -15,6 +15,24 @@ namespace RevitBridge.Common.Tests
         private const string Candidate22Query = "project-wide element inventory by category grouped by family and type complete count air terminals";
 
         [Fact]
+        public void SideMountedTerminalDiscoveryExplainsCreationOfTheInteriorPortWithoutPromisingFit()
+        {
+            var tool = Assert.Single(OperatorToolManifest.Tools, t => t.Path == "/revit/connect-existing-mep-branch");
+            var lead = tool.Description.Substring(0, Math.Min(800, tool.Description.Length));
+            Assert.Contains("connectionMode=air_terminal_on_duct", lead);
+            Assert.Contains("creates the interior duct connector", lead);
+            Assert.Contains("pre-existing side port", lead);
+            Assert.Contains("round duct end ports", lead);
+            Assert.Contains("rectangular-neck terminal", lead);
+            Assert.Contains("not proof of family suitability or fitted geometry", lead);
+            Assert.Contains("independent reciprocal physical readback", lead);
+            Assert.Equal(OperatorActionRisk.High, tool.RiskLevel);
+            Assert.Contains("connectionMode:takeoff_fitting", tool.Description);
+            Assert.Contains("replace_tee_with_takeoff", tool.Description);
+            Assert.Contains("insert_inline_accessory", tool.Description);
+        }
+
+        [Fact]
         public void SheetImageDiscoveryDoesNotRecommendUnsupportedSpatialFrameMapping()
         {
             var image = Assert.Single(OperatorToolManifest.Tools, t => t.Path == "/revit/export-image");

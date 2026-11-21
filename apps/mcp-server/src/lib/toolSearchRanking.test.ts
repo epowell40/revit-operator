@@ -144,6 +144,28 @@ test("sheet capture metadata presented to MCP distinguishes images from spatial 
   assert.match(frame.description, /\/revit\/export-image/);
 });
 
+test("side-mounted terminal discovery keeps interior-port semantics in bounded search metadata", () => {
+  const url = [
+    new URL("../../../../packages/revit-tool-search-ranking-v3/linked-spatial-inventory.v1.json", import.meta.url),
+    new URL("../../../packages/revit-tool-search-ranking-v3/linked-spatial-inventory.v1.json", import.meta.url)
+  ].find(candidate => fs.existsSync(candidate));
+  assert.ok(url);
+  const fixture = JSON.parse(fs.readFileSync(url, "utf8"));
+  for (const query of ["connect side mounted air terminal grille to duct", "rectangular neck grille round duct side port"]) {
+    const ranked = fixture.candidates.map((tool: GoldenCandidate) => ({ tool, score: scoreToolSearchCandidateV3(tool, query) }))
+      .filter((candidate: { score: number }) => candidate.score > 0).sort(compareToolSearchCandidatesV3).slice(0, 4);
+    const target = ranked.find((candidate: { tool: GoldenCandidate }) => candidate.tool.path === "/revit/connect-existing-mep-branch")?.tool;
+    assert.ok(target, query);
+    const lead = target.description.slice(0, 800);
+    assert.match(lead, /connectionMode=air_terminal_on_duct/);
+    assert.match(lead, /creates the interior duct connector/);
+    assert.match(lead, /pre-existing side port/);
+    assert.match(lead, /not proof of family suitability or fitted geometry/);
+    assert.match(lead, /independent reciprocal physical readback/);
+    assert.equal(target.risk, "high");
+  }
+});
+
 test("linked spatial inventory survives the actual product catalog's bounded MCP search", () => {
   const url = [
     new URL("../../../../packages/revit-tool-search-ranking-v3/linked-spatial-inventory.v1.json", import.meta.url),
