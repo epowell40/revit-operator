@@ -302,3 +302,13 @@ test('batch feedback requires a current native committed drawing operation',asyn
  assert.equal(isCommittedDrawingEdit({...call,arguments:{...call.arguments,path:'/revit/save-as'}},result(p),binding),false);
  assert.equal(isCommittedDrawingEdit(call,{...result(p),stop_reason:'paused'},binding),false);
 });
+
+test('area backcheck supplies three distinct coverage checks to one existing independent review',()=>{
+ const area={review_mode:'area_backcheck',view_id:41,capture_mode:'native_visible_region',reference_attachment_read:{call_id:'call_pdf',page:1}};
+ const actual=shared.normalizeVisualReviewRequest({...area,checks:args.checks});
+ assert.deepEqual(actual.checks.map(x=>x.id),[args.checks[0].id,'area_routes','area_symbols','area_annotations']);
+ assert.equal(actual.review_mode,undefined,'normalized independent review uses its existing dispatch path');
+ assert.equal(shared.normalizeVisualReviewRequest(area).checks.length,3);
+ for(const change of [{reference_attachment_read:null},{capture_mode:'visible_work'},{complete_inspection_item_id:'finish'},{recheck_evidence_id:'old'},{checks:[{id:'area_routes',expected:'collision'}]}])
+   assert.throws(()=>shared.normalizeVisualReviewRequest({...area,...change}));
+});
