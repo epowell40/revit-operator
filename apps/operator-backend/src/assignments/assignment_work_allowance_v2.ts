@@ -31,7 +31,27 @@ export function assignmentWorkBudgetStatusV2(snapshot: AssignmentSnapshotV2, ord
     operations: meter(Object.keys(snapshot.operations).length, budget.max_operations),
     active_execution_ms: meter(assignmentActiveExecutionTimeMsV2(snapshot, now), budget.max_wall_clock_ms)
   };
-  const near = Object.entries(resources).filter(([, value]) => value.used === null || value.used >= value.limit * 0.75).map(([key]) => key);
+  // An explicit renewal is a bounded new window, not a reset of lifetime usage.
+  // Warn when its reserve is reached; a large retained history must not make a
+  // completely fresh window look exhausted (or admit a premature handoff).
+  // Ordinary follow-ups/Resume do not create a new window. This projection
+  // changes no allocation, admission limit, usage receipt or completion proof.
+  const renewal = snapshot.user_followup_allocation?.resource_renewal;
+  const request = renewal?.request;
+  const bounded = (n: unknown, max: number): n is number => Number.isSafeInteger(n) && Number(n)>0 && Number(n)<=max;
+  const renewedWindow = renewal && typeof renewal.command_id==='string' && renewal.command_id.length>0
+    && Number.isFinite(Date.parse(renewal.authorized_at))
+    && Date.parse(renewal.authorized_at)>=Date.parse(snapshot.spec.created_at)
+    && Date.parse(renewal.authorized_at)<=Date.parse(now)
+    && request && bounded(request.provider_calls,64) && bounded(request.total_tokens,16_000_000)
+    && bounded(renewal.ceilings?.max_provider_calls,2048) && renewal.ceilings.max_provider_calls>=budget.max_provider_calls
+    && bounded(renewal.ceilings?.max_total_tokens,256_000_000) && renewal.ceilings.max_total_tokens>=budget.max_total_tokens
+    && calls.every(call=>validTokenCount(call.usage?.total_tokens)) ? request : undefined;
+  const near = Object.entries(resources).filter(([key,value]) => {
+    const window = renewedWindow && (key==='provider_calls'||key==='total_tokens') ? renewedWindow[key] : undefined;
+    return value.used===null || (window===undefined ? value.used>=value.limit*.75
+      : value.remaining!<=Math.min(value.limit,window)*.25);
+  }).map(([key])=>key);
   const allowance=assignmentWorkAllowanceV2(snapshot);
   return { resources, cached_input_tokens: cached,
     allocation: { source_work_allowance: snapshot.spec.execution_policy?.source_work_allowance ?? null,

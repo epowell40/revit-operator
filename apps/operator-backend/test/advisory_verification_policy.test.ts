@@ -733,6 +733,35 @@ test("authenticated new work receives a bounded allocation without resetting usa
   }); } finally { if(previous===undefined)delete process.env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE;else process.env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE=previous; }
 });
 
+test('renewed window reaches actor context and preserves ready-work handoff guard after long history',async()=>{
+  const old=process.env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE;process.env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE='verified_native_changes_v1';
+  try{await readyWorkFixture(async f=>{
+    manageAssignmentWorkPlan({binding:f.binding,action:'declare',declaration:{items:[
+      {item_id:'next-area',description:'Draft the next visible branch',source_basis:'User PDF'}],assumptions:[]}});
+    // Synthetic retained history tests the controller seam, not paid calls or native proof.
+    for(let i=0;i<200;i++)recordCompletedAssignmentProviderReceiptV2({binding:f.binding,call_id:'history-'+i,
+      provider:'fixture',model:'fixture',reasoning_effort:null,gap_ids:[],criterion_ids:[],expected_information:['Known prior usage'],
+      admitted_at:new Date().toISOString(),provider_duration_ms:0,
+      usage:{input_tokens:100,cached_input_tokens:80,cache_write_input_tokens:0,output_tokens:1,total_tokens:101,reasoning_tokens:null,estimated_cost_usd:null},success:true});
+    manageAssignmentWorkPlan({binding:f.binding,action:'propose_completion',completion_proposal:proposal});
+    const before=structuredClone(f.state()),base=checkpointCommand(f,'renew-long-history');
+    await steerAssignment({...base,checkpoint:{...base.checkpoint,resource_renewal:{provider_calls:64,total_tokens:16_000_000}}});
+    const after=f.state(),budget=assignmentWorkBudgetStatusV2(after,DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2,new Date().toISOString());
+    assert.equal(budget.resources.provider_calls.used,200);assert.equal(budget.resources.provider_calls.remaining,64);
+    assert.equal(budget.checkpoint_recommended,false);assert.deepEqual(after.provider_calls,before.provider_calls);
+    assert.deepEqual(after.spec,before.spec);
+    const context=JSON.parse(codexAssignmentEvidenceContextV2(after,undefined,budget));
+    assert.equal(context.host_budget.checkpoint_recommended,false);
+    assert.equal(context.host_budget.resources.provider_calls.remaining,64);
+    assert.throws(()=>manageAssignmentWorkPlan({binding:f.binding,action:'propose_completion',completion_proposal:proposal}),/ready_work_remaining/);
+    __testOnlyResetGoalListCache();assert.deepEqual(f.state(),after);
+    controlAssignmentExecutionV2({binding:f.binding,action:'pause',command_id:'pause-renewed',expected_command_id:null});
+    controlAssignmentExecutionV2({binding:f.binding,action:'resume',command_id:'resume-renewed',expected_command_id:'pause-renewed'});
+    assert.deepEqual(f.state().user_followup_allocation,after.user_followup_allocation);
+    assert.equal(assignmentWorkBudgetStatusV2(f.state(),DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2,new Date().toISOString()).resources.provider_calls.remaining,64);
+  });}finally{if(old===undefined)delete process.env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE;else process.env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE=old;}
+});
+
 test('explicit resource renewal travels through authenticated checkpoint steering and durable reducer replay',async()=>{
   const old=process.env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE;process.env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE='verified_native_changes_v1';
   try{await fixture(true,async f=>{
