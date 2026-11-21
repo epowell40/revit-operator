@@ -124,6 +124,11 @@ test('checking geometry leaves the same crop annotations in the queue after reop
  assert.match(desktopNativeInitialContext(restored),/Add the size label/);
  assert.doesNotMatch(desktopNativeInitialContext(restored),/Repeat the resolved geometry change/);
  assert.equal(f.complete,false);
+ assert.match(desktopNativeInitialContext(restored),/record the next unfinished pass with locate and reuseLocation:true/);
+ assert.match(JSON.stringify(desktopAssignmentFeedbackInputV2([],restored)),/A blocked connection does not block independent annotations/);
+ const held=structuredClone(restored);held.execution_control.state='paused';
+ assert.doesNotMatch(desktopNativeInitialContext(held),/record the next unfinished pass/);
+ assert.doesNotMatch(JSON.stringify(desktopAssignmentFeedbackInputV2([],held)),/record the next unfinished pass/);
 });
 
 test('checking one element subset leaves another subset in the same crop and pass visible',()=>{

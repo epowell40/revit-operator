@@ -83,16 +83,19 @@ export function retainedDraftingProgressContinuation(assignment, retained, track
   if(continuation.state!=='ready')return null;
   const progress=continuation.construction_progress;
   if(!progress)return null;
-  const calls=progress.calls_since_construction;
-  if(!Number.isSafeInteger(calls)||calls<0||!Number.isFinite(Date.parse(progress.since)))
+  const calls=progress.calls_since_construction,warn=progress.warn_after,change=progress.stop_after;
+  if(!Number.isSafeInteger(calls)||calls<0||!Number.isFinite(Date.parse(progress.since))
+    ||!Number.isSafeInteger(warn)||warn<1||!Number.isSafeInteger(change)||change<=warn)
     throw Error('execution_continuation_progress_invalid');
   const window=progress.since;
-  const stage=Math.floor(calls/8);
+  const stage=calls>=change?2:calls>=warn?1:0;
   if(stage<1)return null;
   if(tracker.window===window&&stage<=tracker.stage)return null;
   tracker.window=window;
   tracker.stage=stage;
-  if(stage>=3)throw Error('drafting_no_progress: 24 model calls since the last observed construction/check progress. Existing work and evidence are retained. Report the specific unresolved discrepancy and change the approach before resuming.');
+  // The domain publishes pacing advice, not another call allowance. Distinct
+  // useful inspections must not become a runtime failure at an arbitrary count.
+  // Existing repeated-cycle, retrieval, resource and control paths still apply.
   return {role:'user',content:[{type:'input_text',text:
     'You have used '+calls+' model calls since new construction or native checked-target progress. '+
     'Choose one concrete remaining discrepancy now. Finish a supported annotation/property pass or another ready branch when a connection is blocked. '+

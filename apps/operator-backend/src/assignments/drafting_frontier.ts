@@ -2,6 +2,8 @@ import type {AssignmentSnapshotV2} from '../domain/assignment-kernel/snapshot.js
 import {sameAssignmentBindingV2} from '../domain/assignment-kernel/identity.js';
 import {projectDraftingPasses,type WorkPlanLocationRecordV2} from '../domain/assignment-kernel/work_plan_location.js';
 
+export const DRAFTING_PASS_HANDOFF_ADVICE='A checked pass is not a completed area. When work remains, record the next unfinished pass with locate and reuseLocation:true before leaving the area, keeping the checked pass intact and the parent open. Use attempted for not-yet-drafted annotations, properties or connections; use drafted only for work actually present. Then do that ready pass, or retain it explicitly while making a coherent sheet-wide pass. A blocked connection does not block independent annotations. Use the retained area and linked elements instead of rediscovering the whole sheet. Record only actual missing facts as blockers; successful execution alone never marks a pass checked.';
+
 /** A small index of the actor's existing source-linked work, not another plan,
  * scheduler, completeness estimate, native observation or progress allowance.
  * Local corrections can be useful while whole-drawing coverage stands still. */
