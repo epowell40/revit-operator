@@ -29,6 +29,59 @@ function withWorkspace<T>(fn: (root: string) => T): T {
 
 const scope = { session_id: "session-evidence", assignment_id: "assignment-a", run_id: "run-a", attempt_id: "attempt-a", generation: 2 };
 
+function workPlanStatusFixture() {
+  const page = <T>(items: T[], start = 0, total = items.length) => ({items, start, total, next_start: start + items.length < total ? start + items.length : null});
+  return {ok:true, outcome:'active', verification_policy:'advisory', work_plan_required:false,
+    execution_continuation:{binding:scope, state:'ready', reason:'ready_work_remaining', next_items:['east']},
+    work_plan:{schema:'revit-operator.assignment-work-plan/v2', scope_is_assistant_interpretation:true, scheduling_is_advisory:true,
+      completed_count:0, total_count:3, deferred_count:1, ready_items:page(['east']), assumptions:page([]),
+      scope:page([{item_id:'east', description:'Finish the eastern branch sizes and symbols', source_basis:'Reference page 2 by stair B',
+        completed_at:null, claimed_unverified:false, deferred:false, waiting_on:[],
+        location_hint:{page:2, region:{min_u:.2,min_v:.3,max_u:.5,max_v:.6}, model_element_ids:[321,322],
+          passes:{geometry:'drafted',annotations:'checked',connections:'blocked'}, blocker:'Connection type not visible on reference'}}],1,3)},
+    advisory_followups:{items:Array.from({length:70},(_,i)=>({item_id:'old-'+i,state:'open',description:'Older report text '.repeat(30)}))}};
+}
+
+test('work-plan status delivers intact locations and pending passes through the real model envelope', () => withWorkspace(() => {
+  const raw=workPlanStatusFixture(), before=JSON.stringify(raw);
+  const saved=storeEvidence({scope,source:'desktop_native_transport:call_plan:0',trust_level:'untrusted_caller',raw});
+  const context=assembleBoundedEvidenceContext({projections:[saved.projection],...scope});
+  const shown=modelEvidenceEnvelope(context.projections,context.omitted).evidence_projections[0]!;
+  assert.deepEqual(shown.work_plan_status?.work_plan,raw.work_plan);
+  assert.deepEqual(shown.work_plan_status?.continuation,{state:'ready',reason:'ready_work_remaining',next_items:['east']});
+  assert.equal(shown.work_plan_status?.whole_task_verified,false);
+  assert.equal(shown.trust_level,'untrusted_caller'); assert.equal(shown.effect_state,null);
+  assert.equal(shown.inline_payload,undefined); assert.equal(shown.truncated,true);
+  assert.equal(shown.content_hash,saved.ref.content_hash); assert(context.bytes<=32768);
+  assert.deepEqual(JSON.parse(readAuthoritativeEvidence(saved.ref,scope).toString()),raw);
+  assert.equal(JSON.stringify(raw),before);
+}));
+
+test('work-plan status preserves paused, blocked, unverified and pending-page states without completion inference', () => withWorkspace(() => {
+  for(const state of ['paused','blocked','waiting_for_usage','ready']) {
+    const raw=workPlanStatusFixture(); raw.execution_continuation.state=state;
+    raw.work_plan.scope.items[0]!.claimed_unverified=true;
+    const p=storeEvidence({scope,source:'desktop_native_transport:call_'+state+':0',trust_level:'untrusted_caller',raw}).projection;
+    assert.deepEqual(p.work_plan_status?.work_plan,raw.work_plan);
+    assert.equal((p.work_plan_status?.continuation as any)?.state,state);
+    assert.equal(p.work_plan_status?.whole_task_verified,false);
+  }
+}));
+
+test('foreign, malformed and oversized work-plan pages retain ordinary retrieval rather than a partial working map', () => withWorkspace(() => {
+  for(const variant of ['foreign','schema','page','source','oversized']) {
+    const raw=workPlanStatusFixture(); let source='desktop_native_transport:call_negative:0';
+    if(variant==='foreign')raw.execution_continuation.binding={...scope,session_id:'other'};
+    if(variant==='schema')raw.work_plan.schema='invented';
+    if(variant==='page')raw.work_plan.scope.total=0;
+    if(variant==='source')source='uploaded-reference';
+    if(variant==='oversized')raw.work_plan.scope.items[0]!.description='Keep the complete blocker and location. '.repeat(500);
+    const p=storeEvidence({scope,source,trust_level:'untrusted_caller',raw}).projection;
+    assert.equal(p.work_plan_status,undefined,variant);
+    assert.equal(p.trust_level,'untrusted_caller'); assert(p.artifact_ref); assert.equal(p.inline_payload,undefined);
+  }
+}));
+
 test("diagnostic arrays retain bounded feedback through provider context without promoting trust", () => withWorkspace(() => {
   // Native producer shape: large placement rows force compact presentation.
   const raw = { status: "Ok", warnings: ["Source circuit matched.", "Linked host is unloaded; physical face hosting is unverified."],

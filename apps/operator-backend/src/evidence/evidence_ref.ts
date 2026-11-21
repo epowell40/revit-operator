@@ -72,6 +72,8 @@ export type EvidenceProjectionV1 = {
   // Exact small native JSON payload, retained with the same evidence identity.
   // Its presence does not change observation class or prove inventory coverage.
   inline_payload?: unknown;
+  /** Existing paged work records, not native evidence or completion authority. */
+  work_plan_status?: Record<string, unknown>;
   /** Host documentation only: not eligible for task completion or verification. */
   tool_documentation?: import("./tool_documentation_projection.js").ToolDocumentationProjection;
   /** Observed native topology presentation; raw evidence remains authoritative. */
