@@ -104,6 +104,7 @@ import {
   ASSIGNMENT_SNAPSHOT_V2_SCHEMA,
   ASSIGNMENT_KERNEL_V2_SESSION_INDEX_FIELD,
   parseAssignmentKernelPublicationV2,
+  parseAssignmentDispatchControlV1,
   nativeArtifactReceiptEffectV1,
   nativeDocumentCheckpointRequestMatchesV2,
   parseAssignmentKernelSessionIndexResponseV2
@@ -13159,9 +13160,16 @@ async function assertComputerActionControl(options = {}) {
       throw error;
     }
   }
-  const response = await request(`/api/assignments/v2/${encodeURIComponent(assignment.goal_id || assignment.assignment_id)}`, { method: "GET" });
-  const publication = validateSidecarAssignmentKernelPublication(sidecarAssignmentKernelPublicationFromResponse(response), assignment);
-  try { assertComputerDispatchSnapshot(publication.snapshot, {
+  const response = await request(`/api/assignments/v2/${encodeURIComponent(assignment.goal_id || assignment.assignment_id)}`, {
+    method: "GET", cache: "no-store", headers: { "x-operator-assignment-handoff": "dispatch_control_v1" }
+  });
+  // Older servers may ignore this opt-in and return their full publication.
+  // Malformed compact replies and transport errors never trigger another read
+  // or fallback action. Both shapes reach the existing dispatch guard.
+  const snapshot = Object.hasOwn(response || {}, "assignment_dispatch_control_v1")
+    ? parseAssignmentDispatchControlV1(response.assignment_dispatch_control_v1).snapshot
+    : validateSidecarAssignmentKernelPublication(sidecarAssignmentKernelPublicationFromResponse(response), assignment).snapshot;
+  try { assertComputerDispatchSnapshot(snapshot, {
     assignment_id: assignment.goal_id || assignment.assignment_id, session_id: assignment.session_id,
     run_id: assignment.run_id, generation: assignment.generation
   }, assignment.control_command_id || null); } catch (error) {

@@ -77,6 +77,17 @@ export interface AssignmentKernelPublicationV2Contract {
 
 export function parseAssignmentKernelPublicationV2(value: unknown): AssignmentKernelPublicationV2Contract;
 
+export const ASSIGNMENT_DISPATCH_CONTROL_V1_SCHEMA: "revit-operator.assignment-dispatch-control/v1";
+export interface AssignmentDispatchControlV1 {
+  readonly schema: typeof ASSIGNMENT_DISPATCH_CONTROL_V1_SCHEMA;
+  readonly assignment_id: string;
+  readonly assignment_version: number;
+  /** Control projection only; not a complete canonical model/evidence snapshot. */
+  readonly snapshot: Readonly<Record<string, unknown>>;
+}
+export function projectAssignmentDispatchControlV1(publication: unknown): AssignmentDispatchControlV1;
+export function parseAssignmentDispatchControlV1(value: unknown): AssignmentDispatchControlV1;
+
 export const ASSIGNMENT_KERNEL_V2_CONTROL_EVIDENCE_SCHEMA: "revit-operator.assignment-kernel-control-evidence/v2";
 
 export interface AssignmentKernelControlCapabilityV2 {

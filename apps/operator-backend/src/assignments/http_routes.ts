@@ -7,7 +7,7 @@ import { manageAssignmentWorkPlan } from "./assignment_work_plan.js";
 import {liveDesktopCheckedCopyV1,retainDesktopReviewConversationV1} from './desktop_conversation.js';
 import { controlAssignmentExecutionV2 } from "./assignment_kernel_v2_controls.js";
 import { recoverAssignmentCompletionsV2 } from "./assignment_kernel_v2_completion_recovery.js";
-import { assignmentKernelSessionIndexResponseV2 } from "@revitoperator/assignment-kernel-v2-contracts";
+import { assignmentKernelSessionIndexResponseV2, projectAssignmentDispatchControlV1 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { readJson, writeJson } from "../http.js";
 import { handleVerifiedWorkPacketHttpRoute } from "../work_packets/http_routes.js";
 import { handleWorkReturnHttpRoute } from "../work_returns/http_routes.js";
@@ -219,7 +219,10 @@ export async function handleAssignmentHttpRoute(
       writeJson(res, 403, { error: "Forbidden (Assignment belongs to another principal)." });
       return true;
     }
-    writeJson(res, 200, { ok: true, assignment_kernel_v2: publication });
+    res.setHeader("cache-control", "no-store");
+    if (req.headers["x-operator-assignment-handoff"] === "dispatch_control_v1") {
+      writeJson(res, 200, { ok: true, assignment_dispatch_control_v1: projectAssignmentDispatchControlV1(publication) });
+    } else writeJson(res, 200, { ok: true, assignment_kernel_v2: publication });
     return true;
   }
   if (req.method === "POST" && url.pathname === "/api/assignments/v2/operations/children") {
