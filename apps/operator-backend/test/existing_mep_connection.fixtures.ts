@@ -57,3 +57,5 @@ export function existingMepConnectionFixture(mode: "takeoff_fitting" | "air_term
     branchConnectorId: 0, expectedBranchOriginXyz: [...before.origin], dryRun: false, verify: true
   } }, apply, scan, affected: results.map(r => `element_id:${r.id}`) };
 }
+
+export function existingTerminalSurfaceFixture(){const f=existingMepConnectionFixture('air_terminal_on_duct'),main=f.scan.results[0],terminal=f.scan.results[1],port=terminal.connectors[0],curve=main.connectors[2];port.origin=[5,-0.15625,0];port.shape='Rectangular';port.size={kind:'rect',widthFt:1.3,heightFt:0.333};f.apply.terminalConnector.origin=[...port.origin];f.input.body.expectedBranchOriginXyz=[...port.origin];for(const ref of [...curve.connectedTo,...curve.physicalConnectedTo])if(ref.ownerId===terminal.id){ref.origin=[...port.origin];ref.shape=port.shape;ref.size=structuredClone(port.size);}for(const p of [port,curve]){p.referenceScanComplete=true;p.referenceReadErrorCount=0;}return f;}

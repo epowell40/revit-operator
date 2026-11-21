@@ -11,6 +11,15 @@ import {nativeProgramParameterChecksV2} from './native_program_parameter_postcon
  * Platform owners/collateral are not principal work-credit targets. */
 export function verifiedDeliverableTargetGroupsV2(snapshot:AssignmentSnapshotV2,verificationSubject:OperationV2|null|undefined,result:OperationResultV2):string[][] {
  const groups:string[][]=[];
+    if(verificationSubject?.request_identity?.path==='/revit/connect-existing-mep-branch'){
+      const body=verificationSubject.input.body as Record<string,unknown>|undefined;
+      if(body?.connectionMode==='air_terminal_on_duct'){
+        if(!Number.isSafeInteger(body.branchElementId)||Number(body.branchElementId)<=0)throw new Error('verified_deliverable_targets_invalid');
+        // Only the attached terminal earns work credit. Main, external peers
+        // and the observed database-change footprint remain context/audit.
+        groups.push([`element_id:${body.branchElementId}`]);
+      }
+    }
     if(verificationSubject?.capability_id==='operator_run_dynamic_revit_program'){
       const state=nativeProgramEffectStateV2(snapshot,verificationSubject);
       if(state?.scoped)groups.push(state.targets.map(id=>`element_id:${id}`));

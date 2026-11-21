@@ -25,7 +25,7 @@ import { isDetachedFamilyLabelEditV2, nativeDocumentCheckpointResultV2 } from "@
 import {assertTaskExecutionHost} from './task_review_policy.js';
 import { advisoryVerificationV2 } from "../domain/assignment-kernel/execution_policy.js";
 import { openDuctPostconditionSatisfiedV2 } from "../verification/open_duct_postcondition_v2.js";
-import { existingMepConnectionPostconditionSatisfiedV2 } from "../verification/existing_mep_connection_readback_v2.js";
+import { existingMepConnectionPostconditionSatisfiedV2,existingMepConnectionReadRequestMatchesV2 } from "../verification/existing_mep_connection_readback_v2.js";
 import {inlineAccessoryIncomingPostconditionV2,inlineAccessoryReadRequestMatchesV2} from '../verification/inline_accessory_evidence_v2.js';
 import {NATIVE_ACCESSORY_BRANCH_COMPARISON_V2,nativeAccessoryIncomingAssessmentV2,nativeAccessoryReadRequestMatchesV2} from '../verification/native_accessory_evidence_v2.js';
 import {teeTakeoffIncomingPostconditionV2,teeTakeoffReadRequestMatchesV2} from '../verification/tee_takeoff_evidence_v2.js';
@@ -277,7 +277,9 @@ function verificationSubject(snapshot: AssignmentSnapshotV2, targetTokens: reado
         :object(operation.input.body).connectionMode==='insert_inline_accessory'&&operation.request_identity?.path==='/revit/connect-existing-mep-branch'
         ?inlineAccessoryReadRequestMatchesV2(snapshot,operation,args)
         :object(operation.input.body).connectionMode==='replace_tee_with_takeoff'&&operation.request_identity?.path==='/revit/connect-existing-mep-branch'
-          ?teeTakeoffReadRequestMatchesV2(snapshot,operation,args):verificationReadTargetsCovered(operation, targetTokens, identity))
+          ?teeTakeoffReadRequestMatchesV2(snapshot,operation,args)
+        :object(operation.input.body).connectionMode==='air_terminal_on_duct'&&operation.request_identity?.path==='/revit/connect-existing-mep-branch'
+          ?existingMepConnectionReadRequestMatchesV2(snapshot,operation,args):verificationReadTargetsCovered(operation, targetTokens, identity))
       && verificationCapabilityAdmissionV2({
         apply: { capability_id: operation.capability_id, method: operation.request_identity?.method,
           path: operation.request_identity?.path, tool: operation.input.tool, arguments: operation.input },
