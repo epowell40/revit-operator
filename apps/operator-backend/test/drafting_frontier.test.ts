@@ -124,11 +124,30 @@ test('checking geometry leaves the same crop annotations in the queue after reop
  assert.match(desktopNativeInitialContext(restored),/Add the size label/);
  assert.doesNotMatch(desktopNativeInitialContext(restored),/Repeat the resolved geometry change/);
  assert.equal(f.complete,false);
- assert.match(desktopNativeInitialContext(restored),/record the next unfinished pass with locate and reuseLocation:true/);
+ assert.match(desktopNativeInitialContext(restored),/Do not add a separate attempted entry merely to announce a pass switch/);
  assert.match(JSON.stringify(desktopAssignmentFeedbackInputV2([],restored)),/A blocked connection does not block independent annotations/);
  const held=structuredClone(restored);held.execution_control.state='paused';
- assert.doesNotMatch(desktopNativeInitialContext(held),/record the next unfinished pass/);
- assert.doesNotMatch(JSON.stringify(desktopAssignmentFeedbackInputV2([],held)),/record the next unfinished pass/);
+ assert.doesNotMatch(desktopNativeInitialContext(held),/merely to announce a pass switch/);
+ assert.doesNotMatch(JSON.stringify(desktopAssignmentFeedbackInputV2([],held)),/merely to announce a pass switch/);
+});
+
+test('checked batch preserves its unfinished punch list without requiring an announcement-only update',()=>{
+ const s=fixture(),checked=row(s,'south-unit',2,'checked','annotations');
+ checked.drafting.remaining='Other unit annotations and devices remain unchecked; two top size tags checked separately.';
+ checked.drafting.next_action='Repeat the resolved tag changes';
+ calls(s,1);
+ const before=JSON.stringify(s),feedback=record(s),reopened=desktopNativeInitialContext(JSON.parse(before));
+ assert.equal(feedback.drafting_frontier.recent_focus.stage,'checked');
+ assert.equal(feedback.drafting_frontier.recent_focus.remaining,checked.drafting.remaining);
+ assert.equal(feedback.drafting_frontier.recent_focus.next_action,undefined,'Checked targets must not be requeued');
+ assert.equal(feedback.drafting_frontier.complete,false);
+ for(const text of [JSON.stringify(desktopAssignmentFeedbackInputV2([],s)),reopened]){
+  assert.match(text,/Use the recorded remaining work and other open passes/);
+  assert.match(text,/Do not add a separate attempted entry merely to announce a pass switch/);
+  assert.match(text,/new discrepancy or blocker/);
+  assert.doesNotMatch(text,/record the next unfinished pass with locate|Repeat the resolved tag changes/);
+ }
+ assert.equal(JSON.stringify(s),before,'No tracking, completion, resource or native state changes');
 });
 
 test('checking one element subset leaves another subset in the same crop and pass visible',()=>{
