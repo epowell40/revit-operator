@@ -325,3 +325,13 @@ test('post-edit reference follows native edit locations across room switches and
  assert.equal(pick([b,a],[]),null);
  assert.deepEqual(shared.visualFocusBounds([1,2],[{id:1,found:true,uniqueId:'X',boundingBox:{min:{x:0,y:0,z:0},max:{x:3,y:3,z:1}}}]),[]);
 });
+
+test('confirmed contextual plan framing uses the branch extent even when focused on a distant landmark',()=>{
+ const req={view_id:41,review_mode:'observe',capture_mode:'native_visible_region',reference_filename:'plan.png',
+   focus_element_ids:[1],context_bbox_min_xyz:[18,13,40],context_bbox_max_xyz:[32,33,45],checks:args.checks};
+ const loc={process_id:7,document_session_id:'s',epoch:'e',view_id:41,view_unique_id:'u'};
+ const frame={view_type:'FloorPlan',width:4000,height:2021,viewport:{zoomCornersXyz:[[5.2,13,32],[44.8,33,32]]}};
+ const r=shared.pairedDrawingRegion({ok:true,owner,location:loc,capture:{frame},reference:{content_hash:'source'},request:req});
+ assert.equal(shared.selectEditedDrawingRegion([r],r,[{points:[[9.72,31.99,42.8],[30.38,31.99,42.8]]}]),r);
+ assert.equal(shared.selectEditedDrawingRegion([r],r,[{points:[[54,70,42.8]]}]),null);
+});

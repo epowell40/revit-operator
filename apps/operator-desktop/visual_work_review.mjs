@@ -612,7 +612,7 @@ export async function reviewCurrentWork(input,host){
     if(target)Object.assign(initial,{view_name:frame.view_name,view_unique_id:frame.view_unique_id,view_type:frame.view_type,sheet_number:frame.sheet_number});
     if(reference && request.review_mode==='observe' && request.capture_mode==='native_visible_region'
         && ['FloorPlan','CeilingPlan','EngineeringPlan','AreaPlan'].includes(frame?.view_type)
-        && request.focus_element_ids?.length <= 64 && host.readFocusElements && !host.expectedRegion) {
+        && !request.context_bbox_min_xyz && request.focus_element_ids?.length <= 64 && host.readFocusElements && !host.expectedRegion) {
       try {
         const summary=await host.readFocusElements(initial,request.focus_element_ids);
         raw.focus_bounds=visualFocusBounds(request.focus_element_ids,summary?.result);
@@ -813,8 +813,14 @@ export function pairedDrawingRegion(review) {
   const frame=review.capture.frame, corners=frame.viewport.zoomCornersXyz;
   const diagonal=corners?.length===2 ? Math.hypot(...corners[0].map((n,i)=>corners[1][i]-n)) : 0;
   const shortSide=diagonal*Math.min(frame.width,frame.height)/Math.hypot(frame.width,frame.height);
+  // A confirmed contextual zoom names the working area. Its focus element can
+  // be a distant landmark. Do not reduce an entire branch to that one object.
+  const context=['FloorPlan','CeilingPlan','EngineeringPlan','AreaPlan'].includes(frame.view_type)
+    && request.context_bbox_min_xyz && request.context_bbox_max_xyz
+    ? {min:request.context_bbox_min_xyz,max:request.context_bbox_max_xyz} : null;
   return {owner:review.owner, location:review.location, viewport:frame.viewport,
-    bounds:review.raw_review_evidence?.focus_bounds ?? [], radius:Math.min(8,shortSide/3),
+    bounds:context?[context]:(review.raw_review_evidence?.focus_bounds ?? []),
+    radius:context?Math.min(12,shortSide/2):Math.min(8,shortSide/3),
     focus:Object.fromEntries(['focus_element_ids','context_bbox_min_xyz','context_bbox_max_xyz'].filter(k=>request[k]).map(k=>[k,request[k]])),
     referenceName:review.reference.filename,
     referenceHash:review.reference.content_hash, request:{
