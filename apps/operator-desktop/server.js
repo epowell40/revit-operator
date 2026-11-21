@@ -5845,7 +5845,23 @@ async function restoreSavedComputerAssignment(binding, control, options = {}) {
   const fresh = await readSavedAssignmentExecutor(saved.binding, { readBackendJson: request });
   if (fresh.executor !== "computer") throw new Error("Saved desktop owner changed.");
   assertControl(fresh.snapshot);
-  const conversation = savedComputerConversation(fresh.goal, fresh.snapshot, history);
+  let conversation;
+  try { conversation = savedComputerConversation(fresh.goal, fresh.snapshot, history); }
+  catch(error) {
+    if(error?.code!=='SAVED_CONTEXT_HANDOFF_LIMIT')throw error;
+    // Use the existing paginated work-plan presenter, not another history
+    // summarizer. Both reads are fenced by the same canonical version/control.
+    const items=fresh.snapshot.work_plan?.items??[];
+    const currentIndex=items.reduce((best,item,index)=>
+      (item.location_history?.at(-1)?.recorded_at??'')>(items[best]?.location_history?.at(-1)?.recorded_at??'')?index:best,0);
+    const page=await request('/api/assignments/v2/work-plan',{method:'POST',body:JSON.stringify({...saved.binding,action:'status',start:currentIndex})});
+    const checked=await readSavedAssignmentExecutor(saved.binding,{readBackendJson:request});
+    assertControl(checked.snapshot);
+    if(checked.executor!=='computer'||checked.snapshot.assignment_version!==fresh.snapshot.assignment_version||page?.ok!==true)
+      throw Error('Saved work-plan context changed during recovery. Refresh before continuing.');
+    conversation=savedComputerConversation(checked.goal,checked.snapshot,history,{binding:checked.snapshot.current_binding,
+      assignment_version:checked.snapshot.assignment_version,work_plan:page.work_plan,advisory_followups:page.advisory_followups});
+  }
   computerState.sidecarAssignment = { ...saved.binding, goal_id: saved.binding.assignment_id, kernel_version: 2,
     control_command_id: fresh.snapshot.execution_control.command_id,
     title: saved.goal.title, objective: saved.goal.objective,
@@ -16194,6 +16210,9 @@ app.post("/api/computer/run", async (req, res) => {
     }
     if (!res.headersSent) {
       if (paused || stopped) res.json({ ok: true, desktopCaptureSuppressed: false, stopped: true, ...(paused ? {paused:true} : {}) });
+      else if(savedBinding&&!assignmentExecutionStarted&&!computerState.sidecarAssignment)
+        res.status(503).json({error:computerState.error||"Saved task startup failed.",submission_admission:
+          rejectedChatSubmissionAdmission({session_id:savedBinding.session_id,message_id:messageId},error)});
       else sendJsonError(res, computerState.error || "Canonical Assignment startup failed.", 503);
     }
     finishComputerRunCertifiedRead(

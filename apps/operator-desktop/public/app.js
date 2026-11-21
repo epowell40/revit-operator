@@ -5359,6 +5359,10 @@ async function sendComputerPrompt(submission, { browserFreshnessChecked = false,
     await syncComputerState();
   } catch (error) {
     applyDesktopPreviewCaptureState("cleared");
+    if(mayRestoreRejectedChatSubmission(submission,error)&&state.activeRunKind==='computer'
+      &&state.sessionId===submission.sessionId&&state.computerSubmissionMessageId===submission.id){
+      state.computerSubmissionMessageId='';state.activeRunKind='';setStreaming(false);
+    }
     state.pendingComputerUserMessages = state.pendingComputerUserMessages.filter((message) => message?.id !== submission.id);
     renderMessages();
     throw error;
@@ -5846,7 +5850,7 @@ async function submitTaskDirection({renewResources=false}={}) {
       ? "Direction saved. Delivery is not yet confirmed." : "Direction saved.");
   } catch (error) {
     if (error?.code === "SIDECAR_BROWSER_STALE") await showStaleComposerNotice();
-    else setStatus(checkpointSaved ? "Direction saved. Refresh the task and use Resume when it is ready." : error.message || "Could not send the direction. Your draft is retained.");
+    else setStatus(checkpointSaved ? `Direction saved. ${error.message || "Continuation could not be confirmed."} Refresh the task before using Resume.` : error.message || "Could not send the direction. Your draft is retained.");
   } finally { releaseSubmissionLock(); }
 }
 

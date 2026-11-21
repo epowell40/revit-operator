@@ -67,23 +67,28 @@ export function assertComputerResumeControl(snapshot,binding,control){
    ||snapshot.assignment_version<control.assignment_version||snapshot.execution_control?.state!=='running'
    ||snapshot.execution_control.command_id!==control.command_id)fail('Saved Resume acknowledgment changed. Refresh before continuing.');
 }
-export function savedComputerConversation(goal,snapshot,history){
+export function savedComputerConversation(goal,snapshot,history,page){
  if(history?.session_id!==snapshot.current_binding.session_id||!Array.isArray(history.messages))fail('Saved conversation history is unavailable.');
+ if(page&&(!keys.every(k=>page.binding?.[k]===snapshot.current_binding[k])||page.assignment_version!==snapshot.assignment_version
+   ||page.work_plan?.schema!==snapshot.work_plan?.schema||page.work_plan?.total_count!==snapshot.work_plan?.items?.length
+   ||page.work_plan?.scope?.total!==page.work_plan?.total_count||!Array.isArray(page.work_plan?.scope?.items)))
+   fail('Saved work-plan projection changed. Refresh before continuing.');
  const recent=history.messages.filter(m=>['user','assistant'].includes(m.role)&&typeof m.text==='string').slice(-12);
  const references={source_user_request:snapshot.spec?.source_user_request||goal.objective,
    attachment_ids:goal.work_budget?.attachment_ids||[],source_message_id:goal.work_budget?.conversation_message_id||null,
-   input_values:snapshot.input_values,work_plan:snapshot.work_plan,reported_followups:snapshot.advisory_followups,
+   input_values:snapshot.input_values,work_plan:page?page.work_plan:snapshot.work_plan,reported_followups:page?page.advisory_followups:snapshot.advisory_followups,
    operations:Object.values(snapshot.operations||{}).slice(-32).map(o=>({operation_id:o.operation_id,
      persistent_effect:o.persistent_effect,settlement_state:o.settlement_state,target:o.target,
      verification_operation_ids:o.verification_operation_ids,observation_ids:o.observation_ids,
      input_invalidated:snapshot.input_invalidated_operation_ids?.includes(o.operation_id)===true})),
    operation_count:Object.keys(snapshot.operations||{}).length};
  const text=JSON.stringify(references);
- if(text.length>80000||recent.reduce((n,m)=>n+m.text.length,0)>64000)fail('Saved continuation context exceeds its bounded handoff. Retained work was not restarted or clipped.');
+ if(text.length>80000||recent.reduce((n,m)=>n+m.text.length,0)>64000)throw Object.assign(new Error('Saved continuation context exceeds its bounded handoff. Retained work was not restarted or clipped.'),{status:409,code:'SAVED_CONTEXT_HANDOFF_LIMIT'});
  const context={role:'assistant',text:'SAVED TASK CONTEXT. Historical reports and operation references are not current proof. '
    +'Continue the latest user direction, inspect the actual result and correct/recheck supported discrepancies. '
    +'Do not replay uncertain or input-invalidated writes. Earlier attachment IDs refer to retained sources, not newly attached pixels. '
    +'Recover reference pixels with operator_read_attachment using the retained attachment ID (PNG/JPEG: pages=[1], mode=detail; PDF: select the relevant page). Do not reconstruct visual details from attachment IDs or search workstation folders for them. '
+   +'The work-plan page may be partial; use operator_manage_work_plan action=status with its page cursor for remaining areas. Full location/checkoff history stays retained; refresh actual model/reference images before acting. '
    +'Older conversation messages and operation references may be omitted; inspect retained evidence rather than infer success.\n'+text};
  savedContexts.set(context,savedComputerBinding(snapshot.current_binding));
  return [context,...recent.map(m=>({role:m.role,text:m.text}))];
