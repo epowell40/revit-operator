@@ -1,63 +1,54 @@
-import { createHash } from 'node:crypto';
 import { AssignmentJournalV2, reduceAssignmentEventsV2, type AssignmentEventV2 } from '../domain/assignment-kernel/index.js';
 
-/** Reuses validated reducer state only after comparing freshly read canonical
- * events. Neither timestamps nor versions are cache authority. Raw native
- * observations remain in the durable journal. */
+/** Reuse validated reducer state only after comparing ALL freshly read canonical
+ * events. Neither IDs, timestamps nor versions are cache authority. */
 export function createContentVerifiedJournalV2(options: {maxEntries?:number; maxBytes?:number} = {}) {
   const maxEntries=options.maxEntries??8, maxBytes=options.maxBytes??64*1024*1024;
   if(!Number.isSafeInteger(maxEntries)||maxEntries<1||maxEntries>256||!Number.isSafeInteger(maxBytes)||maxBytes<1)
     throw new Error('journal_cache_bounds_invalid');
-  const entries=new Map<string,{journal:AssignmentJournalV2;bytes:number;eventCount:number;textLength:number}>();
-  let bytes=0;
-  const digest=(text:string)=>createHash('sha256').update(text).digest('hex');
-  function retain(text:string,journal:AssignmentJournalV2,eventCount:number) {
-    const key=digest(text), previous=entries.get(key);
-    if(previous){bytes-=previous.bytes;entries.delete(key);}
-    const size=Buffer.byteLength(text)+Buffer.byteLength(journal.serializedSnapshot());
+  type Entry = {journal:AssignmentJournalV2;bytes:number;eventCount:number;eventBytes:number};
+  const entries=new Map<number,Entry>();
+  let bytes=0, sequence=0;
+  function retain(journal:AssignmentJournalV2,eventCount:number,eventBytes:number) {
+    const size=eventBytes+Buffer.byteLength(journal.serializedSnapshot());
     if(size>maxBytes)return;
-    entries.set(key,{journal:journal.fork(),bytes:size,eventCount,textLength:text.length});bytes+=size;
+    entries.set(++sequence,{journal:journal.fork(),bytes:size,eventCount,eventBytes});bytes+=size;
     while(entries.size>maxEntries||bytes>maxBytes){const first=entries.keys().next().value!;bytes-=entries.get(first)!.bytes;entries.delete(first);}
   }
   return {
     open(events:readonly AssignmentEventV2[]) {
-      // Durable history is stricter than idempotent delivery: duplicate entries
-      // must retain the original reducer's rejection, even on a cache hit.
+      // Persisted duplicates retain the strict cold reducer rejection.
       const ids=new Set(events.map(event=>event.event_id));
-      if(ids.size!==events.length)
-        reduceAssignmentEventsV2(events);
-      // Exact JSON preserves order, duplicates and every payload field.
-      let text=JSON.stringify(events);
-      const key=digest(text), cached=entries.get(key);
-      let journal:AssignmentJournalV2;
-      if(cached)journal=cached.journal.fork();
-      else {
-        // Another writer can persist a few events between reads. Verify the
-        // ENTIRE previously validated prefix against fresh bytes, then reduce
-        // the new tail through the same journal checks. IDs, versions and file
-        // timestamps alone never authorize reuse. Limit incremental work: a
-        // large tail uses ordinary cold replay, preserving the memory budget.
-        const prefix=[...entries].sort((a,b)=>b[1].eventCount-a[1].eventCount).find(([key,entry])=>
-          entry.eventCount<events.length&&events.length-entry.eventCount<=32
-          &&text[entry.textLength-1]===','&&digest(text.slice(0,entry.textLength-1)+']')===key);
-        if(prefix){
-          journal=prefix[1].journal.fork();
-          for(const event of events.slice(prefix[1].eventCount))journal.append(event);
-        }else journal=new AssignmentJournalV2(events);
+      if(ids.size!==events.length)reduceAssignmentEventsV2(events);
+      // Compare private immutable events, including unknown fields, to the full
+      // fresh prefix. This avoids serializing/hashing multi-megabyte accepted
+      // history at every native admission and provider-state transition.
+      const prefix=[...entries].sort((a,b)=>b[1].eventCount-a[1].eventCount).find(([,entry])=>
+        entry.eventCount<=events.length&&events.length-entry.eventCount<=32
+        &&entry.journal.matchesHistoryPrefix(events));
+      let journal:AssignmentJournalV2, eventBytes:number;
+      if(prefix){
+        journal=prefix[1].journal.fork();eventBytes=prefix[1].eventBytes;
+        for(const event of events.slice(prefix[1].eventCount)){
+          journal.append(event);eventBytes+=1+Buffer.byteLength(JSON.stringify(event));
+        }
+        if(prefix[1].eventCount===events.length){entries.delete(prefix[0]);entries.set(prefix[0],prefix[1]);}
+        else retain(journal,events.length,eventBytes);
+      }else{
+        journal=new AssignmentJournalV2(events);
+        eventBytes=Buffer.byteLength(JSON.stringify(events));
+        if(events.length)retain(journal,events.length,eventBytes);
       }
-      if(cached){entries.delete(key);entries.set(key,cached);}
-      else if(events.length)retain(text,journal,events.length);
       return {
         snapshot:()=>journal.snapshot(),
         append(event:AssignmentEventV2) {
           const snapshot=journal.append(event);
-          // Idempotent delivery does not append duplicate persisted history.
-          // Failed disk commits still require the next read to match bytes.
+          // A failed append never replaces a validated entry. A failed disk
+          // commit must still match the old freshly read history on next open.
           if(!ids.has(event.event_id)){
-            text=text.slice(0,-1)+(text.length>2?',':'')+JSON.stringify(event)+']';
-            ids.add(event.event_id);
+            eventBytes+=(ids.size?1:0)+Buffer.byteLength(JSON.stringify(event));
+            ids.add(event.event_id);retain(journal,ids.size,eventBytes);
           }
-          retain(text,journal,ids.size);
           return snapshot;
         }
       };

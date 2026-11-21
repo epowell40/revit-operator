@@ -1426,3 +1426,37 @@ test('native code not-started results require host authority without implying ta
   }
  }
 });
+
+test('warm journal and validated prefixes do not reserialize retained events', () => {
+  const journal=createJournal(), events=[...journal.events()];
+  const cache=createContentVerifiedJournalV2();cache.open(events);
+  const next=event(journal,{event_type:'work_unit_state_changed',work_unit_id:'work-1',state:'active',reason:'new work'});
+  const fresh=structuredClone(events), stringify=JSON.stringify;
+  let historySerializations=0;
+  try {
+    JSON.stringify=((value:unknown,...args:any[])=>{if(Array.isArray(value)&&value.some(e=>e?.event_type==='assignment_created'))historySerializations++;return (stringify as any)(value,...args);}) as typeof JSON.stringify;
+    cache.open(fresh).append(next);
+    cache.open([...fresh,next]).snapshot();
+  } finally {JSON.stringify=stringify;}
+  assert.equal(historySerializations,0,'Fresh content comparison must not encode the entire accepted history again');
+  assert.deepEqual(cache.open([...events,next]).snapshot(),reduceAssignmentEventsV2([...events,next]));
+  const altered=structuredClone(events);(altered[0] as any).spec.source_user_request='changed same binding';
+  assert.equal(cache.open(altered).snapshot().spec.source_user_request,'changed same binding');
+  assert.deepEqual(cache.open(events).snapshot(),journal.snapshot());
+});
+
+test('history matching preserves every field, event order and caller isolation', () => {
+  const journal=createJournal(), events=journal.events();
+  assert.equal(journal.matchesHistoryPrefix(structuredClone(events)),true);
+  const unknown=structuredClone(events);(unknown[0] as any).unrecognized_field='changed';
+  assert.equal(journal.matchesHistoryPrefix(unknown),false);
+  const changed=structuredClone(events);(changed[0] as any).spec.source_user_request='different';
+  assert.equal(journal.matchesHistoryPrefix(changed),false);
+  assert.equal(journal.matchesHistoryPrefix([]),false);
+  const next=event(journal,{event_type:'work_unit_state_changed',work_unit_id:'work-1',state:'active',reason:'new work'});
+  assert.equal(journal.matchesHistoryPrefix([...events,next]),true);
+  journal.append(next);
+  assert.equal(journal.matchesHistoryPrefix([...events,next].reverse()),false);
+  next.actor='caller mutation';
+  assert.equal(journal.matchesHistoryPrefix([...events,next]),false);
+});
