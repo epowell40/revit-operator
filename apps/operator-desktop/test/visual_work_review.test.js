@@ -312,3 +312,16 @@ test('area backcheck supplies three distinct coverage checks to one existing ind
  for(const change of [{reference_attachment_read:null},{capture_mode:'visible_work'},{complete_inspection_item_id:'finish'},{recheck_evidence_id:'old'},{checks:[{id:'area_routes',expected:'collision'}]}])
    assert.throws(()=>shared.normalizeVisualReviewRequest({...area,...change}));
 });
+
+test('post-edit reference follows native edit locations across room switches and abstains on ambiguous batches',()=>{
+ const loc={process_id:7,document_session_id:'s',epoch:'e',view_id:41,view_unique_id:'u'};
+ const region=(x,ref)=>({owner,location:loc,referenceHash:ref,radius:6,bounds:[{min:[x,0,10],max:[x+2,2,12]}]});
+ const a=region(1,'west'),b=region(25,'east'),pick=(regions,points)=>shared.selectEditedDrawingRegion(regions,b,[{points}]);
+ assert.equal(pick([b,a],[[2,1,11],[4,1,11]]),a);
+ assert.equal(pick([b,a],[[2,1,11],[26,1,11]]),null);
+ assert.equal(pick([b,a,region(1,'other')],[[2,1,11]]),null);
+ assert.equal(pick([b,{...a,location:{...loc,epoch:'old'}}],[[2,1,11]]),null);
+ assert.equal(pick([b,a],[[2,1,75]]),null);
+ assert.equal(pick([b,a],[]),null);
+ assert.deepEqual(shared.visualFocusBounds([1,2],[{id:1,found:true,uniqueId:'X',boundingBox:{min:{x:0,y:0,z:0},max:{x:3,y:3,z:1}}}]),[]);
+});

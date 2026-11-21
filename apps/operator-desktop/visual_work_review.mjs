@@ -584,6 +584,9 @@ export async function reviewCurrentWork(input,host){
       }
       const focusObserved=async()=>{const value=await host.readTargetContext();raw.native_identity_observations.push(value);return value;};
       const beforeFocus=targetScene(await focusObserved(),request.view_id,owner);
+      if(host.expectedRegion && (!sameVisualReviewOwner(owner,host.expectedRegion.owner)
+        || !['process_id','document_session_id','epoch','view_id'].every(k=>beforeFocus[k]===host.expectedRegion.location[k])
+        || beforeFocus.active_view_id!==request.view_id)) throw Error('visual_review_region_changed_before_focus');
       if(typeof host.focusTarget!=='function')throw Error('visual_review_focus_host_unavailable');
       const focusTarget={view_id:request.view_id,...(!restoreObservationBounds?{show_element_ids:[...request.focus_element_ids]}:{}),
         ...(request.context_bbox_min_xyz?{bbox_min_xyz:[...request.context_bbox_min_xyz],bbox_max_xyz:[...request.context_bbox_max_xyz]}:{})};
@@ -607,6 +610,14 @@ export async function reviewCurrentWork(input,host){
     if(focusedScene&&!['process_id','document_session_id','epoch','through_sequence','view_id'].every(k=>focusedScene[k]===initial[k]))throw Error('visual_review_scene_changed_after_focus');
     await control();const {image,frame,mime}=await captured(initial);raw.capture_frame=frame;
     if(target)Object.assign(initial,{view_name:frame.view_name,view_unique_id:frame.view_unique_id,view_type:frame.view_type,sheet_number:frame.sheet_number});
+    if(reference && request.review_mode==='observe' && request.capture_mode==='native_visible_region'
+        && ['FloorPlan','CeilingPlan','EngineeringPlan','AreaPlan'].includes(frame?.view_type)
+        && request.focus_element_ids?.length <= 64 && host.readFocusElements && !host.expectedRegion) {
+      try {
+        const summary=await host.readFocusElements(initial,request.focus_element_ids);
+        raw.focus_bounds=visualFocusBounds(request.focus_element_ids,summary?.result);
+      } catch { raw.focus_bounds=[]; }
+    }
     const saved=await host.retainImage(image,{mime_type:mime,capture_mode:request.capture_mode??'visible_work',capture_role:'review_capture',capture_frame:frame});captureRef=saved?.ref;
     if(!captureRef||!safeId(captureRef.evidence_id)||!/^sha256:[a-f0-9]{64}$/.test(captureRef.content_hash)||!positive(captureRef.byte_count))throw Error('visual_review_capture_not_retained');
     if(target&&(captureRef.content_hash!=='sha256:'+frame.native_image_sha256||captureRef.byte_count!==Buffer.from(image,'base64').length))throw Error('visual_review_target_retention_mismatch');
@@ -761,13 +772,51 @@ export async function reviewCurrentWork(input,host){
     guidance:sheetActivationGuidance+(sessionDiagnostic?NATIVE_CODE_SESSION_RECOVERY+' ':'')+'Review unavailable; do not infer a mismatch or repeat any model change. Re-establish current control, identity and suitable evidence before checking again.'+(error?.message==='visual_review_visible_frame_changed_during_review'?' Inspect both retained capture images through operator_retrieve_evidence before deciding what changed. Native sheet exports can update a plot timestamp; do not assume that is the only difference. For sheet-wide checks activate the actual sheet and use visible_work with its border visible. For local checks focus the actual note/viewport elements using showElementIds or native sheet-coordinate bboxMinXyz/bboxMaxXyz. An explicit visible_work recheck can reuse an earlier accepted native sheet review and its unchanged checks; this unavailable review itself is not an accepted baseline. Review relevant titleblock areas separately. A focused region cannot prove anything outside it. Keep native identity and pixel/viewport recheck guards; never mask differences or change the model just to stabilize a capture.':'')});}
 }
 
-// Use only the host-produced reference and framing. A refresh never navigates.
+// Plan selection uses native model-space landmarks. No PDF pixel transform is assumed.
+export function visualFocusBounds(ids, rows) {
+  if (!Array.isArray(rows) || !ids.length || ids.length > 64) return [];
+  const byId=new Map(rows.map(row=>[row?.id,row]));
+  const bounds=[];
+  for(const id of ids) {
+    const row=byId.get(id), box=row?.boundingBox;
+    if(row?.found!==true || !row.uniqueId || !box) return [];
+    const min=['x','y','z'].map(k=>box.min?.[k]), max=['x','y','z'].map(k=>box.max?.[k]);
+    if(!min.every((n,i)=>Number.isFinite(n)&&Number.isFinite(max[i])&&n<=max[i])) return [];
+    bounds.push({min,max});
+  }
+  return bounds;
+}
+
+export function selectEditedDrawingRegion(regions, latest, edits) {
+  if(!latest || !edits.length || edits.some(edit=>!edit.points?.length)) return null;
+  const candidates=regions.filter(r=>r.bounds?.length && r.radius>0 && sameVisualReviewOwner(r.owner,latest.owner)
+    && ['process_id','document_session_id','epoch','view_id','view_unique_id'].every(k=>r.location[k]!=null && r.location[k]===latest.location[k]));
+  let chosen=null;
+  for(const {points} of edits) for(const point of points) {
+    // Work in Revit feet (including elevation), even when the displayed plan is rotated.
+    const ranked=candidates.map(region=>({region,distance:Math.min(...region.bounds.map(({min,max})=>
+      Math.hypot(...point.map((n,i)=>Math.max(0,min[i]-n,n-max[i])))))}))
+      .filter(x=>x.distance<=x.region.radius).sort((a,b)=>a.distance-b.distance);
+    const best=ranked[0];
+    if(!best || ranked.some(x=>x.region.referenceHash!==best.region.referenceHash && x.distance<=best.distance+0.5)) return null;
+    if(chosen && chosen!==best.region) return null;
+    chosen=best.region;
+  }
+  return chosen;
+}
+
 export function pairedDrawingRegion(review) {
   const request = review?.request;
   if (!review?.ok || !review.reference || !review.capture?.frame?.viewport
       || request?.capture_mode !== 'native_visible_region' || request.include_sheet_context
       || !(request.reference_attachment_read || request.reference_filename)) return null;
-  return {owner:review.owner, location:review.location, viewport:review.capture.frame.viewport,
+  const frame=review.capture.frame, corners=frame.viewport.zoomCornersXyz;
+  const diagonal=corners?.length===2 ? Math.hypot(...corners[0].map((n,i)=>corners[1][i]-n)) : 0;
+  const shortSide=diagonal*Math.min(frame.width,frame.height)/Math.hypot(frame.width,frame.height);
+  return {owner:review.owner, location:review.location, viewport:frame.viewport,
+    bounds:review.raw_review_evidence?.focus_bounds ?? [], radius:Math.min(8,shortSide/3),
+    focus:Object.fromEntries(['focus_element_ids','context_bbox_min_xyz','context_bbox_max_xyz'].filter(k=>request[k]).map(k=>[k,request[k]])),
+    referenceName:review.reference.filename,
     referenceHash:review.reference.content_hash, request:{
       view_id:request.view_id, review_mode:'observe', capture_mode:'native_visible_region',
       image_size:request.image_size, checks:request.checks,
@@ -787,7 +836,7 @@ export function refreshedDrawingFeedback(region, review) {
       || !sameNativeViewport(region.viewport,next.viewport)) return null;
   return [{type:'input_text',text:JSON.stringify({schema:'operator.post-edit-drawing.v1',
     view_id:next.location.view_id, through_sequence:next.location.through_sequence,
-    current_image:review.capture.content_hash, reference_image:next.referenceHash,
+    current_image:review.capture.content_hash, reference_image:next.referenceHash,reference_filename:review.reference.filename,
     guidance:'First image is the current Revit region after the edit batch. Second is its existing source reference. Check the repair and scan for remaining clear differences. These images cover this framing only.'})}, ...images];
 }
 

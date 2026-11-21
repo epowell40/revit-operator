@@ -157,7 +157,8 @@ export async function invokeDesktopNativeTool({assignment,messageId,responseId,c
   Object.defineProperty(output,'native_model_output',{value:{type:'function_call_output',call_id:call.call_id,output:content}});
   Object.defineProperty(output,'native_stop_reason',{value:result.stop_reason??null});
   const checkedCopy=result.checked_copy,binding=desktopNativeBinding(assignment);
-  if (isCommittedDrawingEdit(call, result, binding)) Object.defineProperty(output,'drawing_edit',{value:true});
+  const edit = committedDrawingEditLocation(call, result, binding);
+  if (edit) Object.defineProperty(output,'drawing_edit',{value:edit});
   if(checkedCopy&&Object.keys(binding).every(key=>checkedCopy.binding?.[key]===binding[key])
     &&checkedCopy.message?.role==='assistant'
     &&typeof checkedCopy.message.message_id==='string'
@@ -173,26 +174,50 @@ export async function invokeDesktopNativeTool({assignment,messageId,responseId,c
 
 // This signal schedules a read-only observation. It never verifies an edit.
 export function isCommittedDrawingEdit(call, result, binding) {
-  if (!result?.result?.success || result.stop_reason) return false;
+  return committedDrawingEditLocation(call, result, binding) !== null;
+}
+
+export function committedDrawingEditLocation(call, result, binding) {
+  if (!result?.result?.success || result.stop_reason) return null;
   let args;
   try { args = typeof call.arguments === 'string' ? JSON.parse(call.arguments) : call.arguments; }
-  catch { return false; }
+  catch { return null; }
   let name = call.name;
   if (name === 'native__invoke') { name = 'native__' + args?.tool; args = args?.arguments; }
   const program = name === 'native__operator_run_dynamic_revit_program' && args?.mode === 'apply';
   const route = name === 'native__revit_call_tool' && args?.method === 'POST'
     && typeof args.path === 'string' && !['/revit/save-as','/revit/save'].includes(args.path)
     && args.body?.dryRun !== true;
-  if (!program && !route) return false;
-  const source = 'assignment_kernel_v2:' + name.slice(8);
-  return result.result.contentItems.some(block => {
-    if (block?.type !== 'inputText' || typeof block.text !== 'string' || block.text.length > 32768) return false;
+  if (!program && !route) return null;
+  const projections = [];
+  for (const block of result.result.contentItems ?? []) {
+    if (block?.type !== 'inputText' || typeof block.text !== 'string' || block.text.length > 32768) continue;
     let envelope;
-    try { envelope = JSON.parse(block.text); } catch { return false; }
-    return envelope?.schema === 'revit-operator.model-evidence-envelope.v1' && Array.isArray(envelope.evidence_projections)
-      && envelope.evidence_projections.some(p => p?.source === source && p.trust_level === 'authoritative_native'
-        && ['assignment_id','run_id','generation'].every(k => binding[k] != null && p[k] === binding[k])
-        && /^opv2_[a-f0-9]{64}$/.test(p.attempt_id)
-        && (p.effect_state === 'applied' || (route && p.effect_state == null && p.key_facts?.['transaction.status'] === 'committed')));
-  });
+    try { envelope = JSON.parse(block.text); } catch { continue; }
+    if (envelope?.schema !== 'revit-operator.model-evidence-envelope.v1' || !Array.isArray(envelope.evidence_projections)) continue;
+    projections.push(...envelope.evidence_projections.filter(p => p?.trust_level === 'authoritative_native'
+      && ['assignment_id','run_id','generation'].every(k => binding?.[k] != null && p[k] === binding[k])
+      && /^opv2_[a-f0-9]{64}$/.test(p.attempt_id)));
+  }
+  const edit = projections.find(p => p.source === 'assignment_kernel_v2:' + name.slice(8)
+    && (p.effect_state === 'applied' || (route && p.effect_state == null && p.key_facts?.['transaction.status'] === 'committed')));
+  if (!edit) return null;
+  const payload = edit.inline_payload;
+  if (route && payload?.status === 'Connected' && payload.applied === true
+      && Array.isArray(payload.terminalConnector?.origin) && payload.terminalConnector.origin.length === 3
+      && payload.terminalConnector.origin.every(Number.isFinite)) return {points:[payload.terminalConnector.origin]};
+  // Only use the automatic native spatial readback returned with THIS apply.
+  // Its rows are navigation hints. Program text and collateral IDs cannot locate an edit.
+  const summary = program && projections.find(p => p.source === 'assignment_kernel_v2:revit_call_tool'
+    && p.inline_payload?.scope === 'requested_element_ids_only')?.inline_payload;
+  if (summary?.coverage?.source_rows_exhausted && summary.rows?.length === summary.coverage.source_rows) {
+    const points = summary.rows.map(row => {
+      const v = row?.values;
+      if (v?.found !== true || !v.uniqueId) return null;
+      if (v.location?.type === 'point') return ['x','y','z'].map(k => v.location[k]);
+      return ['x','y','z'].map(k => (v.boundingBox?.min?.[k] + v.boundingBox?.max?.[k]) / 2);
+    });
+    if (points.length && points.every(x => x?.every(Number.isFinite))) return {points};
+  }
+  return {points:[]};
 }
