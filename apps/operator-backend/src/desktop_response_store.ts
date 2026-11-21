@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { renameStagedFile } from './rename_staged_file.js';
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { ensureWorkspaceLayout } from "./workspace.js";
@@ -139,7 +140,7 @@ export async function retainDesktopResponse<T>(binding: Binding, messageId: unkn
     writeDurable(temporary, { ...record, ...(context?.message_id === id.messageId
       && context.host_feedback_item ? { request_context: { host_feedback: context.host_feedback_item,
         packing: context.context_packing } } : {}) });
-    fs.renameSync(temporary, id.file);
+    renameStagedFile(temporary, id.file);
   };
   let response: T;
   try { response = await invoke(); }
@@ -155,7 +156,7 @@ function contextFile(binding: Binding): string {
 function replaceContext(binding: Binding, value: unknown): void {
   const file = contextFile(binding), temporary = file + '.' + randomUUID() + '.tmp';
   writeDurable(temporary, value);
-  fs.renameSync(temporary, file);
+  renameStagedFile(temporary, file);
 }
 function loadContext(binding: Binding): any {
   const file = contextFile(binding);

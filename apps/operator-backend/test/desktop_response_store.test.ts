@@ -6,6 +6,43 @@ import test from 'node:test';
 import { readDesktopResponse, retainDesktopResponse, desktopResponseContinuationAllowed, desktopResponseTelemetry } from '../src/desktop_response_store.js';
 const binding = { session_id:'s', assignment_id:'a', run_id:'r', generation:1, kernelVersion:2 as const };
 
+test('a brief reader lock on the owner context does not stop progress or replay a call', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'desktop-reader-'));
+  const prior = process.env.OPERATOR_WORKSPACE_ROOT;
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  try {
+    const rename = fs.renameSync;
+    let attempts = 0, calls = 0;
+    t.mock.method(fs, 'renameSync', (from: fs.PathLike, to: fs.PathLike) => {
+      if (String(to).endsWith('.context') && attempts++ === 0)
+        throw Object.assign(new Error('brief reader lock'), {code:'EPERM'});
+      return rename(from, to);
+    });
+    await retainDesktopResponse(binding, 'locked', {}, async () => { calls++; return {id:'result'}; }, () => null, true);
+    assert.equal(attempts, 2);
+    assert.equal(calls, 1);
+    assert.equal(readDesktopResponse(binding, 'locked')?.status, 'complete');
+    t.mock.restoreAll();
+    let denied = 0;
+    t.mock.method(fs, 'renameSync', (from: fs.PathLike, to: fs.PathLike) => {
+      if (String(to).endsWith('.context')) {
+        denied++;
+        throw Object.assign(new Error('context still locked'), {code:'EPERM'});
+      }
+      return rename(from, to);
+    });
+    await assert.rejects(retainDesktopResponse(binding, 'still-locked', {}, async () => { calls++; }, () => null, true), /context still locked/);
+    assert.equal(denied, 4);
+    assert.equal(calls, 1);
+    assert.equal(readDesktopResponse(binding, 'locked')?.status, 'complete');
+    assert.equal(readDesktopResponse(binding, 'still-locked')?.status, 'pending');
+  } finally {
+    if(prior === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = prior;
+    fs.rmSync(root, {recursive:true, force:true});
+  }
+});
+
 test('cancelled-run accounting projection exposes usage but never saved actions or text', () => {
  const usage={schema:'revit-operator.provider-response-usage/v1',session_id:'s',message_id:'m',disposition:'completed',raw_response_ids:['response']};
  const receipt={call_id:'response',tokens:{total_tokens:42}};
