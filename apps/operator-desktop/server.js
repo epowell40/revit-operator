@@ -12890,8 +12890,17 @@ async function executeFunctionToolCall(toolCall) {
     return output;
   }
 
+  async function retainTaskInput(args) {
+    const result=await requestTaskInput(computerState.sidecarAssignment,args,readBackendJson);
+    computerState.pendingClarification={schema:'revit-operator.sidecar-pending-clarification/v1',clarification_id:result.clarification_id,
+      assignment_id:result.assignment_id,run_id:result.run_id,generation:result.generation,question:result.question,missing_fields:result.missing_fields};
+    addComputerEvent('Focused question saved; the same assignment is awaiting user input.');
+    return result;
+  }
+
   if (toolCall.name === "report_work_for_review") {
     const result = await submitWorkReportForReview(computerState.sidecarAssignment, args, readBackendJson, {
+      requestInput: retainTaskInput,
       retainWrittenFindings: async (binding, text) => {
         await assertComputerActionControl();
         const snapshot = await readOwnerWritingSnapshot();
@@ -12904,15 +12913,12 @@ async function executeFunctionToolCall(toolCall) {
         }
       }
     });
-    addComputerEvent(result.written_findings ? "Owner-authored written follow-up retained; native verification and task outcome remain separate." : "Work report retained for independent review; completion remains unverified.");
+    if(result.status!=='awaiting_user_input') addComputerEvent(result.written_findings ? "Owner-authored written follow-up retained; native verification and task outcome remain separate." : "Work report retained for independent review; completion remains unverified.");
     return { type: "function_call_output", call_id: toolCall.call_id, output: JSON.stringify(result) };
   }
 
   if(toolCall.name==='request_task_input'){
-    const result=await requestTaskInput(computerState.sidecarAssignment,args,readBackendJson);
-    computerState.pendingClarification={schema:'revit-operator.sidecar-pending-clarification/v1',clarification_id:result.clarification_id,
-      assignment_id:result.assignment_id,run_id:result.run_id,generation:result.generation,question:result.question,missing_fields:result.missing_fields};
-    addComputerEvent('Focused question saved; the same assignment is awaiting user input.');
+    const result=await retainTaskInput(args);
     return {type:'function_call_output',call_id:toolCall.call_id,output:JSON.stringify(result)};
   }
 
@@ -13605,6 +13611,10 @@ async function executeComputerLoop(options = {}) {
     // delegate instructions to the single executor. Safety rules stay intact.
     instructions=singleExecutionInstructions(instructions,catalog.guidance,catalog.execution_mode);
     instructions+=workVisibilityInstructions(computerState.speedSettings);
+    if(catalog.execution_mode==='single_actor_review_v1') {
+      if(!tools.some(tool=>tool.name==='native__operator_manage_work_plan')) instructions+='\nThe planning tool is unavailable in this session. Skip checklist declarations, locations and status calls. Track scope in your own context and use the drawing, native evidence and direct handoff tools.';
+      instructions+='\nAfter checking and saving actionable repairs, return the result immediately when the remainder needs a user decision. Use report_work_for_review with needs_input, or request_task_input with work_summary. Include the saved result and specific question. No plan entry, additional image of unchanged work, or guessed graphic replacement is required to ask. Continue independent actionable work first.';
+    }
     hostBudgetOwnsContinuation=Boolean(nativeContext);
     if(hostBudgetOwnsContinuation)updateComputerProgress({turnBudgetAuthority:'assignment_kernel_v2'});
   }

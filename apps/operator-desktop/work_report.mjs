@@ -3,9 +3,9 @@ import {CANONICAL_NATIVE_TASK_GUIDANCE,UNIFIED_NATIVE_COMPLETION_GUIDANCE} from 
 // Claims are retained for review; this adapter never certifies a desktop effect.
 export const WORK_REPORT_TOOL = {
   type: "function", name: "report_work_for_review",
-  description: "Retain an explicitly unverified advisory handoff after the requested work and inspection, or a genuine stop. For a persistent task with unfinished work and available budget, retain one useful next work item or a specific supported blocker in the existing work plan and continue ready work; no exhaustive upfront inventory is required. A progress update is not a final handoff. For advisory assignments, optional written_findings is the user-facing body of that final report; keep unfinished work and uncertainties explicit in the claim arrays. Strict assignments reject completion claims. For a strict task's requested written follow-up, the owner may supply written_findings with all three claim arrays empty, after reviewing helper material and before final inspection. That strict writing-only receipt does not complete any checklist, verify effects, or end the task. Do not copy unreviewed helper prose or repeat completed actions.",
+  description: "Retain an explicitly unverified advisory handoff after the requested work and inspection, or a genuine stop. For a persistent task with unfinished work and available budget, retain one useful next work item or a specific supported blocker in the existing work plan and continue ready work; no exhaustive upfront inventory is required. When the remaining work depends on a real user decision, include needs_input with the question and a stable field name in this same report. Return the useful checked work, saved file and specific ambiguity together. Do not create a plan just to ask or draw a substitute for an unresolved design decision. A progress update is not a final handoff. For advisory assignments, optional written_findings is the user-facing body of that final report; keep unfinished work and uncertainties explicit in the claim arrays. Strict assignments reject completion claims. For a strict task's requested written follow-up, the owner may supply written_findings with all three claim arrays empty, after reviewing helper material and before final inspection. That strict writing-only receipt does not complete any checklist, verify effects, or end the task. Do not copy unreviewed helper prose or repeat completed actions.",
   parameters: { type: "object", additionalProperties: false,
-    properties: { ...Object.fromEntries(["claimed_completed", "remaining_work", "uncertainties"].map(key => [key, { type: "array", maxItems: 24, items: { type: "string", minLength: 1, maxLength: 1000 } }])), written_findings: {type:"string",minLength:1,maxLength:8000} },
+    properties: { needs_input:{type:"object",additionalProperties:false,required:["question","field"],properties:{question:{type:"string",minLength:1,maxLength:1200},field:{type:"string",pattern:"^[a-z][a-z0-9_]{0,63}$"}}}, ...Object.fromEntries(["claimed_completed", "remaining_work", "uncertainties"].map(key => [key, { type: "array", maxItems: 24, items: { type: "string", minLength: 1, maxLength: 1000 } }])), written_findings: {type:"string",minLength:1,maxLength:8000} },
     required: ["claimed_completed", "remaining_work", "uncertainties"] }
 };
 export async function submitWorkReportForReview(assignment, proposal, request, options = {}) {
@@ -14,7 +14,7 @@ export async function submitWorkReportForReview(assignment, proposal, request, o
     throw new Error("work_report_current_binding_required");
   const keys = ["claimed_completed", "remaining_work", "uncertainties"];
   const writing = typeof proposal?.written_findings === 'string' && proposal.written_findings.trim() && proposal.written_findings.length <= 8000;
-  if (!proposal || Object.keys(proposal).some(key => ![...keys,'written_findings'].includes(key))
+  if (!proposal || Object.keys(proposal).some(key => ![...keys,'written_findings','needs_input'].includes(key))
       || !keys.every(key => Array.isArray(proposal[key]) && proposal[key].length <= 24
         && proposal[key].every(item => typeof item === "string" && item.trim() && item.length <= 1000))
       || (!keys.some(key => proposal[key].length) && !writing)
@@ -23,6 +23,16 @@ export async function submitWorkReportForReview(assignment, proposal, request, o
     run_id: assignment.run_id, generation: assignment.generation };
   const send = body => request("/api/assignments/v2/work-plan", { method: "POST", body: JSON.stringify({ ...body, ...binding }) });
   const status = await send({ action: "status" });
+  if ('needs_input' in proposal) {
+    const decision = proposal.needs_input;
+    if (status?.verification_policy !== 'advisory' || status.ok !== true || status.outcome !== 'active' || status.completion_proposal || typeof options.requestInput !== 'function') throw new Error('partial_input_active_advisory_required');
+    if (!decision || Object.keys(decision).some(key => !['field','question'].includes(key))) throw new Error('partial_input_decision_invalid');
+    const sections = [[null, proposal.claimed_completed], ['Remaining work', proposal.remaining_work], ['Uncertainties', proposal.uncertainties]];
+    const summary = [proposal.written_findings?.trim(), ...sections.filter(([,items]) => items.length).map(([label,items]) => (label ? label+'\n' : '')+items.join('\n'))].filter(Boolean).join('\n\n');
+    if (summary.length > 4000) throw new Error('partial_input_summary_too_long: summarize the checked result and remaining decision in 4000 characters.');
+    if (options.beforePropose) await options.beforePropose();
+    return options.requestInput({...decision, work_summary:summary});
+  }
   if ('written_findings' in proposal && status?.verification_policy === 'strict') {
     if (status?.ok !== true || status.outcome !== 'active'
         || status.completion_proposal || keys.some(key=>proposal[key].length)
