@@ -278,7 +278,3 @@ test('production retained review reaches inspection-closeout presentation withou
  assert.equal(feedback.state,raw.state);assert.equal(feedback.inspection_closeout.state,'not_submitted');assert.equal(feedback.whole_task_verified,false);assert.equal(feedback.native_postcondition_verified,false);
  assertBoundedModelEvidencePayload([final]);
 });
-
-
-
-

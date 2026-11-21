@@ -43,4 +43,3 @@ test('oversized input values are explicitly omitted, recent resolved direction i
  s.input_values.huge='z'.repeat(20000);s.clarifications.huge={variable_id:'huge',question:'Large',resolved_at:'2026-11-21T11:00:00Z'};
  const text=canonicalReviewTaskContext(s,binding);assert(text.length<=12000);assert.match(text,/value39/);assert(!text.includes('z'.repeat(100)));assert.match(text,/omitted/);assert.match(text,/Do not infer their contents/);
 });
-

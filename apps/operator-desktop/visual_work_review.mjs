@@ -898,5 +898,3 @@ export function visualWorkReviewModelOutput(modelOutput,result,evidenceId,inspec
   }
   return {...modelOutput,output};
 }
-
-
