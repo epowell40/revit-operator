@@ -12,7 +12,7 @@ test('recovered review uses canonical objective rather than the transient resume
  const local={...binding,goal_id:'task',kernel_version:2},snapshot={schema:'revit-operator.assignment-snapshot/v2',assignment_version:12,current_binding:binding,spec:{source_user_request:'Read the current project title and report it.'},input_values:{},clarifications:{}};
  let canonicalReads=0;
  const invoke=runInNewContext(source.slice(begin,end)+';reviewCurrentRevitWork',{
-  JSON,Buffer,Date,Error,AbortSignal,visualReviewOwner,
+  JSON,Buffer,Date,Error,AbortSignal,performance,visualReviewOwner,
   computerState:{messages:[{role:'user',text:'Continue the existing task using its saved answers and evidence.'}],sidecarAssignment:local},
   canonicalReviewTaskContext,
   nativeDocumentCheckpointRequestMatchesV2:()=>false,
@@ -43,3 +43,4 @@ test('oversized input values are explicitly omitted, recent resolved direction i
  s.input_values.huge='z'.repeat(20000);s.clarifications.huge={variable_id:'huge',question:'Large',resolved_at:'2026-11-21T11:00:00Z'};
  const text=canonicalReviewTaskContext(s,binding);assert(text.length<=12000);assert.match(text,/value39/);assert(!text.includes('z'.repeat(100)));assert.match(text,/omitted/);assert.match(text,/Do not infer their contents/);
 });
+

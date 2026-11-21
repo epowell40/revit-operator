@@ -11597,6 +11597,13 @@ function computerProviderSettings(backendComputer = {}) {
 }
 
 async function reviewCurrentRevitWork(args, options = {}) {
+  // New ordinary visual checks belong to the working actor. Historical
+  // evidence still uses its original review mode and verdict interpretation.
+  // Explicit inspection closeout / code assessment retain their review path.
+  if(options.sourceRead!==true&&args&&typeof args==='object'&&!Array.isArray(args)
+    &&args.review_mode===undefined&&args.code_evidence_ids===undefined&&args.complete_inspection_item_id===undefined){
+    args={...args,review_mode:'observe'};
+  }
   const startedAt=performance.now(),stageTimings={};
   const timed=async(stage,action)=>{
     const started=performance.now();
@@ -11616,7 +11623,7 @@ async function reviewCurrentRevitWork(args, options = {}) {
   let canonicalCodeSnapshot=null;
   const transientRequest=()=>computerState.messages.filter(m=>m.role==='user').map(m=>m.text).join('\n\n');
   let reviewUserRequest=options.userRequest||transientRequest;
-  if(options.sourceRead!==true&&!options.userRequest&&owner()?.kernel_version===2){
+  if(options.sourceRead!==true&&args?.review_mode!=='observe'&&!options.userRequest&&owner()?.kernel_version===2){
     await assertControl();
     const publication=await timed('canonical_task_context',()=>attachSidecarAssignmentKernelPublication(
       options.readBackend||readBackendJson,{},owner(),{retryDelaysMs:[]}));

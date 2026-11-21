@@ -4,7 +4,6 @@ import {
   ASSIGNMENT_KERNEL_V2_SESSION_INDEX_SCHEMA,
   ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA,
   parseAssignmentKernelPublicationV2,
-  projectAssignmentDispatchControlV1,
   type AssignmentKernelV2SessionIndex,
   type AssignmentKernelV2SessionIndexEntry
 } from "@revitoperator/assignment-kernel-v2-contracts";
@@ -72,26 +71,7 @@ export function getAssignmentKernelPublicationV2(assignmentId: string): Assignme
   return snapshot ? buildAssignmentKernelPublicationV2(snapshot) : null;
 }
 
-/** The caller supplies a freshly validated canonical snapshot. The shared
- * projector still validates the complete publication/ledger before selecting
- * control fields, without materializing copies of discarded drawing history. */
-export function buildAssignmentDispatchControlV1(snapshot: AssignmentSnapshotV2) {
-  return projectAssignmentDispatchControlV1({
-    schema: ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA,
-    assignment_id: snapshot.current_binding.assignment_id,
-    assignment_version: snapshot.assignment_version,
-    snapshot,
-    provider_ledger: {
-      schema: ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA,
-      assignment_id: snapshot.current_binding.assignment_id,
-      run_id: snapshot.current_binding.run_id,
-      generation: snapshot.current_binding.generation,
-      call_ids: snapshot.provider_call_ids,
-      calls: snapshot.provider_calls,
-      in_flight_call_ids: snapshot.in_flight_provider_call_ids
-    }
-  });
-}
+export { buildAssignmentDispatchControlV1 } from './assignment_kernel_v2_store.js';
 
 /**
  * Lists only lightweight V2 identities. Consumers must follow an entry with

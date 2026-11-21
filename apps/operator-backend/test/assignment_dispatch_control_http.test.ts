@@ -28,16 +28,20 @@ test('authenticated GET opt-in returns fresh compact dispatch control; default p
   await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));const address=server.address();assert(address&&typeof address==='object');
   const url=`http://127.0.0.1:${address.port}/api/assignments/v2/${goal.id}`,headers={'x-operator-assignment-handoff':'dispatch_control_v1'};
   const fullResponse=await fetch(url),full:any=await fullResponse.json();assert.equal(fullResponse.status,200,JSON.stringify(full));assert(full.assignment_kernel_v2.provider_ledger);
-  const clone=globalThis.structuredClone;let fullPublications=0;
+  // Warm the compact projection. Repeated checks must not clone drawing history.
+  await (await fetch(url,{headers})).json();
+  const clone=globalThis.structuredClone;let fullPublications=0,fullSnapshots=0;
   let response:Response,compact:any;
   try{
    globalThis.structuredClone=((value:unknown,options?:Parameters<typeof structuredClone>[1])=>{
     if((value as {schema?:string})?.schema==='revit-operator.assignment-kernel-publication/v2')fullPublications++;
+    if(value&&typeof value==='object'&&'operations' in value&&'spec' in value&&'provider_calls' in value)fullSnapshots++;
     return clone(value,options);
    }) as typeof structuredClone;
    response=await fetch(url,{headers});compact=await response.json();
   }finally{globalThis.structuredClone=clone;}
   assert.equal(fullPublications,0,'Compact HTTP reads must not construct/copy the full discarded publication.');
+  assert.equal(fullSnapshots,0,'Warm control checks must not clone the full drawing snapshot.');
   assert.equal(response.status,200);assert.equal(response.headers.get('cache-control'),'no-store');
   assert.equal(compact.assignment_kernel_v2,undefined);assert.equal(compact.assignment_dispatch_control_v1.snapshot.current_binding.assignment_id,goal.id);
   assert(Buffer.byteLength(JSON.stringify(compact))<2500);

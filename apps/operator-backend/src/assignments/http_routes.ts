@@ -27,7 +27,7 @@ import {
   supplyAssignmentInputResultV2,
   type AssignmentKernelBindingInputV2
 } from "./assignment_kernel_v2_lifecycle.js";
-import { getAssignmentKernelSnapshotV2 } from "./assignment_kernel_v2_store.js";
+import { getAssignmentKernelSnapshotV2, getAssignmentKernelDispatchControlV1 } from "./assignment_kernel_v2_store.js";
 import {
   leaseFromOperation,
   markAssignmentKernelOperationDispatchStartedV2,
@@ -36,7 +36,7 @@ import {
 } from "./assignment_kernel_v2_execution.js";
 import { AssignmentKernelErrorV2, sameAssignmentBindingV2, type AssignmentSnapshotV2 } from "../domain/assignment-kernel/index.js";
 import { getRequestAssignmentPrincipalId, requestMatchesAssignmentPrincipalId } from "../request_context.js";
-import { buildAssignmentKernelPublicationV2, buildAssignmentDispatchControlV1, listAssignmentKernelSessionIndexV2 } from "./assignment_kernel_v2_publication.js";
+import { buildAssignmentKernelPublicationV2, listAssignmentKernelSessionIndexV2 } from "./assignment_kernel_v2_publication.js";
 
 type JsonMap = Record<string, unknown>;
 
@@ -209,6 +209,21 @@ export async function handleAssignmentHttpRoute(
       && !url.pathname.startsWith("/api/assignments/v2/operations/")
       && !url.pathname.startsWith("/api/assignments/v2/criteria/")) {
     const assignmentId = decodeURIComponent(url.pathname.slice("/api/assignments/v2/".length)).trim().slice(0, 240);
+    if (req.headers["x-operator-assignment-handoff"] === "dispatch_control_v1") {
+      const control = assignmentId ? getAssignmentKernelDispatchControlV1(assignmentId) : null;
+      if (!control) {
+        writeJson(res, assignmentId ? 404 : 400, { error: assignmentId ? "Assignment not found." : "assignment id is required." });
+        return true;
+      }
+      if (!authorizeSession(control.current_binding.session_id)) return true;
+      if (!v2PrincipalAllowed(control)) {
+        writeJson(res, 403, { error: "Forbidden (Assignment belongs to another principal)." });
+        return true;
+      }
+      res.setHeader("cache-control", "no-store");
+      writeJson(res, 200, { ok: true, assignment_dispatch_control_v1: control.control });
+      return true;
+    }
     const snapshot = assignmentId ? getAssignmentKernelSnapshotV2(assignmentId) : null;
     if (!snapshot) {
       writeJson(res, assignmentId ? 404 : 400, { error: assignmentId ? "Assignment not found." : "assignment id is required." });
@@ -220,9 +235,7 @@ export async function handleAssignmentHttpRoute(
       return true;
     }
     res.setHeader("cache-control", "no-store");
-    if (req.headers["x-operator-assignment-handoff"] === "dispatch_control_v1") {
-      writeJson(res, 200, { ok: true, assignment_dispatch_control_v1: buildAssignmentDispatchControlV1(snapshot) });
-    } else writeJson(res, 200, { ok: true, assignment_kernel_v2: buildAssignmentKernelPublicationV2(snapshot) });
+    writeJson(res, 200, { ok: true, assignment_kernel_v2: buildAssignmentKernelPublicationV2(snapshot) });
     return true;
   }
   if (req.method === "POST" && url.pathname === "/api/assignments/v2/operations/children") {

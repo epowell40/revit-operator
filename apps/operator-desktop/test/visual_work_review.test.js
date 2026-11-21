@@ -11,6 +11,20 @@ const temp=fs.mkdtempSync(path.join(os.tmpdir(),'visual-work-review-')),keys=['O
 after(()=>{__closeForTests();for(const[k,v]of Object.entries(prior)){if(v===undefined)delete process.env[k];else process.env[k]=v;}fs.rmSync(temp,{recursive:true,force:true});});
 const desktop=await import('../server.js?visual-work-review'),source=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8');
 
+test('ordinary visual check defaults to primary actor pixels without a reviewer or full task publication',async()=>{
+ const {o}=pdfReferenceOptions();
+ o.owner=()=>({...owner,kernel_version:2});
+
+ o.readBackend=async()=>{throw Error('Observation must not retrieve the complete task for a reviewer');};
+ o.requestResponse=async()=>{throw Error('Routine observation must not call another model');};
+ const result=await desktop.reviewCurrentRevitWork({view_id:41,checks:args.checks,reference_attachment_read:{call_id:'call_pdf',page:1}},o);
+ assert.equal(result.state,'observed',result.reason);assert.equal(result.request.review_mode,'observe');
+ assert.equal(result.request_dispatched,false);assert.equal(result.whole_task_verified,false);
+ assert.equal(result.native_postcondition_verified,false);assert(result.capture&&result.reference);
+ const output=shared.visualWorkReviewModelOutput({output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{evidence_id:'ev1_review'}]})},result,'ev1_review');
+ assert.equal(output.output.filter(x=>x.type==='input_image').length,2,'Both actual images must reach the actor');
+});
+
 test('production visual wrapper persists encrypted-review references and keeps readable secret rejection',async()=>{
  const o=options(),opaque='gAAAA'+'a'.repeat(80)+'-sk-'+'b'.repeat(32)+'_tail';
  const response={id:'resp_review',status:'completed',output:[{type:'reasoning',id:'rs_review',summary:[],encrypted_content:opaque}],output_text:JSON.stringify({checks:[{id:'gap',status:'matched',observed:'No blank row remains.',correction:''}]})};
@@ -34,7 +48,7 @@ test('code-only production wrapper uses same reviewer transport without reading 
  assert.equal(requested,1);assert.equal(r.schema,'operator.native_code_review.v1');assert.equal(r.state,'matched');
  assert.equal(r.native_postcondition_verified,false);assert.equal(r.whole_task_verified,false);assert.equal(r.capture,undefined);
 });
-const owner={assignment_id:'assignment',session_id:'session',run_id:'run',generation:1},args={view_id:41,checks:[{id:'gap',expected:'No extra blank row.'}]},image='iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAYAAACM/rhtAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAcSURBVFhH7cEBAQAAAIIg/69uSEABAAAAAAB8GhkoAAFF1RG0AAAAAElFTkSuQmCC';
+const owner={assignment_id:'assignment',session_id:'session',run_id:'run',generation:1},args={review_mode:'independent',view_id:41,checks:[{id:'gap',expected:'No extra blank row.'}]},image='iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAYAAACM/rhtAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAcSURBVFhH7cEBAQAAAIIg/69uSEABAAAAAAB8GhkoAAFF1RG0AAAAAElFTkSuQmCC';
 const frameContext={main_window_handle:'0x123',main_window_bounds:{x:0,y:0,width:100,height:100},view_rectangle:{x:10,y:10,width:40,height:40}};
 function focused(){return {image_base64:image,frame:{schema:'operator.visual_review_capture.v1',kind:'revit_view',process_id:123,view_id:41,main_window_handle:'0x123',foreground_window_handle:'0x123',rectangle:{...frameContext.view_rectangle},captured_at_utc:new Date().toISOString(),selection_authority:'native_view_or_owned_modal',occlusion_check:'nine_point_screen_grid_not_pixel_exhaustive'}};}
 const scene=()=>({schema:'revit-operator.ui-context/v1',state:'available',authority:'ui_identity_only',revision:1,captured_at_utc:new Date().toISOString(),context:{visual_capture_context:frameContext,process_id:123,document:{sessionId:'doc',title:'Mechanical',activeView:{id:41,name:'AIR DEVICE SCHEDULE',type:'Schedule'}},nativeChangeObservations:{schema:'operator.native_document_changes.v1',authority:'observed_changes_only',processId:123,epoch:'epoch',documentSessionId:'doc',throughSequence:0,retainedFromSequence:1,maxEvents:16,maxIdsPerEvent:64,events:[]}}});
@@ -102,7 +116,7 @@ test('retained168 production recheck reads bound before pixels and original chec
  const o=options(),reads=[];o.readContext=async()=>{const s=scene();s.context.nativeChangeObservations.throughSequence=1;return s;};
  o.reviewReceipts=()=>[receipt];o.readBaselineEvidence=async body=>{reads.push(body);return{ok:true,result:readVisualReviewBaseline(body)};};
  o.requestResponse=async body=>{o.calls.push(body);return{id:'resp_recheck',status:'completed',output:[],output_text:JSON.stringify({checks:[{id:'gap',status:'matched',observed:'Synthetic corrected gap compared to before pixels.',correction:''}]})};};
- const r=await desktop.reviewCurrentRevitWork({view_id:41,recheck_evidence_id:saved.ref.evidence_id},o);assert.equal(r.state,'matched');assert.deepEqual(r.request.checks,args.checks);assert.equal(reads.length,1);assert.equal(reads[0].content_hash,saved.ref.content_hash);
+ const r=await desktop.reviewCurrentRevitWork({review_mode:'independent',view_id:41,recheck_evidence_id:saved.ref.evidence_id},o);assert.equal(r.state,'matched');assert.deepEqual(r.request.checks,args.checks);assert.equal(reads.length,1);assert.equal(reads[0].content_hash,saved.ref.content_hash);
  const body=o.calls.find(v=>typeof v==='object'),content=body.input[0].content;assert.equal(content.filter(c=>c.type==='input_image').length,2);assert.equal(content[2].image_url,'data:image/png;base64,'+image);assert.deepEqual(body.tools,[]);assert.equal(r.native_postcondition_verified,false);assert.equal(r.whole_task_verified,false);
  for(const altered of [[],[{...receipt,status:'failed'}],[{...receipt,result:{...before,owner:{...before.owner,run_id:'foreign'}}}]]){const blocked=options();blocked.reviewReceipts=()=>altered;blocked.readBaselineEvidence=async()=>{throw Error('Unowned evidence must not be fetched');};const result=await desktop.reviewCurrentRevitWork({view_id:41,recheck_evidence_id:saved.ref.evidence_id},blocked);assert.equal(result.state,'unavailable');assert.equal(result.reason,'visual_review_baseline_not_owned_receipt');assert.equal(blocked.calls.filter(v=>typeof v==='object').length,0);}
 });
@@ -180,11 +194,11 @@ test('exact167 production protected export path bounds native resolution once, p
   return new Response(JSON.stringify({processId:123,documentSessionId:'doc',projectFingerprint:'project',viewId:body.viewId,viewUniqueId:'target-unique',viewName:'Notes, Symbols & Schedules',viewType:'DrawingSheet',sheetNumber:'M002',exportMode:'full_view',path:file,widthPx:width,heightPx:height,bytes:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex'),timestamp:new Date().toISOString(),canonical_attempt_settlement:settlement}));};
  o.retainImage=async pixels=>({ref:{evidence_id:'ev1_resolution',content_hash:'sha256:'+createHash('sha256').update(Buffer.from(pixels,'base64')).digest('hex'),byte_count:Buffer.from(pixels,'base64').length}});
  o.requestResponse=async body=>{o.calls.push(body);return{id:'resp_resolution',status:'completed',output:[],output_text:JSON.stringify({checks:[{id:'no-spacer',status:'mismatch',observed:'Synthetic blank row.',correction:'Remove the extra row.'}]})};};
- const r=await desktop.reviewCurrentRevitWork(fixture.request,o);assert.equal(r.state,'mismatch');assert.equal(exports.length,3);assert.equal(exports[0],6000);assert.equal(exports[1],exports[2]);assert(exports[1]<6000);assert.equal(admissions.length,8);assert.equal(o.calls.filter(x=>typeof x==='object').length,1);assert.equal(r.native_postcondition_verified,false);assert.equal(r.whole_task_verified,false);
+ const r=await desktop.reviewCurrentRevitWork({...fixture.request,review_mode:'independent'},o);assert.equal(r.state,'mismatch');assert.equal(exports.length,3);assert.equal(exports[0],6000);assert.equal(exports[1],exports[2]);assert(exports[1]<6000);assert.equal(admissions.length,8);assert.equal(o.calls.filter(x=>typeof x==='object').length,1);assert.equal(r.native_postcondition_verified,false);assert.equal(r.whole_task_verified,false);
 });
 test('exact167 valid visible-work mode with irrelevant size reaches actual wrapper focused capture checks',async()=>{
  const fixture=JSON.parse(fs.readFileSync(new URL('../../../packages/operator-assistant-ui/fixtures/visual-review-resolution167.json',import.meta.url),'utf8'));const o=options();
- const result=await desktop.reviewCurrentRevitWork({...fixture.next_request,view_id:args.view_id,checks:args.checks},o);assert.equal(result.state,'mismatch');assert.equal(result.request.image_size,undefined);assert.equal(result.capture.frame.kind,'revit_view');
+ const result=await desktop.reviewCurrentRevitWork({...fixture.next_request,review_mode:'independent',view_id:args.view_id,checks:args.checks},o);assert.equal(result.state,'mismatch');assert.equal(result.request.image_size,undefined);assert.equal(result.capture.frame.kind,'revit_view');
 });
 test('modal-safe production identity reader uses authenticated ping rather than a queued model context callback',()=>{const start=source.indexOf('async function reviewCurrentRevitWork('),end=source.indexOf('function formatRevitContextMessage(',start),part=source.slice(start,end);assert.match(part,/fetchRevitBridge\("\/revit\/ping"\)/);assert(!part.includes('await inspectRevitContext()'));assert.match(part,/requestComputerResponse\(body, \{allowTransientGatewayRetry:false\}\)/);});
 test('production default capture sends only host native scene to the focused script, not the legacy screenshot path',async()=>{
@@ -264,4 +278,7 @@ test('production retained review reaches inspection-closeout presentation withou
  assert.equal(feedback.state,raw.state);assert.equal(feedback.inspection_closeout.state,'not_submitted');assert.equal(feedback.whole_task_verified,false);assert.equal(feedback.native_postcondition_verified,false);
  assertBoundedModelEvidencePayload([final]);
 });
+
+
+
 
