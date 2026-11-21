@@ -52,11 +52,11 @@ for(const contextBounds of [false,true])for(const modal of [false,true])for(cons
  const calls=[];let active=7;
  const context=()=>({process_id:12,visual_capture_context:{main_window_handle:'0x12'},document:{sessionId:'doc',title:'Model',projectIdentity:{fingerprint:'project'},activeView:{id:active,name:'Sheet',type:'DrawingSheet'}},nativeChangeObservations:{schema:'operator.native_document_changes.v1',authority:'observed_changes_only',processId:12,documentSessionId:'doc',epoch:'epoch',throughSequence:0,retainedFromSequence:1,maxEvents:16,maxIdsPerEvent:64,events:[]},canonical_attempt_settlement:{method:'GET',path:'/revit/context',requested_effect:'read',effect_state:'none'}});
  const invoke=runInNewContext(source.slice(a,z)+';reviewCurrentRevitWork',{
-  JSON,Buffer,Date,Error,AbortSignal,focusNativeReviewTarget,nativeChangeObservationFromContext,
+  JSON,Buffer,Date,Error,AbortSignal,performance,focusNativeReviewTarget,nativeChangeObservationFromContext,
   visualReviewOwner:shared.visualReviewOwner,sameVisualReviewOwner:shared.sameVisualReviewOwner,
   // Exercise actual wrapper wiring; the public review implementation has its
   // own producer/consumer guards and image tests, without running a provider.
-  reviewCurrentWork:async(args,host)=>{if(refreshOnly){await host.readTargetContext();return{state:'matched'};}await host.focusTarget({view_id:41,show_element_ids:[101]},7);if(contextBounds)await host.focusTarget({view_id:41,bbox_min_xyz:[.05,1.5,0],bbox_max_xyz:[1.55,2.45,0]},41);return{state:'matched'};},
+  reviewCurrentWork:async(args,host)=>{if(refreshOnly){await host.readTargetContext();return{state:'matched',raw_review_evidence:{}};}await host.focusTarget({view_id:41,show_element_ids:[101]},7);if(contextBounds)await host.focusTarget({view_id:41,bbox_min_xyz:[.05,1.5,0],bbox_max_xyz:[1.55,2.45,0]},41);return{state:'matched',raw_review_evidence:{}};},
   activateRevitView:async target=>{calls.push({navigation:target});active=41;return{ok:true,active_view:{id:41},...(target.show_element_ids||target.bbox_min_xyz?{focus:{confirmed:true,kind:target.show_element_ids?'elements':'bounds',native_navigation_only:true}}:{})};},addComputerEvent(){}
  });
  const options={evidenceScope:()=>({}),owner:()=>owner,assertControl:async()=>calls.push('control'),readContext:async()=>({schema:'revit-operator.ui-context/v1',state:'available',authority:'ui_identity_only',captured_at_utc:new Date().toISOString(),context:context()}),fetchNative:async()=>{calls.push('native-context');return new Response(JSON.stringify(context()));},runCaptureScript:async argv=>{assert.equal(argv[1],'review_native_read_admission');calls.push('admission');return JSON.stringify({schema:'operator.visual_review_native_read_admission.v1',process_id:12,main_window_handle:'0x12',main_window_enabled:!modal});}};
@@ -82,8 +82,8 @@ for(const variant of ['ready','ready-large','foreign-session','malformed','pause
  const calls=[];let preparation;
  const invoke=runInNewContext([
   productionFunction('sidecarAssignmentBindingPayload'),productionFunction('validateSidecarAssignmentKernelPublication'),productionFunction('sidecarAssignmentKernelPublicationFromResponse'),source.slice(a,z),';reviewCurrentRevitWork'
- ].join('\n'),{JSON,Buffer,Date,Error,AbortSignal,encodeURIComponent,prepareFocusedInspection,parseAssignmentKernelPublicationV2,
-  visualReviewOwner:shared.visualReviewOwner,reviewCurrentWork:async(args,host)=>{preparation=await host.prepareFocusedInspection(args);return {state:'unavailable'};},addComputerEvent(){}});
+ ].join('\n'),{JSON,Buffer,Date,Error,AbortSignal,performance,encodeURIComponent,prepareFocusedInspection,parseAssignmentKernelPublicationV2,
+  visualReviewOwner:shared.visualReviewOwner,reviewCurrentWork:async(args,host)=>{preparation=await host.prepareFocusedInspection(args);return {state:'unavailable',raw_review_evidence:{}};},addComputerEvent(){}});
  await invoke({complete_inspection_item_id:'inspect',focus_element_ids:[101]}, {evidenceScope:()=>({}),owner:()=>owner,assertControl:async()=>{},readContext:async()=>{},fetchNative:async()=>{throw Error('Preparation must not touch Revit');},readBackend:async(route,options)=>{
   calls.push({route,options});if(options.method==='GET')return {assignment_kernel_v2:publication};
   const body=JSON.parse(options.body);assert.equal(body.action,'status');assert.deepEqual(body,{...owner,action:'status'});
