@@ -71,6 +71,74 @@ export function retainedRetrievalStallContinuation(assignment, retained) {
     'Keep checked partial work and save a useful verified milestone when applicable. Do not repeat mutations, invent missing values, mark work complete, or override Pause/unknown effects. Four failures without a successful read stop this loop.'}]};
 }
 
+/** Consume the existing canonical progress clock at a completed tool boundary.
+ * Successful read-only activity cannot bypass this pacing check. */
+export function retainedDraftingProgressContinuation(assignment, retained, tracker) {
+  const continuation=retained?.execution_continuation;
+  if(retained?.status!=='retained'||assignment?.kernel_version!==2||!continuation)return null;
+  if(continuation.schema!=='operator.execution-continuation.v1'
+    ||continuation.binding?.assignment_id!==(assignment.goal_id??assignment.assignment_id)
+    ||!['session_id','run_id','generation'].every(key=>continuation.binding?.[key]===assignment[key]))
+    throw Error('execution_continuation_binding_mismatch');
+  if(continuation.state!=='ready')return null;
+  const progress=continuation.construction_progress;
+  if(!progress)return null;
+  const calls=progress.calls_since_construction,warn=progress.warn_after,change=progress.stop_after;
+  if(!Number.isSafeInteger(calls)||calls<0||!Number.isFinite(Date.parse(progress.since))
+    ||!Number.isSafeInteger(warn)||warn<1||!Number.isSafeInteger(change)||change<=warn)
+    throw Error('execution_continuation_progress_invalid');
+  const window=progress.since;
+  const stage=calls>=change?2:calls>=warn?1:0;
+  if(stage<1)return null;
+  if(tracker.window===window&&stage<=tracker.stage)return null;
+  tracker.window=window;
+  tracker.stage=stage;
+  // The domain publishes pacing advice, not another call allowance. Distinct
+  // useful inspections must not become a runtime failure at an arbitrary count.
+  // Existing repeated-cycle, retrieval, resource and control paths still apply.
+  return {role:'user',content:[{type:'input_text',text:
+    'You have used '+calls+' model calls since new construction or native checked-target progress. '+
+    'Choose one concrete remaining discrepancy now. Finish a supported annotation/property pass or another ready branch when a connection is blocked. '+
+    'Record the specific blocked pass and continue independent work. Reuse the paired reference/model area and current readbacks. '+
+    'Further inspection must answer a named missing fact needed for that action. Repeated successful inspections, reviews and saves do not reset this progress clock. '+
+    (stage>=2?'If the bounded alternative cannot make progress, preserve an authorized useful milestone and report the checked partial with the exact blocker. ':'')+
+    'This changes no budget, native admission, Pause or unknown-effect requirement.'}]};
+}
+
+/** Use the already-returned host meter; never fetch another status or create
+ * another resource policy. Repeated tool calls do not spam the same warning. */
+export function retainedExecutionReserveContinuation(assignment, retained, tracker) {
+  const c=retained?.execution_continuation;
+  if(retained?.status!=='retained'||assignment?.kernel_version!==2||!c)return null;
+  if(c.schema!=='operator.execution-continuation.v1'
+    ||c.binding?.assignment_id!==(assignment.goal_id??assignment.assignment_id)
+    ||!['session_id','run_id','generation'].every(k=>c.binding?.[k]===assignment[k]))
+    throw Error('execution_continuation_binding_mismatch');
+  if(c.state!=='ready'||c.checkpoint_recommended!==true||!c.remaining_resources)return null;
+  const meters={};
+  for(const key of ['provider_calls','total_tokens','operations','active_execution_ms']) {
+    const m=c.remaining_resources[key];if(!m)continue;
+    if(!Number.isSafeInteger(m.limit)||m.limit<0
+      ||!(m.used===null&&m.remaining===null||Number.isSafeInteger(m.used)&&m.used>=0
+        &&Number.isSafeInteger(m.remaining)&&m.remaining===Math.max(0,m.limit-m.used)))
+      throw Error('execution_continuation_reserve_invalid');
+    meters[key]=m;
+  }
+  if(!Object.values(meters).some(m=>m.remaining!==null))return null;
+  const near=(key,n)=>meters[key]?.remaining!=null&&meters[key].remaining<=n;
+  const stage=near('active_execution_ms',30000)||near('provider_calls',1)?2:1;
+  const window=JSON.stringify(Object.entries(meters).map(([key,m])=>[key,m.limit]));
+  if(tracker.window===window&&tracker.stage>=stage)return null;
+  tracker.window=window;tracker.stage=stage;
+  const remaining=Object.fromEntries(Object.entries(meters).map(([key,m])=>[key,m.remaining]));
+  return {role:'user',content:[{type:'input_text',text:
+    'Host checkpoint warning: current remaining allocation '+JSON.stringify(remaining)+'. '+
+    'These are cumulative task resources, not a fresh allowance for this response. '+
+    'Before starting more drafting, leave enough for focused readback, any authorized save of useful work, and an honest partial handoff. '+
+    'If that does not fit, preserve and report the current work and specific remaining items instead of beginning another batch. '+
+    'A save is not verification; never call unsaved changes saved. This warning grants no extra calls, time, native permission or completion and does not override Pause or unknown effects.'}]};
+}
+
 export async function missingWorkReportContinuation(assignment, request, reminderCount = 0, progress = {}, options = {}) {
   if (assignment?.kernel_version !== 2) return null;
   if (!assignment.session_id || !assignment.goal_id || !assignment.run_id

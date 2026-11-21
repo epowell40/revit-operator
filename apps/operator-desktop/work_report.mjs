@@ -105,6 +105,40 @@ export function retainedDraftingProgressContinuation(assignment, retained, track
     'This changes no budget, native admission, Pause or unknown-effect requirement.'}]};
 }
 
+/** Use the already-returned host meter; never fetch another status or create
+ * another resource policy. Repeated tool calls do not spam the same warning. */
+export function retainedExecutionReserveContinuation(assignment, retained, tracker) {
+  const c=retained?.execution_continuation;
+  if(retained?.status!=='retained'||assignment?.kernel_version!==2||!c)return null;
+  if(c.schema!=='operator.execution-continuation.v1'
+    ||c.binding?.assignment_id!==(assignment.goal_id??assignment.assignment_id)
+    ||!['session_id','run_id','generation'].every(k=>c.binding?.[k]===assignment[k]))
+    throw Error('execution_continuation_binding_mismatch');
+  if(c.state!=='ready'||c.checkpoint_recommended!==true||!c.remaining_resources)return null;
+  const meters={};
+  for(const key of ['provider_calls','total_tokens','operations','active_execution_ms']) {
+    const m=c.remaining_resources[key];if(!m)continue;
+    if(!Number.isSafeInteger(m.limit)||m.limit<0
+      ||!(m.used===null&&m.remaining===null||Number.isSafeInteger(m.used)&&m.used>=0
+        &&Number.isSafeInteger(m.remaining)&&m.remaining===Math.max(0,m.limit-m.used)))
+      throw Error('execution_continuation_reserve_invalid');
+    meters[key]=m;
+  }
+  if(!Object.values(meters).some(m=>m.remaining!==null))return null;
+  const near=(key,n)=>meters[key]?.remaining!=null&&meters[key].remaining<=n;
+  const stage=near('active_execution_ms',30000)||near('provider_calls',1)?2:1;
+  const window=JSON.stringify(Object.entries(meters).map(([key,m])=>[key,m.limit]));
+  if(tracker.window===window&&tracker.stage>=stage)return null;
+  tracker.window=window;tracker.stage=stage;
+  const remaining=Object.fromEntries(Object.entries(meters).map(([key,m])=>[key,m.remaining]));
+  return {role:'user',content:[{type:'input_text',text:
+    'Host checkpoint warning: current remaining allocation '+JSON.stringify(remaining)+'. '+
+    'These are cumulative task resources, not a fresh allowance for this response. '+
+    'Before starting more drafting, leave enough for focused readback, any authorized save of useful work, and an honest partial handoff. '+
+    'If that does not fit, preserve and report the current work and specific remaining items instead of beginning another batch. '+
+    'A save is not verification; never call unsaved changes saved. This warning grants no extra calls, time, native permission or completion and does not override Pause or unknown effects.'}]};
+}
+
 export async function missingWorkReportContinuation(assignment, request, reminderCount = 0, progress = {}, options = {}) {
   if (assignment?.kernel_version !== 2) return null;
   if (!assignment.session_id || !assignment.goal_id || !assignment.run_id

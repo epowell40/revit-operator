@@ -6,7 +6,7 @@ import {executionOrientationInput} from './execution_orientation.mjs';
 import {retainedPdfInput,summarizeInputEnvelope} from './retained_pdf_input.mjs';
 import { computerDragArguments, summarizeComputerDrag } from './computer_drag.mjs';
 import { nonAllowlistedShellCommandMessage } from './shell_command_diagnostic.mjs';
-import { WORK_REPORT_TOOL, submitWorkReportForReview, retainedWorkReportMessage, nativeStoppedWorkReportMessage, assertDesktopHandoffNativeReady, missingWorkReportContinuation, retainedRetrievalStallContinuation, retainedDraftingProgressContinuation, retainOwnerWrittenFindings, ownerWrittenFindingsReceipt, ownerWrittenFindingsMessage } from "./work_report.mjs";
+import { WORK_REPORT_TOOL, submitWorkReportForReview, retainedWorkReportMessage, nativeStoppedWorkReportMessage, assertDesktopHandoffNativeReady, missingWorkReportContinuation, retainedRetrievalStallContinuation, retainedDraftingProgressContinuation, retainedExecutionReserveContinuation, retainOwnerWrittenFindings, ownerWrittenFindingsReceipt, ownerWrittenFindingsMessage } from "./work_report.mjs";
 import {CANONICAL_NATIVE_TASK_GUIDANCE, requireTrackedNativeTask} from './native_task_routing.mjs';
 import { createDesktopReadinessObligation } from "./desktop_readiness_obligation.mjs";
 import { compareNativeChangeObservations, nativeChangeObservationCursor, sameNativeChangeCursorBinding, nativeChangeObservationFromContext, nativeChangeFeedbackModelOutput } from "./native_change_observations.mjs";
@@ -13611,6 +13611,7 @@ async function executeComputerLoop(options = {}) {
   let transientGatewayRetrySafe = true;
   let workReportReminders = 0;
   const draftingContinuationProgress = {};
+  const executionReserveProgress = {};
 
   updateComputerProgress({
     phase: "waiting_on_model",
@@ -13903,6 +13904,11 @@ async function executeComputerLoop(options = {}) {
     // reasoning continuity only; canonical effects/usage still govern recovery.
     const retainedContext = await retainComputerProviderContext(response,toolOutputs,nativeRequest);
     if (computerState.stopRequested) throw new Error("Stopped by user.");
+    const reserveFeedback=retainedExecutionReserveContinuation(computerState.sidecarAssignment,retainedContext,executionReserveProgress);
+    if(reserveFeedback) {
+      addComputerEvent('Task allowance is running low; preserving time to check and save useful work.');
+      toolOutputs.push(reserveFeedback);
+    }
     const draftingFeedback=retainedDraftingProgressContinuation(computerState.sidecarAssignment,retainedContext,draftingContinuationProgress);
     if(draftingFeedback) {
       addComputerEvent('Drafting progress stalled during tool work; changing the next action.');
