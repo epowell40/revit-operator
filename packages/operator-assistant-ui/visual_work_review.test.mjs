@@ -494,7 +494,13 @@ test('accepted inspection closeout updates text once while retaining exact curre
  assert(Buffer.byteLength(final.output[0].text)<=8192);
 });
 test('observation cannot close inspection or request code approval, and stale or foreign captures remain unavailable',async()=>{
- for(const extra of [{complete_inspection_item_id:'inspect'},{code_evidence_ids:['ev1_code']},{recheck_evidence_id:'ev1_old'}])assert.throws(()=>normalizeVisualReviewRequest({...request,review_mode:'observe',...extra}));
+ for(const extra of [{complete_inspection_item_id:'inspect'},{code_evidence_ids:['ev1_code']}])assert.throws(()=>normalizeVisualReviewRequest({...request,review_mode:'observe',...extra}));
+ // Retained-area observation was intentionally added earlier. Parsing a
+ // reference never admits unowned before pixels or grants code approval.
+ assert.doesNotThrow(()=>normalizeVisualReviewRequest({...request,review_mode:'observe',recheck_evidence_id:'ev1_old'}));
+ const missing=host();missing.h.readBaseline=async()=>{throw Error('unowned baseline');};
+ const refused=await reviewCurrentWork({...request,review_mode:'observe',recheck_evidence_id:'ev1_old'},missing.h);
+ assert.equal(refused.state,'unavailable');assert.equal(missing.calls.providers.length,0);
  for(const fault of ['native-change','foreign-owner']){const f=host();let n=0;f.h.readContext=async()=>{const s=snapshot();if(n++&&fault==='native-change')s.context.nativeChangeObservations.throughSequence=1;return s;};
  if(fault==='foreign-owner')f.h.capture=async()=>{f.setOwner({...binding,run_id:'foreign'});return {image_base64:image,frame:snapshot().frame};};
  const r=await reviewCurrentWork({...request,review_mode:'observe'},f.h);assert.equal(r.state,'unavailable');assert.equal(f.calls.providers.length,0);}

@@ -11,6 +11,7 @@ import {CANONICAL_NATIVE_TASK_GUIDANCE, requireTrackedNativeTask} from './native
 import { createDesktopReadinessObligation } from "./desktop_readiness_obligation.mjs";
 import { compareNativeChangeObservations, nativeChangeObservationCursor, sameNativeChangeCursorBinding, nativeChangeObservationFromContext, nativeChangeFeedbackModelOutput } from "./native_change_observations.mjs";
 import {buildNativeCodeReviewPacket,reviewExecutedCode,nativeCodeReviewModelOutput,canonicalNativeCodeReviewReceipts,readExecutedCode,nativeCodeSourceModelOutput,NATIVE_CODE_SOURCE_TOOL,captureNativeCodeReviewStart,bindNativeCodeReviewStart} from './native_code_review.mjs';
+import {canonicalReviewTaskContext} from './review_task_context.mjs';
 import { VISUAL_WORK_REVIEW_TOOL, reviewCurrentWork, visualWorkReviewModelOutput, visualReviewOwner, sameVisualReviewOwner, visualReviewImageEvidenceOptions, readVisualReviewUiIdentityV1, resolveAttachmentReviewImage, resolveNamedReferenceImage } from "./visual_work_review.mjs";
 import {workVisibilityInstructions} from './work_visibility.mjs';
 import {closeReviewedInspection,prepareFocusedInspection,reviewedInspectionHasTerminalResult,reviewStoppedAssignment} from './reviewed_inspection_closeout.mjs';
@@ -11605,9 +11606,26 @@ async function reviewCurrentRevitWork(args, options = {}) {
   const owner = options.owner || (() => computerState.sidecarAssignment);
   const assertControl = options.assertControl || (() => assertComputerActionControl());
   let canonicalCodeSnapshot=null;
+  const transientRequest=()=>computerState.messages.filter(m=>m.role==='user').map(m=>m.text).join('\n\n');
+  let reviewUserRequest=options.userRequest||transientRequest;
+  if(options.sourceRead!==true&&!options.userRequest&&owner()?.kernel_version===2){
+    await assertControl();
+    const publication=await attachSidecarAssignmentKernelPublication(
+      options.readBackend||readBackendJson,{},owner(),{retryDelaysMs:[]});
+    await assertControl();
+    canonicalCodeSnapshot=publication.assignment_snapshot_v2;
+    const originalTransient=transientRequest();
+    // Resolve now, before either code-only or combined review captures its
+    // request. Reuse this same authenticated publication for code custody.
+    canonicalReviewTaskContext(canonicalCodeSnapshot,owner());
+    reviewUserRequest=()=>{
+      if(transientRequest()!==originalTransient)throw Error('review_task_context_user_direction_changed');
+      return canonicalReviewTaskContext(canonicalCodeSnapshot,owner());
+    };
+  }
   const codeHost={owner:()=>visualReviewOwner(owner()),assertControl,readContext,
     settings:options.settings||(()=>computerProviderSettings()),
-    userRequest:options.userRequest||(()=>computerState.messages.filter(m=>m.role==='user').map(m=>m.text).join('\n\n')),
+    userRequest:reviewUserRequest,
     requestResponse:options.requestResponse||(body=>requestComputerResponse(body,{allowTransientGatewayRetry:false})),
     evidenceScope:options.evidenceScope||evidenceScopeForModelRelay,
     codeReviewPacket:options.codeReviewPacket||(ids=>buildNativeCodeReviewPacket(ids,{
@@ -11615,17 +11633,19 @@ async function reviewCurrentRevitWork(args, options = {}) {
       readCanonicalOwner:async()=>{
         const binding=owner();
         if(binding?.kernel_version!==2)throw Error('native_code_review_canonical_owner_required');
-        const publication=await attachSidecarAssignmentKernelPublication(
-          options.readBackend||readBackendJson,{},binding,{retryDelaysMs:[]});
-        canonicalCodeSnapshot=publication.assignment_snapshot_v2;
-        return publication.assignment_snapshot_v2.current_binding;
+        if(!canonicalCodeSnapshot){
+          const publication=await attachSidecarAssignmentKernelPublication(
+            options.readBackend||readBackendJson,{},binding,{retryDelaysMs:[]});
+          canonicalCodeSnapshot=publication.assignment_snapshot_v2;
+        }
+        return canonicalCodeSnapshot.current_binding;
       },
       canonicalReceipts:(binding,ids)=>canonicalNativeCodeReviewReceipts(canonicalCodeSnapshot,binding,ids),
       canonicalSnapshot:()=>canonicalCodeSnapshot,
       validateCheckpoint:nativeDocumentCheckpointRequestMatchesV2,
       receipts:options.executionReceipts||(()=>computerState.functionToolReceipts),request:options.readBackend||readBackendJson,
       requestStart:options.requestStart||(()=>computerState.nativeCodeReviewStart),
-      userRequest:options.userRequest||(()=>computerState.messages.filter(m=>m.role==='user').map(m=>m.text).join('\n\n'))
+      userRequest:reviewUserRequest
     }))};
   if(options.sourceRead===true)return readExecutedCode(args,codeHost);
   if(args?.review_mode==='code_execution'){
@@ -11707,7 +11727,7 @@ async function reviewCurrentRevitWork(args, options = {}) {
       pendingReviewCaptures.delete(hash);return stored;
     }),
     settings: options.settings || (() => computerProviderSettings()),
-    userRequest: options.userRequest || (() => computerState.messages.filter(m => m.role === "user").map(m => m.text).join("\n\n")),
+    userRequest: reviewUserRequest,
     readBaseline: options.readBaseline || (async evidenceId => {
       const binding=visualReviewOwner(owner());
       const receipts=(options.reviewReceipts || (()=>computerState.functionToolReceipts))();

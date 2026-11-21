@@ -437,10 +437,11 @@ export async function reviewExecutedCode(input,host){
   normalizeCodeEvidenceIds(input.code_evidence_ids);
   const owner={...host.owner()},base={schema:'operator.native_code_review.v1',authority:'supporting_code_assessment',
     native_postcondition_verified:false,whole_task_verified:false,request:input,owner};
-  let packet=null,response=null,currentContext=null;
+  let packet=null,response=null,currentContext=null,requestContext=null;
   try{
     await host.assertControl();const userRequest=host.userRequest();
     if(typeof userRequest!=='string'||!userRequest.trim()||userRequest.length>24000)fail('user_request_unavailable');
+    requestContext={sha256:createHash('sha256').update(userRequest).digest('hex'),characters:userRequest.length,basis:'host_review_request_context'};
     packet=await host.codeReviewPacket(input.code_evidence_ids);
     if(packet.owner)base.owner=packet.owner;
     if(host.readContext){
@@ -464,11 +465,11 @@ export async function reviewExecutedCode(input,host){
     return {...base,ok:true,state:review.status,code_review:review,reviewer_response_id:response.id,
       reviewed_calls:packet.executions.map(({call_id,evidence_id,content_hash,source_sha256})=>({call_id,evidence_id,content_hash,source_sha256})),
       coverage:packet.coverage,guidance:'Code alignment review only. Keep actual result readback and required persistence evidence; no automatic edit, retry, native verification or task settlement.',
-      raw_review_evidence:{packet,current_context:currentContext,reviewer_response:reviewResponseEvidence(response),reviewer_instructions:NATIVE_CODE_REVIEW_INSTRUCTIONS}};
+      raw_review_evidence:{packet,current_context:currentContext,request_context:requestContext,reviewer_response:reviewResponseEvidence(response),reviewer_instructions:NATIVE_CODE_REVIEW_INSTRUCTIONS}};
   }catch(error){const sessionDiagnostic=nativeCodeReviewSessionDiagnostic(error);return {...base,ok:false,state:'unavailable',reason:error instanceof Error?error.message:String(error),
     ...(sessionDiagnostic?{code_session_diagnostic:sessionDiagnostic}:{}),
     guidance:sessionDiagnostic?NATIVE_CODE_SESSION_RECOVERY:'Review unavailable; do not repeat model changes. Retain existing native outcomes and obtain only missing review evidence.',
-    raw_review_evidence:{packet,current_context:currentContext,reviewer_response:reviewResponseEvidence(response)}};}
+    raw_review_evidence:{packet,current_context:currentContext,request_context:requestContext,reviewer_response:reviewResponseEvidence(response)}};}
 }
 
 export function nativeCodeReviewModelOutput(output,result,evidenceId){

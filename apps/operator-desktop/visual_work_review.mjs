@@ -626,6 +626,7 @@ export async function reviewCurrentWork(input,host){
     }
     const settings=host.settings();if(!bounded(settings?.model,200)||!bounded(settings?.reasoning_effort,30))throw Error('visual_review_provider_settings_unavailable');
     const userRequest=host.userRequest();if(!bounded(userRequest,12000))throw Error('visual_review_user_request_unavailable');
+    raw.request_context={sha256:createHash('sha256').update(userRequest).digest('hex'),characters:userRequest.length,basis:'host_review_request_context'};
     let baseline=null,complementaryScene=null;
     if(request.recheck_evidence_id){
       await control();baseline=validateVisualReviewBaseline(priorBaseline,request,owner,initial,frame);
