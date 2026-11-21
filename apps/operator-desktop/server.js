@@ -13982,6 +13982,16 @@ app.get("/api/runtime-identity", (req, res) => {
   res.json({ ok: true, sidecarRuntime: SIDECAR_RUNTIME });
 });
 
+function defaultComputerSpeedSettings() {
+  return {
+    agent_model: sanitizeSpeedModel(COMPUTER_MODEL, 'gpt-5.6-sol'),
+    agent_reasoning_effort: COMPUTER_REASONING_EFFORT || 'medium',
+    speed_mode: true,
+    context_diet: true,
+    max_recent_turns: 8
+  };
+}
+
 app.get("/api/config", async (_req, res) => {
   try {
     const clientConfig = loadOperatorClientConfig();
@@ -14017,13 +14027,7 @@ app.get("/api/config", async (_req, res) => {
       runtimeProfile: operatorRuntimeProfile(),
       certifiedReadUi: browserSafeCertifiedReadUi(),
       maxHybridBackendSteps: MAX_HYBRID_BACKEND_STEPS,
-      speedDefaults: {
-        agent_model: "gpt-5.6-sol",
-        agent_reasoning_effort: "medium",
-        speed_mode: true,
-        context_diet: true,
-        max_recent_turns: 8
-      },
+      speedDefaults: defaultComputerSpeedSettings(),
       environmentStatus: environment?.manifest
         ? {
             environment_type: environment.manifest.environment_type,

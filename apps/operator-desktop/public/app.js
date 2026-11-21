@@ -5601,7 +5601,21 @@ async function sendPrompt(input, attachments = [], { browserFreshnessChecked = f
   return sendBackendPrompt(submission, { browserFreshnessChecked: true });
 }
 
+function applyRuntimeSpeedDefaults(config) {
+  if (config?.backendConfigStatus !== 'ready') return;
+  const defaults = config.speedDefaults;
+  // A fresh browser has no user preference. Do not let its static HTML
+  // fallback silently override the configured workstation model on Resume.
+  if (elements.agentModel && !normalizeSpeedModel(readStringSetting('operator.agentModel', ''), '')) {
+    const model = normalizeSpeedModel(defaults?.agent_model, '');
+    if (model && (!isOptionalProviderModel(model) || config.optionalAgentModels?.includes(model))) elements.agentModel.value = model;
+  }
+  if (elements.agentReasoning && !readStringSetting('operator.agentReasoning', ''))
+    elements.agentReasoning.value = normalizeReasoningEffort(defaults?.agent_reasoning_effort, elements.agentReasoning.value);
+}
+
 function applySidecarConfig(config = {}) {
+  applyRuntimeSpeedDefaults(config);
   if (elements.agentModel && config.backendConfigStatus === "ready") {
     const available = new Set(Array.isArray(config.optionalAgentModels) ? config.optionalAgentModels : []);
     for (const option of elements.agentModel.options || []) {
