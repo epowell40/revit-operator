@@ -278,3 +278,27 @@ test('production retained review reaches inspection-closeout presentation withou
  assert.equal(feedback.state,raw.state);assert.equal(feedback.inspection_closeout.state,'not_submitted');assert.equal(feedback.whole_task_verified,false);assert.equal(feedback.native_postcondition_verified,false);
  assertBoundedModelEvidencePayload([final]);
 });
+
+test('batch feedback refresh stays in the selected view and never replays focus navigation',()=>{
+ const review={ok:true,owner,location:{view_id:41},capture:{frame:{viewport:{}}},reference:{content_hash:'old'},
+   request:{view_id:41,capture_mode:'native_visible_region',focus_element_ids:[123],reference_attachment_read:{call_id:'call_pdf',page:1},checks:args.checks}};
+ const region=shared.pairedDrawingRegion(review);
+ assert.deepEqual(region.request.reference_attachment_read,review.request.reference_attachment_read);
+ assert.equal(region.request.focus_element_ids,undefined);
+ assert.equal(shared.refreshedDrawingFeedback(region,review),null,'plain data cannot impersonate host-delivered pixels');
+ assert.equal(shared.pairedDrawingRegion({...review,reference:null}),null);
+});
+
+test('batch feedback requires a current native committed drawing operation',async()=>{
+ const {isCommittedDrawingEdit}=await import('../desktop_native_tools.mjs');
+ const binding={assignment_id:'a',run_id:'r',generation:1};
+ const p={...binding,source:'assignment_kernel_v2:revit_call_tool',trust_level:'authoritative_native',
+   attempt_id:'opv2_'+'a'.repeat(64),key_facts:{'transaction.status':'committed'}};
+ const call={name:'native__revit_call_tool',arguments:{path:'/revit/connect-existing-mep-branch',method:'POST',body:{}}};
+ const result=projection=>({result:{success:true,contentItems:[{type:'inputText',text:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[projection]})}]}});
+ assert.equal(isCommittedDrawingEdit(call,result(p),binding),true);
+ for(const patch of [{run_id:'foreign'},{effect_state:'unknown'},{key_facts:{}},{trust_level:'user_supplied'}])
+   assert.equal(isCommittedDrawingEdit(call,result({...p,...patch}),binding),false);
+ assert.equal(isCommittedDrawingEdit({...call,arguments:{...call.arguments,path:'/revit/save-as'}},result(p),binding),false);
+ assert.equal(isCommittedDrawingEdit(call,{...result(p),stop_reason:'paused'},binding),false);
+});

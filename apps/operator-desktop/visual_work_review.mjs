@@ -747,6 +747,36 @@ export async function reviewCurrentWork(input,host){
     guidance:sheetActivationGuidance+(sessionDiagnostic?NATIVE_CODE_SESSION_RECOVERY+' ':'')+'Review unavailable; do not infer a mismatch or repeat any model change. Re-establish current control, identity and suitable evidence before checking again.'+(error?.message==='visual_review_visible_frame_changed_during_review'?' Inspect both retained capture images through operator_retrieve_evidence before deciding what changed. Native sheet exports can update a plot timestamp; do not assume that is the only difference. For sheet-wide checks activate the actual sheet and use visible_work with its border visible. For local checks focus the actual note/viewport elements using showElementIds or native sheet-coordinate bboxMinXyz/bboxMaxXyz. An explicit visible_work recheck can reuse an earlier accepted native sheet review and its unchanged checks; this unavailable review itself is not an accepted baseline. Review relevant titleblock areas separately. A focused region cannot prove anything outside it. Keep native identity and pixel/viewport recheck guards; never mask differences or change the model just to stabilize a capture.':'')});}
 }
 
+// Use only the host-produced reference and framing. A refresh never navigates.
+export function pairedDrawingRegion(review) {
+  const request = review?.request;
+  if (!review?.ok || !review.reference || !review.capture?.frame?.viewport
+      || request?.capture_mode !== 'native_visible_region' || request.include_sheet_context
+      || !(request.reference_attachment_read || request.reference_filename)) return null;
+  return {owner:review.owner, location:review.location, viewport:review.capture.frame.viewport,
+    referenceHash:review.reference.content_hash, request:{
+      view_id:request.view_id, review_mode:'observe', capture_mode:'native_visible_region',
+      image_size:request.image_size, checks:request.checks,
+      ...(request.reference_attachment_read ? {reference_attachment_read:request.reference_attachment_read}
+        : {reference_filename:request.reference_filename})
+    }};
+}
+
+export function refreshedDrawingFeedback(region, review) {
+  const next = pairedDrawingRegion(review);
+  const images = primaryObservationImages.get(review);
+  if (!next || !region || review.state !== 'observed' || images?.length !== 2
+      || !sameVisualReviewOwner(region.owner,next.owner) || next.referenceHash !== region.referenceHash
+      || !['process_id','document_session_id','epoch','view_id','view_unique_id'].every(k =>
+        region.location[k] != null && region.location[k] === next.location[k])
+      || !(next.location.through_sequence > region.location.through_sequence)
+      || !sameNativeViewport(region.viewport,next.viewport)) return null;
+  return [{type:'input_text',text:JSON.stringify({schema:'operator.post-edit-drawing.v1',
+    view_id:next.location.view_id, through_sequence:next.location.through_sequence,
+    current_image:review.capture.content_hash, reference_image:next.referenceHash,
+    guidance:'First image is the current Revit region after the edit batch. Second is its existing source reference. Check the repair and scan for remaining clear differences. These images cover this framing only.'})}, ...images];
+}
+
 export function visualWorkReviewModelOutput(modelOutput,result,evidenceId,inspectionCloseout=null){
   if(!result||result.schema!=='operator.visual_work_review.v1'||!safeId(evidenceId))throw Error('visual_review_projection_invalid');
   // The first presentation delivers actual pixels. The existing host then adds

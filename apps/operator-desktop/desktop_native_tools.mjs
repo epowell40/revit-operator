@@ -45,7 +45,7 @@ export function singleExecutionInstructions(instructions,guidance,executionMode)
   if(executionMode==='single_actor_review_v1') {
     instructions=instructions.replaceAll('Keep the final native inspection checklist item pending while a backend helper performs the edits and attribute checks; ask it to return a scoped handoff before completing that item. ','')
       .replaceAll('For the final review, pass complete_inspection_item_id naming the sole remaining declared inspection item; the host can submit its existing retained native reads through normal checklist validation after a current matched review.','');
-    guidance+='\nThis assignment uses the advisory work plan: work-plan item IDs are not native inspection IDs. Do not pass complete_inspection_item_id to visual review. Keep native readbacks, required independent visual/code review and save/file evidence; then record scoped work-plan claims and report_work_for_review once. Claims remain advisory, not host-verified completion. A failed review or unknown effect remains unresolved.';
+    guidance+='\nFor visually guided repairs, compare the fresh post-edit image pair when returned with the native batch. Sweep the working region for other clear missing components before zooming in on ambiguous symbols. If a review is needed, ask about the changed work and actionable omissions. Use one focused read to resolve an ambiguity, then record a specific deferral and move on if it remains. Once checked repairs are saved and actionable work is exhausted, batch remaining plan updates and submit the partial report. This assignment uses the advisory work plan: work-plan item IDs are not native inspection IDs. Do not pass complete_inspection_item_id to visual review. Keep native readbacks, required independent visual/code review and save/file evidence; then record scoped work-plan claims and report_work_for_review once. Claims remain advisory, not host-verified completion. A failed review or unknown effect remains unresolved.';
   }
   guidance+='\nFor a bounded edit to existing text, labels or parameters, choose one scoped inspection strategy. Reuse a known typed contract; when required preservation fields need C#, use the directly exposed executor for one bounded read instead of first discovering and calling several overlapping readers. Typed inspection is not a prerequisite to custom code. If searching is needed, use a focused capability name such as find text notes, not a compound list of every requested property; includeSchemas=true returns the contract with the match. Reuse the chosen inspection for independent post-edit readback. Gather the requested values and preservation fields together, apply the known related edits in one supported batch, then compare those fields. Do not enumerate every view element, tessellate unrelated curves or duplicate a sufficient typed read with C# solely for reassurance. Explicit preservation requirements still need relevant before/after evidence; use a scoped C# read when the typed contract lacks those fields. In custom reads use supported Revit classes and null-safe category/location access, not GetType/reflection. TextNote orientation is TextElement.BaseDirection and UpDirection, not a Rotation property; preserve Coord, type and alignment as applicable. Check Curve.IsBound before GetEndPoint or normalized Evaluate: a full circle is an unbounded Arc, so read its Center, Radius and axes instead. Keep native values/units; do not silently skip unsupported preservation fields. Keep write receipts and independent actual result reads; a returned success or code review is not native verification. For drawing-content checks prefer capture_mode:native_visible_region; use visible_work for an actual application UI/display requirement. For displayed text, combine readability/overlap checks and any required executed-code review into one final review_current_work call. A current matched review covers only its checked region and conditions: reuse it when unchanged instead of another zoom, screenshot or reviewer call merely to confirm the same pixels. Obtain missing evidence or recheck after relevant edits, uncertain results, or an uncovered UI requirement. Then issue one concise report_work_for_review with actual findings and remaining limits; do not add an interim report or reopen completed inspection just for bookkeeping.';
   guidance+='\nFor a drawing reconstruction with a requested separate RVT, use focused native readback of the first usable batch, then checkpoint it with native Save As at the authorized result path before opening or creating a family to refine existing geometry. Read back the actual locations, dimensions and hosting or connections in scope. Inspect the exact saved file and retain remaining discrepancies. Honor review-before-save and no-save instructions and never overwrite source files. Do not save while effects are unknown. Continue required corrections and save the updated result after confirmed edits. A draft checkpoint still requires its own native verification and does not finish the assignment or replace required final visual checks.';
@@ -157,6 +157,7 @@ export async function invokeDesktopNativeTool({assignment,messageId,responseId,c
   Object.defineProperty(output,'native_model_output',{value:{type:'function_call_output',call_id:call.call_id,output:content}});
   Object.defineProperty(output,'native_stop_reason',{value:result.stop_reason??null});
   const checkedCopy=result.checked_copy,binding=desktopNativeBinding(assignment);
+  if (isCommittedDrawingEdit(call, result, binding)) Object.defineProperty(output,'drawing_edit',{value:true});
   if(checkedCopy&&Object.keys(binding).every(key=>checkedCopy.binding?.[key]===binding[key])
     &&checkedCopy.message?.role==='assistant'
     &&typeof checkedCopy.message.message_id==='string'
@@ -169,3 +170,29 @@ export async function invokeDesktopNativeTool({assignment,messageId,responseId,c
 
 
 
+
+// This signal schedules a read-only observation. It never verifies an edit.
+export function isCommittedDrawingEdit(call, result, binding) {
+  if (!result?.result?.success || result.stop_reason) return false;
+  let args;
+  try { args = typeof call.arguments === 'string' ? JSON.parse(call.arguments) : call.arguments; }
+  catch { return false; }
+  let name = call.name;
+  if (name === 'native__invoke') { name = 'native__' + args?.tool; args = args?.arguments; }
+  const program = name === 'native__operator_run_dynamic_revit_program' && args?.mode === 'apply';
+  const route = name === 'native__revit_call_tool' && args?.method === 'POST'
+    && typeof args.path === 'string' && !['/revit/save-as','/revit/save'].includes(args.path)
+    && args.body?.dryRun !== true;
+  if (!program && !route) return false;
+  const source = 'assignment_kernel_v2:' + name.slice(8);
+  return result.result.contentItems.some(block => {
+    if (block?.type !== 'inputText' || typeof block.text !== 'string' || block.text.length > 32768) return false;
+    let envelope;
+    try { envelope = JSON.parse(block.text); } catch { return false; }
+    return envelope?.schema === 'revit-operator.model-evidence-envelope.v1' && Array.isArray(envelope.evidence_projections)
+      && envelope.evidence_projections.some(p => p?.source === source && p.trust_level === 'authoritative_native'
+        && ['assignment_id','run_id','generation'].every(k => binding[k] != null && p[k] === binding[k])
+        && /^opv2_[a-f0-9]{64}$/.test(p.attempt_id)
+        && (p.effect_state === 'applied' || (route && p.effect_state == null && p.key_facts?.['transaction.status'] === 'committed')));
+  });
+}

@@ -12,7 +12,7 @@ import { createDesktopReadinessObligation } from "./desktop_readiness_obligation
 import { compareNativeChangeObservations, nativeChangeObservationCursor, sameNativeChangeCursorBinding, nativeChangeObservationFromContext, nativeChangeFeedbackModelOutput } from "./native_change_observations.mjs";
 import {buildNativeCodeReviewPacket,reviewExecutedCode,nativeCodeReviewModelOutput,canonicalNativeCodeReviewReceipts,readExecutedCode,nativeCodeSourceModelOutput,NATIVE_CODE_SOURCE_TOOL,captureNativeCodeReviewStart,bindNativeCodeReviewStart} from './native_code_review.mjs';
 import {canonicalReviewTaskContext} from './review_task_context.mjs';
-import { VISUAL_WORK_REVIEW_TOOL, reviewCurrentWork, visualWorkReviewModelOutput, visualReviewOwner, sameVisualReviewOwner, visualReviewImageEvidenceOptions, readVisualReviewUiIdentityV1, resolveAttachmentReviewImage, resolveNamedReferenceImage } from "./visual_work_review.mjs";
+import { VISUAL_WORK_REVIEW_TOOL, pairedDrawingRegion, refreshedDrawingFeedback, reviewCurrentWork, visualWorkReviewModelOutput, visualReviewOwner, sameVisualReviewOwner, visualReviewImageEvidenceOptions, readVisualReviewUiIdentityV1, resolveAttachmentReviewImage, resolveNamedReferenceImage } from "./visual_work_review.mjs";
 import {workVisibilityInstructions} from './work_visibility.mjs';
 import {closeReviewedInspection,prepareFocusedInspection,reviewedInspectionHasTerminalResult,reviewStoppedAssignment} from './reviewed_inspection_closeout.mjs';
 import {planSavedRevitModelOpen,readStableModelFileForOpen} from './saved_model_open.mjs';
@@ -13610,6 +13610,7 @@ async function executeComputerLoop(options = {}) {
   }
   let transientGatewayRetrySafe = true;
   let workReportReminders = 0;
+  let drawingRegion = null;
   const draftingContinuationProgress = {};
   const executionReserveProgress = {};
 
@@ -13677,6 +13678,7 @@ async function executeComputerLoop(options = {}) {
     const outputs = Array.isArray(response.output) ? response.output : [];
     const toolOutputs = [];
     let handledToolCalls = 0;
+    let lastDrawingEditOutput = null;
 
     for (const item of outputs) {
       if (computerState.stopRequested) {
@@ -13797,6 +13799,11 @@ async function executeComputerLoop(options = {}) {
           }
         }
         toolOutputs.push(retainedFunctionOutput.model_output);
+        if (nativeCall && functionOutput.drawing_edit) lastDrawingEditOutput = retainedFunctionOutput.model_output;
+        if (functionOutput.host_visual_work_review) {
+          drawingRegion = pairedDrawingRegion(functionOutput.host_visual_work_review);
+          if (drawingRegion) lastDrawingEditOutput = null;
+        }
         if(nativeCall&&functionOutput.native_stop_reason) {
           // Native control has stopped this turn. Reuse the normal canonical
           // result presenter; no extra model/helper call or optimistic success.
@@ -13846,6 +13853,18 @@ async function executeComputerLoop(options = {}) {
           return authoritativeCompletion.assistantMessage;
         }
       }
+    }
+
+    if (lastDrawingEditOutput && drawingRegion && !computerState.stopRequested && !computerState.nativeInteractivePlacement) {
+      // One capture per provider batch, using the actor's last paired working region.
+      let feedback;
+      try {
+        const observation = await reviewCurrentRevitWork(drawingRegion.request);
+        feedback = refreshedDrawingFeedback(drawingRegion, observation);
+        drawingRegion = feedback ? pairedDrawingRegion(observation) : null;
+      } catch { drawingRegion = null; }
+      lastDrawingEditOutput.output.push(...(feedback ?? [{type:'input_text',text:
+        'No matched post-edit image pair was available for the working region. Earlier model pixels are historical. For visible work select the changed area and source with review_current_work observe. Preserve the native edit result.'}]));
     }
 
     if (!handledToolCalls) {
