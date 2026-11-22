@@ -16,6 +16,31 @@ function fixture():any{
  s.work_plan={schema:'revit-operator.assignment-work-plan/v2',assumptions:[],items:[{item_id:'branch',description:'West branch',source_basis:'PDF page 1 west',declared_at:at,operation_ids:[]}]};
  return s;
 }
+
+test('resource advice survives absent or completed plans without authorizing continuation',()=>{
+ for(const plan of [undefined,{schema:'revit-operator.assignment-work-plan/v2',assumptions:[],items:[]}]){
+  const s=fixture();s.work_plan=plan;const before=JSON.stringify(s),c:any=projectExecutionContinuation(s,at);
+  assert.equal(c.state,'hold');assert.equal(c.reason,'no_ready_work');assert.deepEqual(c.next_items,[]);
+  assert.equal(c.resource_advice_only,true);assert(c.remaining_resources);assert.equal(c.construction_progress,null);assert.equal(c.progress_key,undefined);
+  assert.equal(JSON.stringify(s),before);
+  s.spec.execution_policy.progress_allowance={mode:'verified_native_changes_v1',credit_unit:'distinct_verified_targets_v1',
+   max_provider_calls:256,max_operations:1024,max_total_tokens:32000000,max_wall_clock_ms:7200000};
+  const paced:any=projectExecutionContinuation(s,at);
+  assert.equal(paced.state,'hold');assert.equal(paced.reason,'no_ready_work');
+  assert.equal(paced.construction_progress.calls_since_construction,0);
+  assert.equal(paced.construction_progress.changes_allowance,false);
+ }
+ const s=fixture();delete s.spec.execution_policy.ready_work_handoff;
+ const ordinary:any=projectExecutionContinuation(s,at);assert.equal(ordinary.reason,'ordinary_task_reporting');
+ assert.equal(ordinary.resource_advice_only,true);
+ for(const patch of [{terminal:true},{outcome:'awaiting_user_input'},{execution_control:{state:'paused'}},
+  {provider_usage_hold:{}},{in_flight_provider_call_ids:['pending']},{quiescent:false},
+  {unresolved_unknown_operation_ids:['unknown']},{pending_review_ids:['review']},{pending_input_variable_ids:['question']},
+  {completion_proposal:{}},{progress_blocker:{code:'no_progress'}},{provider_budget_exhausted:true}]){
+  const held:any=projectExecutionContinuation({...s,...patch},at);
+  assert.equal(held.state,'hold');assert.equal(held.resource_advice_only,undefined);assert.equal(held.remaining_resources,undefined);
+ }
+});
 test('active actor continuation carries measured token reserve and keeps Pause and unknown holds',()=>{
  const s=fixture();
  s.provider_calls={a:{binding:s.current_binding,admitted_at:at,completed_at:at,state:'completed',usage:{total_tokens:227767}}};

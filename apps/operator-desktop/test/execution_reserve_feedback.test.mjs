@@ -11,6 +11,37 @@ const receipt=(remaining=100606)=>({status:'retained',execution_continuation:{sc
 const source=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8');
 const start=source.indexOf('    const retainedContext = await retainComputerProviderContext(response,toolOutputs,nativeRequest);');
 const end=source.indexOf('    updateComputerProgress({',start);
+test('resource-only no-plan advice reaches the actual next-call boundary without changing a hold',async()=>{
+ for(const reason of ['no_ready_work','ordinary_task_reporting']){
+  const r=receipt(29000);Object.assign(r.execution_continuation,{state:'hold',reason,resource_advice_only:true,next_items:[]});
+  const before=structuredClone(r),toolOutputs=[];
+  await runInNewContext('(async()=>{'+source.slice(start,end)+'})()',{
+   ...reports,computerState:{sidecarAssignment:assignment},response:{},toolOutputs,nativeRequest:{},
+   draftingContinuationProgress:{},executionReserveProgress:{},outputs:[],
+   retainComputerProviderContext:async()=>r,addComputerEvent:()=>{}
+  });
+  assert.equal(toolOutputs.length,1);assert.match(toolOutputs[0].content[0].text,/save/);assert.deepEqual(r,before);
+  const unmarked=structuredClone(r);delete unmarked.execution_continuation.resource_advice_only;
+  assert.equal(reports.retainedExecutionReserveContinuation(assignment,unmarked,{}),null);
+  for(const blocked of ['paused','pending_usage','unsettled_model_effect','budget_exhausted','input_or_review_pending']){
+   const held=structuredClone(r);held.execution_continuation.reason=blocked;
+   assert.equal(reports.retainedExecutionReserveContinuation(assignment,held,{}),null);
+  }
+  const foreign=structuredClone(r);foreign.execution_continuation.binding.run_id='foreign';
+  assert.throws(()=>reports.retainedExecutionReserveContinuation(assignment,foreign,{}),/binding_mismatch/);
+ }
+});
+test('no-plan drafting still receives bounded no-progress pacing without changing admission',()=>{
+ const r=receipt();Object.assign(r.execution_continuation,{state:'hold',reason:'no_ready_work',resource_advice_only:true,
+  construction_progress:{calls_since_construction:8,warn_after:4,stop_after:8,since:'2026-11-22T00:00:00Z'}});
+ const before=structuredClone(r),tracker={};const hint=reports.retainedDraftingProgressContinuation(assignment,r,tracker);
+ assert.match(hint.content[0].text,/8 model calls/);assert.match(hint.content[0].text,/specific blocked pass/);
+ assert.equal(reports.retainedDraftingProgressContinuation(assignment,r,tracker),null);assert.deepEqual(r,before);
+ for(const reason of ['paused','pending_usage','unsettled_model_effect','budget_exhausted','ordinary_task_reporting']){
+  const held=structuredClone(r);held.execution_continuation.reason=reason;
+  assert.equal(reports.retainedDraftingProgressContinuation(assignment,held,{}),null);
+ }
+});
 test('token reserve escalation reaches the next actor call even with many nominal calls and time left',()=>{
  const tracker={},r=receipt(5000000),c=r.execution_continuation;
  c.remaining_resources.total_tokens={used:25791425,limit:28000000,remaining:2208575};

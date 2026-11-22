@@ -90,7 +90,8 @@ export function retainedDraftingProgressContinuation(assignment, retained, track
     ||continuation.binding?.assignment_id!==(assignment.goal_id??assignment.assignment_id)
     ||!['session_id','run_id','generation'].every(key=>continuation.binding?.[key]===assignment[key]))
     throw Error('execution_continuation_binding_mismatch');
-  if(continuation.state!=='ready')return null;
+  const noPlanAdvice=continuation.state==='hold'&&continuation.reason==='no_ready_work'&&continuation.resource_advice_only===true;
+  if(continuation.state!=='ready'&&!noPlanAdvice)return null;
   const progress=continuation.construction_progress;
   if(!progress)return null;
   const calls=progress.calls_since_construction,warn=progress.warn_after,change=progress.stop_after;
@@ -124,7 +125,9 @@ export function retainedExecutionReserveContinuation(assignment, retained, track
     ||c.binding?.assignment_id!==(assignment.goal_id??assignment.assignment_id)
     ||!['session_id','run_id','generation'].every(k=>c.binding?.[k]===assignment[k]))
     throw Error('execution_continuation_binding_mismatch');
-  if(c.state!=='ready'||c.checkpoint_recommended!==true||!c.remaining_resources)return null;
+  const resourceOnly=c.state==='hold'&&c.resource_advice_only===true
+    &&['no_ready_work','ordinary_task_reporting'].includes(c.reason);
+  if((c.state!=='ready'&&!resourceOnly)||c.checkpoint_recommended!==true||!c.remaining_resources)return null;
   const meters={};
   for(const key of ['provider_calls','total_tokens','operations','active_execution_ms']) {
     const m=c.remaining_resources[key];if(!m)continue;
