@@ -386,7 +386,14 @@
     "desktop_native_tool_exposure.test.ts",
     "desktop_native_contract_delivery.test.ts",
     "codex_explicit_auth.test.ts",
-    "codex_config.test.ts"
+    "codex_config.test.ts",
+    "whole_native_result_delivery.test.ts",
+    "model_evidence_batch.test.ts",
+    "desktop_drafting_location_output.test.ts",
+    "connector_geometry_projection.test.ts",
+    "assignment_dispatch_control_http.test.ts",
+    "provider_token_runway.test.ts",
+    "drafting_frontier.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -434,7 +441,8 @@
     "lib/toolSearchCompleteness.test.ts",
     "lib/dynamicNativeProgram.test.ts",
     "lib/dynamicNativeCourier.test.ts",
-    "lib/evidenceTextRangeSchema.test.ts"
+    "lib/evidenceTextRangeSchema.test.ts",
+    "lib/connectorWorkGuidance.test.ts"
   ],
   "desktop_tests": [
     "test/attachment_admission.test.js",
@@ -466,7 +474,13 @@
     "test/work_report.test.js",
     "test/standalone.test.mjs",
     "test/standalone-server.test.mjs",
-    "test/standalone-launcher.test.mjs"
+    "test/standalone-launcher.test.mjs",
+    "test/review_task_context.test.js",
+    "test/paired_drafting_observation.test.mjs",
+    "test/prepared_visual_review.test.js",
+    "test/terminal_handoff_readiness.test.js",
+    "test/dispatch_control_projection.test.js",
+    "test/execution_reserve_feedback.test.mjs"
   ],
   "dotnet_test_classes": [
     "FamilyLabelBindingObservationTests",
@@ -626,7 +640,9 @@
     "OperatorNativeProgramCourierOutputTests",
     "OperatorNativeProgramCourierConsumerTests",
     "OperatorNativeProgramEvidenceTransportTests",
-    "NativeCapturedFailureObservationTests"
+    "NativeCapturedFailureObservationTests",
+    "ElementLocationObservationTests",
+    "OperatorDeletedTypeContextTests"
   ],
   "failure_families": [
     {
@@ -5623,6 +5639,78 @@
         "mcp:lib/dynamicRuntimeInstallation.test.ts",
         "mcp:lib/dynamicRevitProgramRunner.test.ts"
       ]
+    },
+    {
+      "id": "whole_native_read_delivery_with_raw_and_aggregate_limits",
+      "coverage": [
+        "backend:whole_native_result_delivery.test.ts",
+        "backend:desktop_native_contract_delivery.test.ts",
+        "backend:model_evidence_batch.test.ts"
+      ]
+    },
+    {
+      "id": "native_location_to_actor_and_review",
+      "coverage": [
+        "dotnet:ElementLocationObservationTests",
+        "backend:desktop_drafting_location_output.test.ts",
+        "backend:connector_geometry_projection.test.ts"
+      ]
+    },
+    {
+      "id": "deleted_type_context_to_connector_discovery",
+      "coverage": [
+        "dotnet:OperatorDeletedTypeContextTests",
+        "mcp:lib/connectorWorkGuidance.test.ts"
+      ]
+    },
+    {
+      "id": "combined_review_scoped_code_readback",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/native_code_review_context.test.mjs",
+        "javascript:package/operator-assistant-ui/combined_review_dispatch.test.mjs",
+        "desktop:test/review_task_context.test.js"
+      ]
+    },
+    {
+      "id": "repair_readiness_materiality_to_next_action",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/review_repair_readiness.test.mjs",
+        "javascript:package/operator-assistant-ui/review_repair_focus.test.mjs",
+        "desktop:test/visual_work_review.test.js"
+      ]
+    },
+    {
+      "id": "paired_reference_crop_and_fresh_native_observation",
+      "coverage": [
+        "desktop:test/paired_drafting_observation.test.mjs",
+        "desktop:test/prepared_visual_review.test.js",
+        "backend:visual_review_baseline.test.ts"
+      ]
+    },
+    {
+      "id": "partial_drawing_handoff_preserves_nonterminal_status",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/partial_drawing_pacing.test.mjs",
+        "desktop:test/terminal_handoff_readiness.test.js",
+        "backend:advisory_verification_policy.test.ts"
+      ]
+    },
+    {
+      "id": "dispatch_control_and_durable_progress",
+      "coverage": [
+        "javascript:package/assignment-kernel-v2-contracts/dispatch-control.test.mjs",
+        "backend:assignment_dispatch_control_http.test.ts",
+        "desktop:test/dispatch_control_projection.test.js"
+      ]
+    },
+    {
+      "id": "drafting_allowance_and_execution_reserve",
+      "coverage": [
+        "backend:assignment_work_allowance_v2.test.ts",
+        "backend:provider_token_runway.test.ts",
+        "desktop:test/execution_reserve_feedback.test.mjs",
+        "backend:drafting_frontier.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
@@ -5686,6 +5774,12 @@
     "package/operator-assistant-ui/retained_reference_image.test.mjs",
     "package/operator-assistant-ui/advisory_progress.test.mjs",
     "package/operator-assistant-ui/work_visibility.test.mjs",
-    "package/operator-assistant-ui/desktop_native_tools.test.mjs"
+    "package/operator-assistant-ui/desktop_native_tools.test.mjs",
+    "package/operator-assistant-ui/native_code_review_context.test.mjs",
+    "package/operator-assistant-ui/combined_review_dispatch.test.mjs",
+    "package/operator-assistant-ui/review_repair_readiness.test.mjs",
+    "package/operator-assistant-ui/review_repair_focus.test.mjs",
+    "package/operator-assistant-ui/partial_drawing_pacing.test.mjs",
+    "package/assignment-kernel-v2-contracts/dispatch-control.test.mjs"
   ]
 }
