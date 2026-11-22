@@ -5,6 +5,14 @@ import {DYNAMIC_REVIT_NATIVE_GUIDE} from './dynamicRevitSdkGuide.js';
 const row=(id=42)=>({id,ok:true,category:'OST_DuctTerminal',connectorCount:1,returnedConnectorCount:1,connectorScanTruncated:false,
  connectors:[{domain:'DomainHvac',connectorType:'End',shape:'Rectangular',physicalConnectionState:'open',referenceScanComplete:true,referenceReadErrorCount:0,physicalConnectedTo:[]}]});
 const payload=()=>({status:'Ok',results:[row()],canonical_attempt_settlement:{method:'POST',path:'/revit/get-connectors',requested_effect:'read',effect_state:'none'}});
+
+test('active C# discovery exposes guarded connector reads and distinguishes unsupported shapes',()=>{
+ assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/\/revit\/get-connectors read with elementIds/);
+ assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/Radius is only valid for Round/);
+ assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/Width\/Height only for Rectangular or Oval/);
+ assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/unavailable, not zero/);
+ assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/per-connector read errors/);
+});
 test('native code discovery and multi-terminal readback expose bounded native attachment batches',()=>{
  const p={...payload(),results:[row(42),row(43)]},request={elementIds:[42,43]};
  const view=projectConnectorWorkGuidance(p,request) as any;

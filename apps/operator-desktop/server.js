@@ -1,3 +1,4 @@
+import {createCombinedReviewDispatcher} from './combined_review_dispatch.mjs';
 import { EXECUTION_INSPECTION_TOOL, inspectExecution } from './desktop_native_tools.mjs';
 import { affirmativeRevitLaunchIntent as sharedRevitLaunchIntent } from "./revit_launch_intent.mjs";
 import { namedObjectTopologyIdentity } from "./named_object_topology.mjs";
@@ -13716,6 +13717,8 @@ async function executeComputerLoop(options = {}) {
       currentAction: `Evaluating tool calls for step ${step}`
     });
     const outputs = Array.isArray(response.output) ? response.output : [];
+    const executeReviewOrFunction=createCombinedReviewDispatcher(outputs,{execute:executeFunction,
+      assertControl:()=>assertComputerActionControl(),owner:()=>computerState.sidecarAssignment});
     const toolOutputs = [];
     let handledToolCalls = 0;
     let lastDrawingEditOutput = null;
@@ -13801,7 +13804,7 @@ async function executeComputerLoop(options = {}) {
         const functionOutput = nativeCall
           ? await invokeDesktopNativeTool({assignment:computerState.sidecarAssignment,messageId:response.desktop_message_id,
             responseId:response.id,call:item,context:nativeContext,request:nativeRequest})
-          : await executeFunction({...item,hostDesktopHelperScope:true});
+          : await executeReviewOrFunction({...item,hostDesktopHelperScope:true});
         if (nativeCall) computerState.checkedProjectCopy = functionOutput.checked_copy ?? null;
         if(functionOutput.native_pending) {
           computerState.nativeInteractivePlacement=retainNativeInteractivePlacement(functionOutput.native_pending,

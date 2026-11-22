@@ -4,10 +4,33 @@ import {createHash} from 'node:crypto';
 import {VISUAL_WORK_REVIEW_TOOL,reviewCurrentWork,normalizeVisualReviewRequest,parseVisualWorkReview,visualWorkReviewModelOutput} from './visual_work_review.mjs';
 import * as identityReview from './visual_work_review.mjs';
 import {invokeDesktopNativeTool} from './desktop_native_tools.mjs';
+import {createCombinedReviewDispatcher} from './combined_review_dispatch.mjs';
 const image='iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAYAAACM/rhtAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAcSURBVFhH7cEBAQAAAIIg/69uSEABAAAAAAB8GhkoAAFF1RG0AAAAAElFTkSuQmCC';
 const binding={assignment_id:'assignment',session_id:'session',run_id:'run',generation:1,principal_id:'principal',document_fingerprint:'project'};
 const request={view_id:41,checks:[{id:'gap',expected:'No extra blank row below the headings.'},{id:'border',expected:'Medium grid lines are selected.'}]};
 const now=Date.parse('2026-10-17T12:00:00Z');
+
+test('adjacent review dispatch delivers one real combined image/code packet and preserves actor image inputs',async()=>{
+ const f=host(),ids=['A','B'].map(x=>'ev1_'+x.repeat(32));let selected,providerCalls=0;
+ f.h.codeReviewPacket=async value=>{selected=value;return {executions:value.map(evidence_id=>({evidence_id,source:'selected native source'})),coverage:{all_assignment_calls:false}};};
+ f.h.requestResponse=async body=>{
+  providerCalls++;assert(body.input[0].content.some(x=>x.type==='input_image'));
+  assert.deepEqual(JSON.parse(body.input[0].content[0].text).executed_code.executions.map(x=>x.evidence_id),ids);
+  return {id:'combined',status:'completed',output:[],output_text:JSON.stringify({checks:request.checks.map(c=>({...c,status:'matched',observed:'Checked visible outcome.',correction:''})).map(({expected,...c})=>c),code_review:{status:'matched',observed:'Native source and readback agree.',correction:''}})};
+ };
+ const calls=[{type:'function_call',name:'review_current_work',call_id:'visual',arguments:JSON.stringify({...request,review_mode:'independent',code_evidence_ids:[ids[0]]})},
+  {type:'function_call',name:'review_current_work',call_id:'code',arguments:JSON.stringify({review_mode:'code_execution',code_evidence_ids:[ids[1]]})}];
+ const dispatch=createCombinedReviewDispatcher(calls,{owner:()=>binding,assertControl:f.h.assertControl,execute:async call=>{
+  const r=await reviewCurrentWork(JSON.parse(call.arguments),f.h);
+  const o={type:'function_call_output',call_id:call.call_id,output:JSON.stringify(r)};
+  Object.defineProperties(o,{host_visual_work_review:{value:r},raw_evidence:{value:{...r}}});return o;
+ }});
+ const a=await dispatch(calls[0]),b=await dispatch(calls[1]);
+ assert.equal(a.host_visual_work_review.state,'matched',a.host_visual_work_review.reason);
+ assert.equal(b.host_code_work_review.state,'matched',b.host_code_work_review.reason);assert.equal(providerCalls,1);assert.deepEqual(selected,ids);
+ const projected=visualWorkReviewModelOutput({output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{evidence_id:'ev1_review'}]})},a.host_visual_work_review,'ev1_review');
+ assert(projected.output.some(x=>x.type==='input_image'),'Combined dispatcher must preserve the actual image WeakMap identity');
+});
 
 test('matched review feedback reaches the actor with bounded reuse guidance and no native completion claim',async()=>{
  for(const state of ['matched','mismatch','uncertain']) {
