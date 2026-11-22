@@ -1,5 +1,29 @@
 import type { EvidenceRefV1 } from "./evidence_ref.js";
 import { selectFieldTextRange } from "./field_text_range.js";
+
+/** Request overflow only: page a known successful read, preserving its complete
+ * retained record and all surrounding controls. Never compact write/error data. */
+export function pageNativeProgramReadForBatch(p: any): any | null {
+  const v=p?.inline_payload, o=v?.native_outcome;
+  if(p?.schema!=='revit-operator.evidence-projection.v1'
+    ||p.source!=='assignment_kernel_v2:operator_run_dynamic_revit_program'||p.trust_level!=='authoritative_native'
+    ||typeof p.evidence_id!=='string'||!/^ev1_[A-Za-z0-9_-]+$/.test(p.evidence_id)||p.artifact_ref!==p.evidence_id
+    ||typeof p.content_hash!=='string'||!/^sha256:[a-f0-9]{64}$/.test(p.content_hash)
+    ||p.retrieval?.tool_name!=='operator_retrieve_evidence'
+    ||v?.schema!=='revit-operator.native-program-presentation/v1'||v.requested_mode!=='read'
+    ||v.execution_status!=='completed'||v.execution_ok!==true||v.retry_authorized!==false
+    ||o?.persistent_effect!=='none'||o.native_transaction_state!=='not_started'
+    ||o.task_verified!==false||o.verification_required!==true||o.error!==null
+    ||v.coverage?.program_result_complete!==true||Object.hasOwn(v,'program_result_page')
+    ||typeof o.program_result!=='string'||Buffer.byteLength(JSON.stringify(o.program_result))<=8192) return null;
+  try {
+    const page=selectFieldTextRange(o.program_result,{path:'native_outcome.program_result',start:0,length:Buffer.byteLength(o.program_result)},4096);
+    const {program_result:_result,...outcome}=o;
+    return {...p,truncated:true,additional_evidence:true,inline_payload:{...v,native_outcome:outcome,
+      coverage:{...v.coverage,program_result_complete:false},program_result_page:{...page,complete:false},
+      guidance:v.guidance+' Batch request budget: this read is now a partial prefix. Retrieve missing text from the same evidence_id at text_pagination.next_start; do not rerun Revit or infer absence from this page.'}};
+  } catch {return null;}
+}
 import { selectNativeExecutionAudit } from './native_execution_audit.js';
 
 type Row = Record<string, unknown>;

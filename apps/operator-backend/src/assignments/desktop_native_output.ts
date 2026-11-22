@@ -1,7 +1,7 @@
 import type {EvidenceScope} from '../evidence/evidence_ref.js';
 import {createHash} from 'node:crypto';
 import {storeEvidence} from '../evidence/evidence_store.js';
-import {assertBoundedModelEvidencePayload,getEvidenceContextBudget,modelEvidenceEnvelope,prepareBoundedModelEvidenceInput} from '../evidence/model_context_budget.js';
+import {assertBoundedModelEvidencePayload,getEvidenceContextBudget,rawEvidenceItemBudget,modelEvidenceEnvelope,prepareBoundedModelEvidenceInput} from '../evidence/model_context_budget.js';
 
 type NativeOutput = {success:boolean;contentItems:Array<
   {type:'inputText';text:string}|{type:'inputImage';imageUrl:string}>};
@@ -10,7 +10,7 @@ type NativeOutput = {success:boolean;contentItems:Array<
  * Generic MCP/control output retains its untrusted transport classification. */
 export function boundDesktopNativeToolContract(contract:unknown,scope:EvidenceScope,callId:string):NativeOutput {
   const raw=JSON.stringify(contract),budget=getEvidenceContextBudget();
-  if(Buffer.byteLength(raw,'utf8')<=budget.item_bytes)
+  if(Buffer.byteLength(raw,'utf8')<=rawEvidenceItemBudget(budget))
     return boundDesktopNativeOutput({success:true,contentItems:[{type:'inputText',text:raw}]},scope,callId);
   const stored=storeEvidence({scope,source:'assignment_kernel_v2:desktop_native_tool_contract',
     media_type:'application/json',trust_level:'host_observed',verification_relevance:'supporting',raw,

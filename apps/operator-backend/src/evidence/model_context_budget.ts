@@ -1,10 +1,15 @@
 import type { EvidenceProjectionV1, EvidenceTelemetryEventV1 } from "./evidence_ref.js";
 import { appendEvidenceTelemetry } from "./evidence_store.js";
 import {reduceNativeCorrectionPage} from './native_correction_projection.js';
+import {pageNativeProgramReadForBatch} from './native_program_projection.js';
 
 export const MODEL_EVIDENCE_ENVELOPE_SCHEMA = "revit-operator.model-evidence-envelope.v1" as const;
 
 export type EvidenceContextBudget = { item_bytes: number; request_bytes: number };
+
+export function rawEvidenceItemBudget(budget = getEvidenceContextBudget()): number {
+  return Math.min(budget.item_bytes, 8_192);
+}
 
 type ModelEvidenceProjectionV1 = Omit<EvidenceProjectionV1, "retrieval"> & {
   retrieval: Omit<EvidenceProjectionV1["retrieval"], "selector_forms">;
@@ -27,7 +32,11 @@ function envInt(name: string, fallback: number, min: number, max: number): numbe
 }
 
 export function getEvidenceContextBudget(): EvidenceContextBudget {
-  const item_bytes = envInt("OPERATOR_EVIDENCE_ITEM_BUDGET_BYTES", 8_192, 1_024, 65_536);
+  // A scoped native read should arrive whole when it fits the request. The old
+  // 8 KiB projection ceiling split ordinary 15 KiB results into several actor
+  // retrieval turns. Leave room for controls/other results inside the unchanged
+  // request ceiling; genuinely large inventories retain explicit paging.
+  const item_bytes = envInt("OPERATOR_EVIDENCE_ITEM_BUDGET_BYTES", 24_576, 1_024, 65_536);
   const request_bytes = envInt("OPERATOR_EVIDENCE_REQUEST_BUDGET_BYTES", 32_768, item_bytes, 262_144);
   return { item_bytes, request_bytes };
 }
@@ -271,6 +280,11 @@ export function prepareBoundedModelEvidenceInput(input: unknown, budget = getEvi
       || !Array.isArray(envelope.evidence_projections)) return;
     const slot = {row, block, envelope}; slots.push(slot);
     envelope.evidence_projections.forEach((p: any, index: number) => {
+      const programRead = pageNativeProgramReadForBatch(p);
+      if (programRead) {
+        const saving = bytes(p) - bytes(programRead);
+        if (saving > 0) candidates.push({slot, index, compact: programRead, saving});
+      }
       const committed=committedConnectorCore(p);
       if(committed)committedCores.push({slot,index,compact:committed});
       const readCompact = readAccelerator(p);
@@ -455,8 +469,11 @@ export function assertBoundedModelEvidencePayload(input: unknown, budget = getEv
         if (!projection || typeof projection !== "object" || (projection as any).schema !== "revit-operator.evidence-projection.v1") return false;
         return Buffer.byteLength(JSON.stringify(projection), "utf8") <= budget.item_bytes;
       });
-      if (bytes > budget.item_bytes && !isEvidenceProjection) {
-        throw new Error(`Raw function_call_output exceeds the ${budget.item_bytes}-byte evidence item budget; store it and send an EvidenceRef projection.`);
+      // The larger allowance is for retained, scoped projections, not arbitrary
+      // raw tool dumps. Keep the raw transport threshold independently bounded.
+      const rawItemBytes = rawEvidenceItemBudget(budget);
+      if (bytes > rawItemBytes && !isEvidenceProjection) {
+        throw new Error(`Raw function_call_output exceeds the ${rawItemBytes}-byte evidence item budget; store it and send an EvidenceRef projection.`);
       }
       if (isEvidenceProjection) {
         totalEvidenceBytes += bytes;

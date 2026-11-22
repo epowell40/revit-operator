@@ -61,7 +61,7 @@ test('compaction explicitly preserves source binding, controls and retrieval wit
 
 test('invalid raw/items/envelopes and irreducible native batches still fail closed', () => {
   for (const output of ['x'.repeat(8193), [{type: 'bogus', text: 'x'}],
-    envelope({...projection('oversize'), extra: 'x'.repeat(9000)})])
+    envelope({...projection('oversize'), extra: 'x'.repeat(context.getEvidenceContextBudget().item_bytes+1)})])
     assert.throws(() => prepare([{type: 'function_call_output', output}]));
   const native = batch().map((r, i) => ({...r, output: [{type: 'input_text', text: envelope(projection(`native${i}`, true))}]}));
   assert.throws(() => prepare(native), /32768-byte model-request/);

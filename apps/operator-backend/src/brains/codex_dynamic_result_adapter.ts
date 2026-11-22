@@ -1,7 +1,7 @@
 import { compactParameterReadResultForPrompt } from "../tool_result_compaction.js";
 import type { EvidenceProjectionV1 } from "../evidence/evidence_ref.js";
 import type { OperationResultStatusV2 } from "../domain/assignment-kernel/operation.js";
-import { getEvidenceContextBudget, modelEvidenceEnvelope } from "../evidence/model_context_budget.js";
+import { rawEvidenceItemBudget, modelEvidenceEnvelope } from "../evidence/model_context_budget.js";
 import { projectAssignmentStatusForModel } from "./assignment_status_projection.js";
 import { assignmentBudgetForPrompt } from "./assignment_budget_prompt.js";
 
@@ -148,7 +148,7 @@ export function adaptMcpToolCallResultToDynamicResponse(
   const discovery = registryDiscovery || context?.tool === "revit_search_tools" || context?.tool === "revit_tool_doc" || context?.tool === "operator_discover_capabilities";
   const textOnly = content.length === 1 && content[0]?.type === "text" && typeof content[0].text === "string";
   const exposeBoundedDiscovery = discovery && textOnly && (context?.omitted ?? 0) === 0
-    && Buffer.byteLength(content[0].text, "utf8") <= Math.max(0, getEvidenceContextBudget().item_bytes - 2048);
+    && Buffer.byteLength(content[0].text, "utf8") <= Math.max(0, rawEvidenceItemBudget() - 2048);
   const exposeFocusedRetrieval = context?.tool === "operator_retrieve_evidence" || result?.isError === true || exposeBoundedDiscovery;
   const hasProjectionContext = Array.isArray(context?.projections)
     && (context!.projections!.length > 0 || (context?.omitted ?? 0) > 0) && !exposeFocusedRetrieval;
