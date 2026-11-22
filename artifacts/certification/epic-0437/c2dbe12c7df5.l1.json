@@ -3425,7 +3425,7 @@
     },
     {
       "path": "apps/operator-backend/src/evidence/model_context_budget.ts",
-      "sha256": "sha256:a503d87074f1f2a7123917a6aa000f895168bfe3f15421eae44898a64eab5403"
+      "sha256": "sha256:df756c08d612f83caebfc1830bc869d43660d1a17907c578dbe18eedaa50ec3d"
     },
     {
       "path": "apps/operator-backend/src/evidence/native_correction_projection.ts",
@@ -5745,7 +5745,7 @@
     },
     {
       "path": "apps/operator-backend/test/desktop_native_output.test.ts",
-      "sha256": "sha256:3c53c2e567434203a4d65da084e5832f87f18d5d4a85e3fa4f328410e3efd514"
+      "sha256": "sha256:f99a9c337d98e18342bd4084d29bf837b88545e5d8dc00adbf0a317335bb26cb"
     },
     {
       "path": "apps/operator-backend/test/desktop_native_tool_exposure.test.ts",
@@ -5857,7 +5857,7 @@
     },
     {
       "path": "apps/operator-backend/test/drafting_observation_transport.test.ts",
-      "sha256": "sha256:43fd64bf87f10d1ee2b7b45fa90ba495850c6e85059d83f4e88b6b9feb703645"
+      "sha256": "sha256:adaef7ba2ee039f35a251e2d85d52476394eecd8e3627556f0243bfdf2f74144"
     },
     {
       "path": "apps/operator-backend/test/drafting_primary_backcheck.test.ts",
@@ -7301,11 +7301,11 @@
     },
     {
       "path": "apps/operator-backend/test/model_evidence_batch.test.ts",
-      "sha256": "sha256:dd5984bb1730abebb58f371a8f9796007839c3904179e490766a9f55ccee3ff3"
+      "sha256": "sha256:66bca8739dcf53ae885db38634e968c13abfc06c422e9db186d3973a5953f969"
     },
     {
       "path": "apps/operator-backend/test/model_evidence_committed_batch.test.ts",
-      "sha256": "sha256:b12bea9ff2e2cc512f0a203d630a274e74ff57730c7581f950adc2b649c4e3f6"
+      "sha256": "sha256:265c308212e80db031d21bcf3a2b45c80ec75ee44df26d7b793b36edc7981d78"
     },
     {
       "path": "apps/operator-backend/test/model_evidence_correction_batch.fixtures.ts",
@@ -7313,7 +7313,7 @@
     },
     {
       "path": "apps/operator-backend/test/model_evidence_correction_batch.test.ts",
-      "sha256": "sha256:ea035532b7674067087d9841f7f449e3bf92ae68f5e32109ccf1f575db4fb88f"
+      "sha256": "sha256:6ac4c739362baa4f623b95b317411509179acd126b78d8bfcdb8480631248dc2"
     },
     {
       "path": "apps/operator-backend/test/model_evidence_multi_output.fixtures.ts",
@@ -7321,11 +7321,11 @@
     },
     {
       "path": "apps/operator-backend/test/model_evidence_multi_output.test.ts",
-      "sha256": "sha256:b2a859e60d63b38b7de841765286d6f1cb5669624206af56722093430965607e"
+      "sha256": "sha256:bf9ca8cb248af15ae899ff36132e7bc3772f4a4f4bce5c6005aa8aeb531bc5a0"
     },
     {
       "path": "apps/operator-backend/test/model_evidence_native_sheet_batch.test.ts",
-      "sha256": "sha256:bbe9c03d4b5bf54946a5902020c38a6ff39c91534cf8c8163a5d2f7943def151"
+      "sha256": "sha256:e4a124577ca2c00ba3a354a03760ba34390194db77cc09dd26b93c10fd6d29f8"
     },
     {
       "path": "apps/operator-backend/test/model_evidence_read_batch.fixtures.ts",
@@ -7333,7 +7333,7 @@
     },
     {
       "path": "apps/operator-backend/test/model_evidence_read_batch.test.ts",
-      "sha256": "sha256:0e951b2e169efb53aff8f1a6e69ea829196a793a22409d76a628152df68d7265"
+      "sha256": "sha256:bc069a8669b40f8d1a24f52a61469719613d3b933fae3f19d4b3c7d8d786d5e3"
     },
     {
       "path": "apps/operator-backend/test/model_point_move_postcondition_v2.test.ts",
@@ -8465,7 +8465,7 @@
     },
     {
       "path": "apps/operator-backend/test/whole_native_result_delivery.test.ts",
-      "sha256": "sha256:043ebbd30788aef2414c13a2eef3deb4425b65a030a773468373e7cc0f798f63"
+      "sha256": "sha256:3f3aee482551722ecec9b86f26e79a5af64e6102ae4cf2c81c350459b9a7a1a9"
     },
     {
       "path": "apps/operator-backend/test/windows_listener_inspector.test.ts",
@@ -12745,7 +12745,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:f9f86401c9444191e9a9ef825a618b8265773135c9e1ba1ca2696fa66f090ca4",
+  "inputs_hash": "sha256:eb21bc06d06ce7b2b8bb17e4961a5034fd2c6c4a916a1d55e37c2136b74c19ae",
   "result": {
     "passed": true,
     "checks": [
