@@ -1,9 +1,21 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {projectConnectorWorkGuidance,AIR_TERMINAL_CONNECTION_GUIDANCE}from'./connectorWorkGuidance.js';
 import{nativeReadEvidence}from'./nativeReadEvidence.js';
+import {DYNAMIC_REVIT_NATIVE_GUIDE} from './dynamicRevitSdkGuide.js';
 const row=(id=42)=>({id,ok:true,category:'OST_DuctTerminal',connectorCount:1,returnedConnectorCount:1,connectorScanTruncated:false,
  connectors:[{domain:'DomainHvac',connectorType:'End',shape:'Rectangular',physicalConnectionState:'open',referenceScanComplete:true,referenceReadErrorCount:0,physicalConnectedTo:[]}]});
 const payload=()=>({status:'Ok',results:[row()],canonical_attempt_settlement:{method:'POST',path:'/revit/get-connectors',requested_effect:'read',effect_state:'none'}});
+test('native code discovery and multi-terminal readback expose bounded native attachment batches',()=>{
+ const p={...payload(),results:[row(42),row(43)]},request={elementIds:[42,43]};
+ const view=projectConnectorWorkGuidance(p,request) as any;
+ for(const text of [DYNAMIC_REVIT_NATIVE_GUIDE,view.operator_connection_guidance.message]) {
+  assert.match(text,/MechanicalUtils\.ConnectAirTerminalOnDuct/);
+  assert.match(text,/bounded.*batch/i);
+  assert.match(text,/reciprocal physical/i);
+ }
+ assert.deepEqual(nativeReadEvidence('/revit/get-connectors',request,view),nativeReadEvidence('/revit/get-connectors',request,p));
+ assert.equal(view.operator_connection_guidance.connection_verified,false);
+});
 test('open-terminal advice preserves all native evidence and makes no compatibility or connection claim',()=>{
  const p=payload(),before=structuredClone(p),request={elementIds:[42]},view=projectConnectorWorkGuidance(p,request) as any;
  assert.deepEqual(p,before);for(const k of Object.keys(p))assert.deepEqual(view[k],p[k as keyof typeof p]);
