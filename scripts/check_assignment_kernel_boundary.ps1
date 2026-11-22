@@ -44,7 +44,14 @@ foreach ($file in $domainFiles) {
     # module still verifies retained bytes, binding, receipts and journal order;
     # this exact consumer registration permits no runtime or transport import.
     $sharedControlEvidenceContract = $specifier -eq "@revitoperator/assignment-kernel-v2-contracts" -and @("operation.ts", "progress/execution_failure.ts", "progress/provider_call.ts", "provider_usage_hold.ts", "reducer.ts", "semantic_admissibility.ts", "snapshot.ts", "family_capacity_retry.ts", "template_reassignment.ts", "native_inventory_workload.ts", "schedule_filter_restoration.ts", "committed_read_refresh.ts", "progress/native_work_progress.ts", "verified_saved_partial.ts") -contains $relative
-    if (-not $specifier.StartsWith("./") -and -not $specifier.StartsWith("../") -and -not $sharedPayloadContract -and -not $sharedControlEvidenceContract) {
+    # These exact imports are pure comparisons/decoders. Keep the dependency
+    # registration narrow: no other node:util exports or domain consumers gain
+    # access. Dispatch and readback tests still enforce full binding and history.
+    $pureHistoryComparison = $relative -eq "reducer.ts" -and $specifier -eq "node:util" -and
+      $match.Value -match '^\s*import\s*\{\s*isDeepStrictEqual\s*\}\s*from\s*["'']node:util["'']$'
+    $workPlanCheckpointDecoder = $relative -eq "work_plan_location.ts" -and $specifier -eq "@revitoperator/assignment-kernel-v2-contracts" -and
+      $match.Value -match '^\s*import\s*\{\s*nativeDocumentCheckpointRequestMatchesV2\s*\}\s*from\s*["'']@revitoperator/assignment-kernel-v2-contracts["'']$'
+    if (-not $specifier.StartsWith("./") -and -not $specifier.StartsWith("../") -and -not $sharedPayloadContract -and -not $sharedControlEvidenceContract -and -not $pureHistoryComparison -and -not $workPlanCheckpointDecoder) {
       $violations.Add("$relative imports non-domain dependency '$specifier'")
     }
   }
@@ -677,9 +684,14 @@ foreach ($file in $publicationProductionFiles) {
     $relative = $file.FullName.Substring($RepoRoot.Length).TrimStart('\', '/').Replace('\', '/')
     $violations.Add("$relative copies an exact V2 publication schema literal outside the shared contract")
   }
+  # The control projection uses the same complete publication validator before
+  # copying just dispatch fields. Recognize only its actual shared-package
+  # import and invocation, never a similarly named local function/comment.
+  $validatedControlProjection = $content -match '(?m)^import\s*\{[^}\r\n]*\bprojectAssignmentDispatchControlV1\b[^}\r\n]*\}\s*from\s*["'']@revitoperator/assignment-kernel-v2-contracts["'']' -and
+    $content -match '\breturn\s+projectAssignmentDispatchControlV1\s*\('
   if (($content -match 'ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA' -or $content -match '\bprovider_ledger\b') -and
       $content -notmatch 'parseAssignmentKernelPublicationV2' -and
-      $content -notmatch 'directKernelPublicationsV2\s*\(') {
+      $content -notmatch 'directKernelPublicationsV2\s*\(' -and -not $validatedControlProjection) {
     $relative = $file.FullName.Substring($RepoRoot.Length).TrimStart('\', '/').Replace('\', '/')
     $violations.Add("$relative reads exact V2 publication truth without the shared publication parser")
   }
