@@ -210,6 +210,17 @@ export function committedDrawingEditLocation(call, result, binding) {
   // Its rows are navigation hints. Program text and collateral IDs cannot locate an edit.
   const summary = program && projections.find(p => p.source === 'assignment_kernel_v2:revit_call_tool'
     && p.inline_payload?.scope === 'requested_element_ids_only')?.inline_payload;
+  // Full-result navigation bounds survive row paging. Never locate a large
+  // edit from only its first page, or mistake these bounds for verification.
+  const extent=summary?.spatial_extent,count=summary?.coverage?.source_rows;
+  if(extent&&Object.keys(extent).length===4&&extent.scope==='navigation_only'
+    &&Number.isSafeInteger(count)&&count>0&&count<=4096&&extent.source_rows===count
+    &&summary.coverage.spatial_rows===count
+    &&[extent.min,extent.max].every(p=>Array.isArray(p)&&p.length===3&&p.every(Number.isFinite))
+    &&extent.min.every((n,i)=>n<=extent.max[i])){
+    return {points:[0,1].flatMap(x=>[0,1].flatMap(y=>[0,1].map(z=>
+      [x?extent.max[0]:extent.min[0],y?extent.max[1]:extent.min[1],z?extent.max[2]:extent.min[2]])))};
+  }
   if (summary?.coverage?.source_rows_exhausted && summary.rows?.length === summary.coverage.source_rows) {
     const points = summary.rows.map(row => {
       const v = row?.values;
