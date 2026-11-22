@@ -29,6 +29,7 @@ export async function focusNativeReviewTarget(target,{activeViewId,activate,asse
 
 export const NATIVE_VIEW_ACTIVATION_TOOL={type:'function',name:'activate_revit_view',
  description:'Activate an exact existing Revit view or schedule for authorized UI navigation without changing model content. '+
+  'Opening a view does not return pixels. For an inspection, prefer review_current_work with the view and observed focus element IDs or a native visible region. It can position and inspect in one call. '+
   'Request deterministic focus in one call with the exact view ID and show_element_ids, paired bbox_min_xyz/bbox_max_xyz, or zoom_to_fit. The host first activates and confirms that view when necessary, then applies focus there; an unconfirmed step stops the sequence without retry. Element focus settles before contextual bounds when both are provided. In review_current_work the same host sequence is available. Focus is not confirmed unless fresh actual native observations support the request. Do not combine zoom_to_fit with either. '+
   'Derive element IDs and bounds from fresh native geometry, never screenshot pixels. Bounds use the target view coordinate space: model feet for model views; sheet feet with z=0 for sheets. Never use model-coordinate bounds on a sheet. '+
   'On a sheet, an inspected schedule definition ID may be focused directly: native Revit resolves its unique actual placement on that sheet. Missing or repeated placements stay unconfirmed. This navigation association does not replace the definition ID in native verification. '+
@@ -141,6 +142,13 @@ export async function confirmNativeViewActivation(target,{readContext,activate,a
  if(!positive(viewId)&&!text(viewName))throw Error('native_view_activation_target_invalid');
  await assertCurrent();
  const initial=await readContext(),before=identity(initial);
+ const current=initial.document.activeView;
+ // Use fresh native context, never a remembered view or a name that can collide.
+ // Explicit fit, element and bounds requests still need their own focus proof.
+ if(!request.hasFocus&&positive(viewId)&&current?.id===viewId&&text(current.name)){
+  await assertCurrent();
+  return {ok:true,active_view:{id:current.id,name:current.name},already_active:true,request_dispatched:false};
+ }
  if(request.hasFocus&&initial.document.activeView?.id!==viewId)
   return{ok:false,focus_pending:true,requested_view_id:viewId,error:'Activate the exact target view before requesting native focus. No focus was dispatched.'};
  await assertCurrent();

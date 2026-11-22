@@ -16,6 +16,44 @@ function fixture():any{
  s.work_plan={schema:'revit-operator.assignment-work-plan/v2',assumptions:[],items:[{item_id:'branch',description:'West branch',source_basis:'PDF page 1 west',declared_at:at,operation_ids:[]}]};
  return s;
 }
+
+test('resource advice survives absent or completed plans without authorizing continuation',()=>{
+ for(const plan of [undefined,{schema:'revit-operator.assignment-work-plan/v2',assumptions:[],items:[]}]){
+  const s=fixture();s.work_plan=plan;const before=JSON.stringify(s),c:any=projectExecutionContinuation(s,at);
+  assert.equal(c.state,'hold');assert.equal(c.reason,'no_ready_work');assert.deepEqual(c.next_items,[]);
+  assert.equal(c.resource_advice_only,true);assert(c.remaining_resources);assert.equal(c.construction_progress,null);assert.equal(c.progress_key,undefined);
+  assert.equal(JSON.stringify(s),before);
+  s.spec.execution_policy.progress_allowance={mode:'verified_native_changes_v1',credit_unit:'distinct_verified_targets_v1',
+   max_provider_calls:256,max_operations:1024,max_total_tokens:32000000,max_wall_clock_ms:7200000};
+  const paced:any=projectExecutionContinuation(s,at);
+  assert.equal(paced.state,'hold');assert.equal(paced.reason,'no_ready_work');
+  assert.equal(paced.construction_progress.calls_since_construction,0);
+  assert.equal(paced.construction_progress.changes_allowance,false);
+ }
+ const s=fixture();delete s.spec.execution_policy.ready_work_handoff;
+ const ordinary:any=projectExecutionContinuation(s,at);assert.equal(ordinary.reason,'ordinary_task_reporting');
+ assert.equal(ordinary.resource_advice_only,true);
+ for(const patch of [{terminal:true},{outcome:'awaiting_user_input'},{execution_control:{state:'paused'}},
+  {provider_usage_hold:{}},{in_flight_provider_call_ids:['pending']},{quiescent:false},
+  {unresolved_unknown_operation_ids:['unknown']},{pending_review_ids:['review']},{pending_input_variable_ids:['question']},
+  {completion_proposal:{}},{progress_blocker:{code:'no_progress'}},{provider_budget_exhausted:true}]){
+  const held:any=projectExecutionContinuation({...s,...patch},at);
+  assert.equal(held.state,'hold');assert.equal(held.resource_advice_only,undefined);assert.equal(held.remaining_resources,undefined);
+ }
+});
+test('active actor continuation carries measured token reserve and keeps Pause and unknown holds',()=>{
+ const s=fixture();
+ s.provider_calls={a:{binding:s.current_binding,admitted_at:at,completed_at:at,state:'completed',usage:{total_tokens:227767}}};
+ const before=JSON.stringify(s),c:any=projectExecutionContinuation(s,at);
+ assert.equal(c.state,'ready');
+ assert.equal(c.token_runway.tokens_per_call,227767);
+ assert.equal(c.token_runway.estimated_calls_remaining,Math.floor(c.remaining_resources.total_tokens.remaining/227767));
+ assert.equal(JSON.stringify(s),before);
+ for(const patch of [{execution_control:{state:'paused'}},{unresolved_unknown_operation_ids:['unknown']},{provider_usage_hold:{reason:'pending'}}]){
+  const held:any=projectExecutionContinuation({...s,...patch},at);
+  assert.equal(held.state,'hold');assert.equal(held.token_runway,undefined);
+ }
+});
 function hint(s:any):any{return {status:'candidate',reason:'Matched corridor and room boundary.',source:{attachment_id:'pdf',filename:'source.pdf',sha256:'a'.repeat(64),page:1,page_count:1,region:{min_u:.1,min_v:.2,max_u:.4,max_v:.5}},
  native:{document_fingerprint:s.current_binding.document_fingerprint,view_id:20,view_name:'Plan'},
  drafting:{pass:'geometry',stage:'drafted',element_ids:[42],read_operation_ids:[],next_action:'Connect the branch outlet.',remaining:'Outlet and annotation.',boundary_context:'Main continues east beyond crop.'}};}
@@ -85,8 +123,41 @@ test('highlighted reference keeps clean pixels and transforms source regions int
  assert.deepEqual(result.content[1],image);assert.equal(result.content.filter((v:any)=>v.type==='image').length,2);
  const tracking=JSON.parse(result.content[2].text).drafting_tracking;
  assert.equal(tracking.marks[0].item_id,'branch');assert.match(tracking.legend,/Unmarked areas remain undiscovered/);
+ assert.equal(tracking.marks[0].passes[0].linked_element_count,1);
+ assert.match(tracking.legend,/linked subset/);
+ const checked=hint(s);
+ s.operations.read={requested_effect:'read',persistent_effect:'none',settlement_state:'settled',binding:s.current_binding,opened_at:'2026-10-31T20:59:00Z',
+  result:{authority:'native-host',status:'succeeded',binding:s.current_binding,completed_at:at}};
+ Object.assign(checked.drafting,{stage:'checked',source_image_sha256:'b'.repeat(64),model_image_sha256:'c'.repeat(64),read_operation_ids:['read']});
+ s.work_plan=recordWorkPlanLocationV2(s,'branch',checked,at);
+ const annotations=hint(s);annotations.drafting.pass='annotations';annotations.drafting.element_ids=[];
+ s.work_plan=recordWorkPlanLocationV2(s,'branch',annotations,at);
+ const mixed=await addDraftingReferenceTracking({content:[{type:'text',text:JSON.stringify(metadata)},image]},s);
+ assert.deepEqual(mixed.content[1],image);
+ assert.deepEqual(JSON.parse(mixed.content[2].text).drafting_tracking.marks[0].passes
+  .map((p:any)=>[p.pass,p.stage,p.linked_element_count]),[['geometry','checked',1],['annotations','drafted',0]]);
+ assert.equal(s.work_plan.items[0].completed_at,undefined);
  const foreign=await addDraftingReferenceTracking({content:[{type:'text',text:JSON.stringify({...metadata,sha256:'f'.repeat(64)})},image]},s);
  assert.equal(foreign.content.length,2);
+});
+
+test('dense reference tracking stays within the clean-image pairing limit and reports omitted marks',async()=>{
+ const {createCanvas}=await import('@napi-rs/canvas'),s=fixture();
+ for(const pass of ['geometry','sizes_properties','connections','elevation','annotations','coverage']){
+  const h=hint(s);h.drafting.pass=pass;
+  s.work_plan=recordWorkPlanLocationV2(s,'branch',h,at);
+ }
+ const item=s.work_plan.items[0];
+ s.work_plan.items=Array.from({length:128},(_,n)=>({...item,item_id:'area_'+n}));
+ const metadata={page:1,sha256:'a'.repeat(64),attachment_id:'pdf',image_geometry:{pixel_to_normalized_page:{u_offset:0,v_offset:0,u_per_pixel:.01,v_per_pixel:.01}}};
+ const image={type:'image',mimeType:'image/png',data:createCanvas(100,100).toBuffer('image/png').toString('base64')};
+ const overlay=await addDraftingReferenceTracking({content:[{type:'text',text:JSON.stringify(metadata)},image]},s);
+ assert.deepEqual(overlay.content[1],image);
+ assert.equal(overlay.content.filter((v:any)=>v.type==='image').length,2);
+ assert(Buffer.byteLength(overlay.content[2].text,'utf8')<32768);
+ const tracking=JSON.parse(overlay.content[2].text).drafting_tracking;
+ assert(tracking.omitted_visible_mark_count>0);
+ assert.equal(tracking.marks.length+tracking.omitted_visible_mark_count,128);
 });
 test('execution continuation honors every ordinary stop and never counts repeated reads as construction progress',()=>{
  const s=fixture(),first=projectExecutionContinuation(s,at);assert.equal(first.state,'ready');

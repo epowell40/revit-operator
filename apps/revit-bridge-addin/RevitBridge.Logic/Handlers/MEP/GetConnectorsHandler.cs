@@ -290,6 +290,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                     typeId,
                     typeName,
                     createdPhaseId,
+                    elementLocation = ReadElementLocation(e),
                     systemName = sys,
                     connectorCount = elementConnectorCount,
                     returnedConnectorCount = connectorsOut.Count,
@@ -325,6 +326,27 @@ namespace RevitBridge.Logic.Handlers.MEP
             return Task.FromResult<object>(encodePlacementResponse && p.includeNativePlacementState
                 ? NativePreservationSnapshotCodec.PackPlacementRead(result) : result);
         }
+
+        private static object ReadElementLocation(Element element)
+        {
+            try
+            {
+                var location = element.Location;
+                if (location is LocationPoint point)
+                    return ElementLocationObservation.Point(() => Xyz(point.Point), () => point.Rotation);
+                if (location is LocationCurve curveLocation)
+                {
+                    var curve = curveLocation.Curve;
+                    if (curve == null) return ElementLocationObservation.Unavailable("curve_unavailable");
+                    return ElementLocationObservation.Curve(curve is Line, curve.IsBound,
+                        () => Xyz(curve.GetEndPoint(0)), () => Xyz(curve.GetEndPoint(1)));
+                }
+                return ElementLocationObservation.Unavailable("no_supported_location");
+            }
+            catch { return ElementLocationObservation.Unavailable("location_read_failed"); }
+        }
+
+        private static double[] Xyz(XYZ p) => new[] { p.X, p.Y, p.Z };
 
         // Diagnostic reads must propagate manager/enumeration errors to the failed owner row.
         // Mutation helpers retain their existing behavior; this is a read-only path.

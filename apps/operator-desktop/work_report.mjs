@@ -2,10 +2,10 @@ import {nativeReadinessHealthDetail} from './native_readiness_diagnostic.mjs';
 import {CANONICAL_NATIVE_TASK_GUIDANCE,UNIFIED_NATIVE_COMPLETION_GUIDANCE} from './native_task_routing.mjs';
 // Claims are retained for review; this adapter never certifies a desktop effect.
 export const WORK_REPORT_TOOL = {
-  type: "function", name: "report_work_for_review",
-  description: "Retain an explicitly unverified advisory handoff after the requested work and inspection, or a genuine stop. For a persistent task with unfinished work and available budget, retain one useful next work item or a specific supported blocker in the existing work plan and continue ready work; no exhaustive upfront inventory is required. A progress update is not a final handoff. For advisory assignments, optional written_findings is the user-facing body of that final report; keep unfinished work and uncertainties explicit in the claim arrays. Strict assignments reject completion claims. For a strict task's requested written follow-up, the owner may supply written_findings with all three claim arrays empty, after reviewing helper material and before final inspection. That strict writing-only receipt does not complete any checklist, verify effects, or end the task. Do not copy unreviewed helper prose or repeat completed actions.",
+  type: "function", name: "report_work_for_review", strict: false,
+  description: "Retain an explicitly unverified advisory handoff after the requested work and inspection, or a genuine stop. Continue useful ready work while it fits the authorized budget. Honor declared ready work items. A work plan is optional: do not create a checklist solely to return a partial report. Retain specific remaining work and uncertainties in this report; they remain unresolved and the report is not task completion. Omit needs_input when no user decision is needed; uncertainties can be reported without asking a question. When the remaining work depends on a real user decision, include needs_input with the question and a stable field name in this same report. Return the useful checked work, saved file and specific ambiguity together. Do not create a plan just to ask or draw a substitute for an unresolved design decision. A progress update is not a final handoff. For advisory assignments, optional written_findings is the user-facing body of that final report; keep unfinished work and uncertainties explicit in the claim arrays. Strict assignments reject completion claims. For a strict task's requested written follow-up, the owner may supply written_findings with all three claim arrays empty, after reviewing helper material and before final inspection. That strict writing-only receipt does not complete any checklist, verify effects, or end the task. Do not copy unreviewed helper prose or repeat completed actions.",
   parameters: { type: "object", additionalProperties: false,
-    properties: { ...Object.fromEntries(["claimed_completed", "remaining_work", "uncertainties"].map(key => [key, { type: "array", maxItems: 24, items: { type: "string", minLength: 1, maxLength: 1000 } }])), written_findings: {type:"string",minLength:1,maxLength:8000} },
+    properties: { needs_input:{type:"object",additionalProperties:false,required:["question","field"],properties:{question:{type:"string",minLength:1,maxLength:1200},field:{type:"string",pattern:"^[a-z][a-z0-9_]{0,63}$"}}}, ...Object.fromEntries(["claimed_completed", "remaining_work", "uncertainties"].map(key => [key, { type: "array", maxItems: 24, items: { type: "string", minLength: 1, maxLength: 1000 } }])), written_findings: {type:"string",minLength:1,maxLength:8000} },
     required: ["claimed_completed", "remaining_work", "uncertainties"] }
 };
 export async function submitWorkReportForReview(assignment, proposal, request, options = {}) {
@@ -14,7 +14,7 @@ export async function submitWorkReportForReview(assignment, proposal, request, o
     throw new Error("work_report_current_binding_required");
   const keys = ["claimed_completed", "remaining_work", "uncertainties"];
   const writing = typeof proposal?.written_findings === 'string' && proposal.written_findings.trim() && proposal.written_findings.length <= 8000;
-  if (!proposal || Object.keys(proposal).some(key => ![...keys,'written_findings'].includes(key))
+  if (!proposal || Object.keys(proposal).some(key => ![...keys,'written_findings','needs_input'].includes(key))
       || !keys.every(key => Array.isArray(proposal[key]) && proposal[key].length <= 24
         && proposal[key].every(item => typeof item === "string" && item.trim() && item.length <= 1000))
       || (!keys.some(key => proposal[key].length) && !writing)
@@ -23,6 +23,16 @@ export async function submitWorkReportForReview(assignment, proposal, request, o
     run_id: assignment.run_id, generation: assignment.generation };
   const send = body => request("/api/assignments/v2/work-plan", { method: "POST", body: JSON.stringify({ ...body, ...binding }) });
   const status = await send({ action: "status" });
+  if ('needs_input' in proposal) {
+    const decision = proposal.needs_input;
+    if (status?.verification_policy !== 'advisory' || status.ok !== true || status.outcome !== 'active' || status.completion_proposal || typeof options.requestInput !== 'function') throw new Error('partial_input_active_advisory_required');
+    if (!decision || Object.keys(decision).some(key => !['field','question'].includes(key))) throw new Error('partial_input_decision_invalid');
+    const sections = [[null, proposal.claimed_completed], ['Remaining work', proposal.remaining_work], ['Uncertainties', proposal.uncertainties]];
+    const summary = [proposal.written_findings?.trim(), ...sections.filter(([,items]) => items.length).map(([label,items]) => (label ? label+'\n' : '')+items.join('\n'))].filter(Boolean).join('\n\n');
+    if (summary.length > 4000) throw new Error('partial_input_summary_too_long: summarize the checked result and remaining decision in 4000 characters.');
+    if (options.beforePropose) await options.beforePropose();
+    return options.requestInput({...decision, work_summary:summary});
+  }
   if ('written_findings' in proposal && status?.verification_policy === 'strict') {
     if (status?.ok !== true || status.outcome !== 'active'
         || status.completion_proposal || keys.some(key=>proposal[key].length)
@@ -69,6 +79,88 @@ export function retainedRetrievalStallContinuation(assignment, retained) {
     'Use the actual retained path/type hints and narrow leaf fields or nested array pages; do not guess the same wrapper or request the same oversized object. '+
     'A successful read of this artifact clears this navigation stall. If it is not needed, continue another useful discrepancy using current evidence. '+
     'Keep checked partial work and save a useful verified milestone when applicable. Do not repeat mutations, invent missing values, mark work complete, or override Pause/unknown effects. Four failures without a successful read stop this loop.'}]};
+}
+
+/** Consume the existing canonical progress clock at a completed tool boundary.
+ * Successful read-only activity cannot bypass this pacing check. */
+export function retainedDraftingProgressContinuation(assignment, retained, tracker) {
+  const continuation=retained?.execution_continuation;
+  if(retained?.status!=='retained'||assignment?.kernel_version!==2||!continuation)return null;
+  if(continuation.schema!=='operator.execution-continuation.v1'
+    ||continuation.binding?.assignment_id!==(assignment.goal_id??assignment.assignment_id)
+    ||!['session_id','run_id','generation'].every(key=>continuation.binding?.[key]===assignment[key]))
+    throw Error('execution_continuation_binding_mismatch');
+  const noPlanAdvice=continuation.state==='hold'&&continuation.reason==='no_ready_work'&&continuation.resource_advice_only===true;
+  if(continuation.state!=='ready'&&!noPlanAdvice)return null;
+  const progress=continuation.construction_progress;
+  if(!progress)return null;
+  const calls=progress.calls_since_construction,warn=progress.warn_after,change=progress.stop_after;
+  if(!Number.isSafeInteger(calls)||calls<0||!Number.isFinite(Date.parse(progress.since))
+    ||!Number.isSafeInteger(warn)||warn<1||!Number.isSafeInteger(change)||change<=warn)
+    throw Error('execution_continuation_progress_invalid');
+  const window=progress.since;
+  const stage=calls>=change?2:calls>=warn?1:0;
+  if(stage<1)return null;
+  if(tracker.window===window&&stage<=tracker.stage)return null;
+  tracker.window=window;
+  tracker.stage=stage;
+  // The domain publishes pacing advice, not another call allowance. Distinct
+  // useful inspections must not become a runtime failure at an arbitrary count.
+  // Existing repeated-cycle, retrieval, resource and control paths still apply.
+  return {role:'user',content:[{type:'input_text',text:
+    'You have used '+calls+' model calls since new construction or native checked-target progress. '+
+    'Choose one concrete remaining discrepancy now. Finish a supported annotation/property pass or another ready branch when a connection is blocked. '+
+    'Record the specific blocked pass and continue independent work. Reuse the paired reference/model area and current readbacks. '+
+    'If the next discrepancy is unclear after a construction pass, use area_backcheck with the current paired area before broader discovery; reuse an existing current review rather than requesting it again. Further inspection must answer a named missing fact needed for a specific repair. After a useful repair, check and save it before a separate uncertain investigation. Repeated successful inspections, reviews and saves do not reset this progress clock. '+
+    (stage>=2?'If the bounded alternative cannot make progress, preserve an authorized useful milestone and report the checked partial with the exact blocker. ':'')+
+    'This changes no budget, native admission, Pause or unknown-effect requirement.'}]};
+}
+
+/** Use the already-returned host meter; never fetch another status or create
+ * another resource policy. Repeated tool calls do not spam the same warning. */
+export function retainedExecutionReserveContinuation(assignment, retained, tracker) {
+  const c=retained?.execution_continuation;
+  if(retained?.status!=='retained'||assignment?.kernel_version!==2||!c)return null;
+  if(c.schema!=='operator.execution-continuation.v1'
+    ||c.binding?.assignment_id!==(assignment.goal_id??assignment.assignment_id)
+    ||!['session_id','run_id','generation'].every(k=>c.binding?.[k]===assignment[k]))
+    throw Error('execution_continuation_binding_mismatch');
+  const resourceOnly=c.state==='hold'&&c.resource_advice_only===true
+    &&['no_ready_work','ordinary_task_reporting'].includes(c.reason);
+  if((c.state!=='ready'&&!resourceOnly)||c.checkpoint_recommended!==true||!c.remaining_resources)return null;
+  const meters={};
+  for(const key of ['provider_calls','total_tokens','operations','active_execution_ms']) {
+    const m=c.remaining_resources[key];if(!m)continue;
+    if(!Number.isSafeInteger(m.limit)||m.limit<0
+      ||!(m.used===null&&m.remaining===null||Number.isSafeInteger(m.used)&&m.used>=0
+        &&Number.isSafeInteger(m.remaining)&&m.remaining===Math.max(0,m.limit-m.used)))
+      throw Error('execution_continuation_reserve_invalid');
+    meters[key]=m;
+  }
+  if(!Object.values(meters).some(m=>m.remaining!==null))return null;
+  const runway=c.token_runway;
+  if(runway!=null&&(runway.basis!=='largest_of_last_eight_completed_calls'||runway.advisory_only!==true
+    ||!Number.isSafeInteger(runway.sample_count)||runway.sample_count<1||runway.sample_count>8
+    ||!Number.isSafeInteger(runway.tokens_per_call)||runway.tokens_per_call<1
+    ||!Number.isSafeInteger(runway.estimated_calls_remaining)||runway.estimated_calls_remaining<0
+    ||meters.total_tokens?.remaining==null
+    ||runway.estimated_calls_remaining!==Math.floor(meters.total_tokens.remaining/runway.tokens_per_call)))
+    throw Error('execution_continuation_reserve_invalid');
+  const near=(key,n)=>meters[key]?.remaining!=null&&meters[key].remaining<=n;
+  const urgentTokens=runway!=null&&runway.estimated_calls_remaining<=2;
+  const stage=near('active_execution_ms',30000)||near('provider_calls',1)||urgentTokens?2:1;
+  const window=JSON.stringify(Object.entries(meters).map(([key,m])=>[key,m.limit]));
+  if(tracker.window===window&&tracker.stage>=stage)return null;
+  tracker.window=window;tracker.stage=stage;
+  const remaining=Object.fromEntries(Object.entries(meters).map(([key,m])=>[key,m.remaining]));
+  return {role:'user',content:[{type:'input_text',text:
+    'Host checkpoint warning: current remaining allocation '+JSON.stringify(remaining)+'. '+
+    'These are cumulative task resources, not a fresh allowance for this response. '+
+    (runway?'At recent context sizes, about '+runway.estimated_calls_remaining+' more calls fit the token reserve (estimate, not a guarantee; based on the largest of the last '+runway.sample_count+' completed calls, including cached tokens). ':'')+
+    (urgentTokens?'The token reserve is nearly exhausted. Do not start another area or optional review. Prioritize focused readback of any unsaved work, an authorized useful save if needed, and an honest partial handoff using retained evidence. Do not repeat checks already supported by current evidence merely to polish the report. ':'')+
+    'Before starting more drafting, leave enough for focused readback, any authorized save of useful work, and an honest partial handoff. '+
+    'If that does not fit, preserve and report the current work and specific remaining items instead of beginning another batch. '+
+    'A save is not verification; never call unsaved changes saved. This warning grants no extra calls, time, native permission or completion and does not override Pause or unknown effects.'}]};
 }
 
 export async function missingWorkReportContinuation(assignment, request, reminderCount = 0, progress = {}, options = {}) {

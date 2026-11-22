@@ -52,13 +52,20 @@ function appendAudit(evidence:string,row:unknown):void {
  fs.appendFileSync(file,JSON.stringify(row)+'\n');
 }
 export function sweepImageEvidence(workspace:string,evidence:string,options:{now?:number;policy?:Policy;terminalAssignments?:Set<string>}={}){
- const now=options.now??Date.now(),policy=options.policy??IMAGE_EVIDENCE_RETENTION,state=scan(evidence,now),terminal=options.terminalAssignments??terminalAssignments(workspace);
+ const now=options.now??Date.now(),policy=options.policy??IMAGE_EVIDENCE_RETENTION,state=scan(evidence,now);
+ let terminal=options.terminalAssignments;
  let bytes=[...state.rows.values()].reduce((n,r)=>n+r.bytes,0),objects=state.rows.size,removedBytes=0,removedObjects=0;
  const pinsFile=path.join(evidence,'retention-pins.json');direct(evidence,pinsFile);
  const pins=new Set<string>(fs.existsSync(pinsFile)?JSON.parse(fs.readFileSync(pinsFile,'utf8')).content_hashes??[]:[]);
  for(const row of [...state.rows.values()].sort((a,b)=>a.at-b.at)){
-  const protectedRow=pins.has('sha256:'+row.hash)||row.refs.some(ref=>!ref.media_type?.startsWith('image/')||!ref.assignment_id||!terminal.has(ref.assignment_id)||['required','authoritative'].includes(ref.verification_relevance));
-  if(protectedRow||now-row.at<=policy.maxAgeMs&&bytes<=policy.maxBytes&&objects<=policy.maxObjects)continue;
+  if(now-row.at<=policy.maxAgeMs&&bytes<=policy.maxBytes&&objects<=policy.maxObjects)continue;
+  if(pins.has('sha256:'+row.hash)||row.refs.some(ref=>!ref.media_type?.startsWith('image/')||!ref.assignment_id||['required','authoritative'].includes(ref.verification_relevance)))continue;
+  // Replaying task history is needed only for a real deletion candidate. Fresh
+  // under-budget captures and permanently protected rows need no task lookup.
+  // Discover current canonical state once per pressured sweep, never cache it
+  // across sweeps or infer terminal state from a goal's presentation status.
+  terminal??=terminalAssignments(workspace);
+  if(row.refs.some(ref=>!terminal!.has(ref.assignment_id!)))continue;
   direct(evidence,row.file);const raw=fs.readFileSync(row.file);if(createHash('sha256').update(raw).digest('hex')!==row.hash)throw Error('image_retention_digest_mismatch');
   // Preserve immutable refs, bindings and an explicit expiry audit. Never edit
   // a native observation/criterion or manufacture replacement image evidence.

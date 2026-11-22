@@ -80,6 +80,20 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             Func<string> program,Action checkpoint)
         {
             var added=new HashSet<long>();var modified=new HashSet<long>();var deleted=new HashSet<long>();
+            // Keep only bounded type identities before execution. A deleted type
+            // cannot be identified afterward by GetElement; do not reopen the
+            // user's original file merely to recover its name. This optional
+            // diagnostic must never change admitted effects or settlement.
+            var typeClock=Stopwatch.StartNew();
+            OperatorDeletedTypeContext typeContext;
+            using(var types=new FilteredElementCollector(document))
+                typeContext=OperatorDeletedTypeContext.Capture(
+                    types.WhereElementIsElementType().Select(e=>ElementIdCompat.GetValue(e.Id)), id=>
+                    {
+                        var type=(ElementType)document.GetElement(ElementIdCompat.Create(id));
+                        return new OperatorDeletedTypeContext.Identity {Id=id,UniqueId=type.UniqueId,
+                            ClassName=type.GetType().Name,Name=type.Name,FamilyName=type.FamilyName};
+                    },()=>typeClock.ElapsedMilliseconds);
             var failures=new List<DynamicCapturedFailure>();string? eventFailure=null;bool observing=false,observedCommit=false;
             var activeDocumentScope=scope.EffectScope=="active_document";
             // Preserve the existing pinned/grouped protection without asking
@@ -139,6 +153,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                     observing=false;app.Application.DocumentChanged-=changed;
                     try{transaction.Dispose();}finally{group.Dispose();}
                 });
+            typeContext.Attach(result);
             OperatorNativeProgramExecution.RefreshCommittedView(result,()=>
             {
                 var ui=app.ActiveUIDocument;

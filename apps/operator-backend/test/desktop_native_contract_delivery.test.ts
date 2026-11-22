@@ -7,6 +7,7 @@ import Ajv from 'ajv';
 import {boundDesktopNativeOutput} from '../src/assignments/desktop_native_output.js';
 import * as output from '../src/assignments/desktop_native_output.js';
 import {storeEvidence,retrieveEvidence} from '../src/evidence/evidence_store.js';
+import {getEvidenceContextBudget} from '../src/evidence/model_context_budget.js';
 const scope={session_id:'s',assignment_id:'a',run_id:'r',generation:1};
 const fixtureName='desktop-native-program-contract293.json';
 const fixture=[path.join(import.meta.dirname,'fixtures',fixtureName),path.resolve(import.meta.dirname,'../../test/fixtures',fixtureName)].find(p=>fs.existsSync(p));
@@ -35,7 +36,7 @@ test('actual292 21275-byte description delivers usable bounded C# arguments, not
   &&g.text===contract.tool.inputSchema.properties.native_program.description));
  assert.equal(tool.schema_annotations_omitted,true);assert.equal(p.trust_level,'host_observed');
  assert.equal(p.effect_state,null);assert.equal(p.verification_relevance,'supporting');
- assert(Buffer.byteLength(JSON.stringify(p))<=8192);assert(doc.omitted_paths.includes('payload.tool.description'));
+ assert(Buffer.byteLength(JSON.stringify(p))<=getEvidenceContextBudget().item_bytes);assert(doc.omitted_paths.includes('payload.tool.description'));
  const raw=retrieveEvidence({scope,evidence_id:p.evidence_id,fields:['tool.description','tool.inputSchema'],purpose:'Read exact omitted SDK instructions',max_bytes:32768});
  assert.deepEqual((raw.selection as any)['tool.inputSchema'],contract.tool.inputSchema);
  assert.equal((raw.selection as any)['tool.description'],contract.tool.description);

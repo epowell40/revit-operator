@@ -79,6 +79,65 @@ function fixture(count=0): any {
   return s;
 }
 
+function renewedFixture(): any {
+  const s=fixture(), at='2026-11-21T07:53:00Z';
+  s.spec.created_at='2026-11-21T07:00:00Z';
+  s.spec.execution_policy={mode:'local_advisory_v1',max_provider_calls:64,max_operations:1024,
+    max_total_tokens:8_000_000,max_wall_clock_ms:7_200_000,
+    progress_allowance:{mode:'verified_native_changes_v1',max_provider_calls:512,max_operations:1024,max_total_tokens:128_000_000}};
+  s.provider_calls=Object.fromEntries(Array.from({length:375},(_,i)=>['call'+i,{admitted_at:at,completed_at:at,
+    usage:{total_tokens:i===0?66_167_278:0}}]));
+  s.user_followup_allocation={command_id:'renew',allocated_at:at,
+    earned_baseline:{max_provider_calls:64,max_operations:1024,max_total_tokens:8_000_000,max_wall_clock_ms:7_200_000},
+    limits:{max_provider_calls:439,max_operations:1024,max_total_tokens:82_167_278,max_wall_clock_ms:7_200_000},
+    resource_renewal:{command_id:'renew',authorized_at:at,request:{provider_calls:64,total_tokens:16_000_000},
+      ceilings:{max_provider_calls:512,max_total_tokens:128_000_000}}};
+  return s;
+}
+
+test('fresh explicit renewal warns from remaining window, preserving cumulative accounting and frozen limits',()=>{
+  const s=renewedFixture(), original=JSON.stringify(s), now='2026-11-21T07:54:00Z';
+  const status=assignmentWorkBudgetStatusV2(s,ordinary,now);
+  assert.equal(status.resources.provider_calls.used,375);
+  assert.equal(status.resources.provider_calls.remaining,64);
+  assert.equal(status.resources.total_tokens.used,66_167_278);
+  assert.equal(status.resources.total_tokens.remaining,16_000_000);
+  assert.deepEqual(status.approaching_limits,[]);
+  assert.equal(status.checkpoint_recommended,false);
+  assert.equal(JSON.stringify(s),original);
+  // Pause/reopen and ordinary follow-up never refill or reset the warning window.
+  const reopened=JSON.parse(original);reopened.user_followup_allocation.allocated_at=now;
+  for(let i=375;i<423;i++) reopened.provider_calls['call'+i]={admitted_at:now,completed_at:now,usage:{total_tokens:0}};
+  assert.deepEqual(assignmentWorkBudgetStatusV2(reopened,ordinary,now).approaching_limits,['provider_calls']);
+  reopened.provider_calls.call0.usage.total_tokens=78_167_278;
+  assert.deepEqual(assignmentWorkBudgetStatusV2(reopened,ordinary,now).approaching_limits,['provider_calls','total_tokens']);
+  reopened.provider_calls.call0.usage.total_tokens--;
+  assert.deepEqual(assignmentWorkBudgetStatusV2(reopened,ordinary,now).approaching_limits,['provider_calls']);
+  for(let i=423;i<439;i++) reopened.provider_calls['call'+i]={admitted_at:now,completed_at:now,usage:{total_tokens:0}};
+  assert.equal(assignmentWorkBudgetStatusV2(reopened,ordinary,now).resources.provider_calls.remaining,0);
+  assert.equal(assignmentWorkBudgetStatusV2(reopened,ordinary,now).checkpoint_recommended,true);
+});
+
+test('renewal cannot hide operations, elapsed-time or malformed/ordinary allocation warnings',()=>{
+  const now='2026-11-21T07:54:00Z';
+  const operations=renewedFixture();operations.operations=Object.fromEntries(Array.from({length:768},(_,i)=>['op'+i,{}]));
+  const opWarnings=assignmentWorkBudgetStatusV2(operations,ordinary,now).approaching_limits;
+  assert(opWarnings.includes('operations'));
+  assert(!opWarnings.includes('provider_calls')&&!opWarnings.includes('total_tokens'));
+  const elapsed=renewedFixture();elapsed.provider_calls.call0.completed_at='2026-11-21T09:24:00Z';
+  assert(assignmentWorkBudgetStatusV2(elapsed,ordinary,'2026-11-21T09:24:00Z').approaching_limits.includes('active_execution_ms'));
+  for(const change of [
+    (s:any)=>delete s.user_followup_allocation.resource_renewal,
+    (s:any)=>s.user_followup_allocation.resource_renewal.request=null,
+    (s:any)=>s.user_followup_allocation.resource_renewal.request.provider_calls=65,
+    (s:any)=>s.user_followup_allocation.resource_renewal.request.total_tokens=16_000_001,
+    (s:any)=>s.user_followup_allocation.resource_renewal.authorized_at='bad',
+    (s:any)=>s.user_followup_allocation.resource_renewal.command_id='',
+    (s:any)=>delete s.provider_calls.call1.usage
+  ]){const s=renewedFixture();change(s);const result=assignmentWorkBudgetStatusV2(s,ordinary,now);
+    assert(result.approaching_limits.includes('provider_calls'));assert(result.approaching_limits.includes('total_tokens'));}
+});
+
 test("local work earns bounded continuation from distinct native readbacks without rewriting its frozen policy",()=>{
   const s=fixture(2);
   s.spec.created_at="2026-09-16T00:00:00Z";
@@ -261,4 +320,25 @@ test("retained C43 32-call stop had two verified native placements and six uncom
  assert.equal(s.observed_provider_call_count,32);assert.equal(s.work_plan.items.length,8);
  assert.equal(assignmentWorkAllowanceV2(s).verified_changes,2);assert.equal(assignmentWorkAllowanceV2(s).provider_calls,80);
  assert(s.observed_provider_call_count<defaultAssignmentWorkBudgetV2(s,ordinary).max_provider_calls);
+});
+
+test('explicit active-time window warns on its remaining reserve rather than lifetime percentage',()=>{
+ const s=renewedFixture(),at='2026-11-21T09:00:00Z';
+ Object.assign(s.provider_calls.call0,{admitted_at:'2026-11-21T07:00:00Z',completed_at:at});
+ s.user_followup_allocation.allocated_at=at;
+ const r=s.user_followup_allocation.resource_renewal;r.authorized_at=at;
+ r.request.active_execution_ms=1_200_000;r.ceilings.max_wall_clock_ms=8_400_000;
+ s.user_followup_allocation.limits.max_wall_clock_ms=8_400_000;
+ const result=assignmentWorkBudgetStatusV2(s,ordinary,at);
+ assert.equal(result.resources.active_execution_ms.used,7_200_000);
+ assert.equal(result.resources.active_execution_ms.remaining,1_200_000);
+ assert(!result.approaching_limits.includes('active_execution_ms'));
+ Object.assign(s.provider_calls.call0,{completed_at:'2026-11-21T09:16:00Z'});
+ const later=assignmentWorkBudgetStatusV2(s,ordinary,'2026-11-21T09:16:00Z');
+ assert(later.approaching_limits.includes('active_execution_ms'));
+ for(const change of [(r:any)=>r.request.active_execution_ms=0,(r:any)=>delete r.ceilings.max_wall_clock_ms,
+   (r:any)=>r.ceilings.max_wall_clock_ms=1]){
+   const x=structuredClone(s);change(x.user_followup_allocation.resource_renewal);
+   assert(assignmentWorkBudgetStatusV2(x,ordinary,'2026-11-21T09:16:00Z').approaching_limits.includes('active_execution_ms'));
+ }
 });

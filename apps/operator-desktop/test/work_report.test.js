@@ -2,6 +2,22 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { submitWorkReportForReview, WORK_REPORT_TOOL, retainedWorkReportMessage } from "../work_report.mjs";
 const binding={kernel_version:2,session_id:"session",goal_id:"assignment",run_id:"run",generation:3};
+test('partial repairs and a blocking decision share a recoverable clarification without a plan or a completion claim',async()=>{
+ const {requestTaskInput,retainedTaskInputMessage}=await import('../task_input.mjs');
+ const owner={assignment_id:'assignment',session_id:'session',run_id:'run',generation:3};
+ const report={claimed_completed:['Connected four grilles. Saved Repair.rvt.'],remaining_work:['Identify the inline symbol.'],uncertainties:['No legend is visible.'],needs_input:{question:'Which device does the inline symbol represent?',field:'inline_device'}};
+ const status=async(_url,options)=>{assert.equal(JSON.parse(options.body).action,'status');return {ok:true,outcome:'active',verification_policy:'advisory'}};
+ let saved;
+ const result=await submitWorkReportForReview(binding,report,status,{requestInput:input=>requestTaskInput(binding,input,async(_url,options)=>{
+   if(options.method==='GET')return {assignment_kernel_v2:{snapshot:{current_binding:owner,spec:{input_variables:[]}}}};
+   saved=JSON.parse(options.body);
+   return {ok:true,assignment_snapshot_v2:{current_binding:owner,outcome:'awaiting_user_input',pending_input_variable_ids:['inline_device'],clarifications:{[saved.clarification_id]:{variable_id:'inline_device',question:saved.question,work_summary:saved.work_summary}}}};
+ })});
+ const message=retainedTaskInputMessage({name:'report_work_for_review'},{output:JSON.stringify(result)});
+ assert.equal(saved.question,report.needs_input.question);assert.ok(message.includes(saved.work_summary));assert.equal(result.verified,false);
+ for(const text of [report.needs_input.question,...report.claimed_completed,...report.remaining_work,...report.uncertainties])assert.ok(message.includes(text));
+ for(const state of [{outcome:'active',verification_policy:'strict'},{outcome:'paused',verification_policy:'advisory'}])await assert.rejects(submitWorkReportForReview(binding,report,async()=>({ok:true,...state}),{requestInput:()=>assert.fail('unexpected write')}),/active_advisory/);
+});
 const proposal={claimed_completed:["Printed file inspected: M000.pdf"],remaining_work:["Independent completion verification"],uncertainties:[]};
 test("report uses only the host binding and retains backend outcome without upgrading it",async()=>{
  const calls=[];const pending={ok:true,outcome:"active",completion_proposal:{verified:false}};
@@ -26,7 +42,7 @@ test("interrupted proposal or backend safety rejection is never automatically re
 });
 test("tool labels claims unverified and cannot accept a model-selected assignment identity",()=>{
  assert.match(WORK_REPORT_TOOL.description,/unverified/);assert.equal(WORK_REPORT_TOOL.parameters.additionalProperties,false);
- assert.deepEqual(Object.keys(WORK_REPORT_TOOL.parameters.properties),["claimed_completed","remaining_work","uncertainties","written_findings"]);
+ assert.deepEqual(Object.keys(WORK_REPORT_TOOL.parameters.properties),["needs_input","claimed_completed","remaining_work","uncertainties","written_findings"]);
 });
 
 import {readFileSync} from "node:fs";
@@ -82,4 +98,12 @@ test("a report with no completed work cannot imply completion or hide its open i
  const report=retainedWorkReportMessage({name:"report_work_for_review"},{output:JSON.stringify({ok:true,verification_policy:"advisory",completion_proposal:{claimed_completed:[],remaining_work:["Resolve the arrow target."],uncertainties:["No edit was dispatched."],verified:false,review_id:"review"}})});
  assert.match(report.split("## Details")[0],/No completed work was reported/);
  assert.match(report,/Resolve the arrow target/);assert.match(report,/No edit was dispatched/);
+});
+
+test('Responses keeps the user-question field optional and a completed read report does not request input',async()=>{
+ assert.equal(WORK_REPORT_TOOL.strict,false,'Responses auto-strict conversion must not require optional needs_input');
+ assert(!WORK_REPORT_TOOL.parameters.required.includes('needs_input'));
+ const report={claimed_completed:['Read the current project and view.'],remaining_work:[],uncertainties:['Version observed from UI.'],written_findings:'The corrected read and visible window agree.'};
+ const calls=[];await submitWorkReportForReview(binding,report,async(_route,options)=>{const x=JSON.parse(options.body);calls.push(x);return x.action==='status'?{ok:true,outcome:'active',verification_policy:'advisory'}:{ok:true,verification_policy:'advisory',completion_proposal:report}},{requestInput:()=>assert.fail('No user decision was requested')});
+ assert.deepEqual(calls.map(x=>x.action),['status','propose_completion']);assert.equal(calls[1].completion_proposal.needs_input,undefined);
 });

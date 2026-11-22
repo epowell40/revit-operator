@@ -98,6 +98,7 @@ import {
 } from "./lib/executionStrategyEvidence.js";
 import { runDynamicRevitProgram } from "./lib/dynamicRevitProgramRunner.js";
 import { presentDynamicProgramResult } from "./lib/dynamicProgramPresentation.js";
+import { projectConnectorWorkGuidance } from "./lib/connectorWorkGuidance.js";
 import { DYNAMIC_REVIT_SOURCE_GUIDE, DYNAMIC_REVIT_TOOL_GUIDE } from "./lib/dynamicRevitSdkGuide.js";
 import { createOperatorBackendClient } from "./lib/operatorBackendClient.js";
 import { runWithOperatorBackendAuth } from "./lib/operatorBackendAuth.js";
@@ -1137,6 +1138,7 @@ server.tool("operator_manage_work_plan", "Manage the saved task checklist. The n
       view_types:z.array(z.enum(['FloorPlan','CeilingPlan','EngineeringPlan','Section','Elevation','ThreeD'])).min(1).max(6),
       halftone:z.boolean(),hidden_policy:z.literal('exclude_hidden')
     }).strict(),categoryVisibilityScopeSchemaV1,familyStaticTextScopeSchemaV1]).optional().describe('check_scope + existing itemId recomputes declared coverage from native bytes, never actor counts. Omit operationIds to let the host select matching current read references; explicit references remain supported. It retains unavailable attempts and never marks an item complete. Reads must start after the latest edit, including SaveAs. Tags: one complete document /revit/find-elements category census (only limit/includeGeometry extras); fresh Document.GetElement + OwnerViewId + HasLeader for candidates selected by view_ids/family_names. subject_family_names additionally needs complete GetTaggedLocalElements and subject Family readbacks. Category graphics: kind=category_graphics_v1, declared disciplines/view_types; one complete /revit/views list with includeTemplates:true, no filters except the exact disciplines and limit/offset0. Then /revit/visibility get with categoryName + includeCategoryState:true for EVERY matching non-template view. Category visibility: kind=category_visibility_v1 plus hidden:true/false; optional sheet_ids derives candidates from complete native sheet details with viewport geometry. Family static text: kind=family_static_text_v1 uses full host category census and fresh complete family content per discovered type. Already-correct states can be checked without edits. Host derives controlling template/property and excluded hidden views for halftone only. Does not prove hidden preservation, effective linked appearance, source interpretation or whole-item completion. Keep scope consistent; incomplete/changed evidence fails.'),
+    reuseLocation: z.boolean().optional().describe('locate only: reuse the current item source crop and native view address. Supply locationHint with the updated pass, stage and evidence. Cannot combine with a new source/native address.'),
     locationHint: z.object({ status: z.enum(['unresolved','ambiguous','candidate']), reason: z.string().min(1).max(240),
       source: z.object({ attachment_id:z.string().min(1).max(160),filename:z.string().min(1).max(160),sha256:z.string().regex(/^[a-f0-9]{64}$/),
         page:z.number().int().positive().max(100000),page_count:z.number().int().positive().max(100000),sheet_label:z.string().min(1).max(120).optional(),view_label:z.string().min(1).max(120).optional(),
@@ -1171,10 +1173,11 @@ server.tool("operator_manage_work_plan", "Manage the saved task checklist. The n
       if(args.action!=='check_scope'&&args.scopeCheck!==undefined)throw Error('work_plan_scope_arguments_invalid');
       if(args.action==='locate' && (!args.itemId || !args.locationHint || args.items || args.operationIds || args.assumptions || args.completionProposal || args.followup || args.reason)) throw new Error('work_plan_location_arguments_invalid');
       if(args.action!=='locate' && args.locationHint!==undefined) throw new Error('work_plan_location_arguments_invalid');
+      if(args.reuseLocation!==undefined&&(args.action!=='locate'||args.reuseLocation!==true||args.locationHint?.source||args.locationHint?.native))throw Error('work_plan_reuse_location_invalid');
       if(args.locationHint) {
         const {source,native,status}=args.locationHint;
         const region=source?.region;
-        if(status==='candidate' && !source && !native || source && source.page>source.page_count
+        if(status==='candidate' && !source && !native && args.reuseLocation!==true || source && source.page>source.page_count
           || region && (region.min_u>=region.max_u || region.min_v>=region.max_v)) throw new Error('work_plan_location_arguments_invalid');
       }
       if (["defer","resume_item"].includes(args.action) && (!args.itemId || !args.reason || args.items || args.operationIds || args.assumptions || args.completionProposal || args.followup)) throw new Error("work_plan_deferral_arguments_invalid");
@@ -1192,6 +1195,7 @@ server.tool("operator_manage_work_plan", "Manage the saved task checklist. The n
         action: args.action,
         ...(args.scopeCheck ? {scope_check:args.scopeCheck} : {}),
         ...(args.locationHint ? {location_hint:args.locationHint} : {}),
+        ...(args.reuseLocation===true?{reuse_location:true}:{}),
         ...(args.reason !== undefined ? {reason:args.reason} : {}),
         ...(args.completionProposal ? { completion_proposal: args.completionProposal } : {}),
         ...(args.followup ? { followup: args.followup } : {}),
@@ -1613,7 +1617,9 @@ server.tool("revit_call_tool", "Generic Revit bridge call by method/path. Use wh
         ? projectFindElementsResultForAgent(data)
         : pathInput === "/revit/view-owned-detailing"
           ? projectViewOwnedDetailingForAgent(data, dispatchBody)
-          : data;
+          : pathInput === "/revit/get-connectors"
+            ? projectConnectorWorkGuidance(data, dispatchBody)
+            : data;
       const output =
         projected && typeof projected === "object" && !Array.isArray(projected)
           ? addWorkspaceLinks(projected as Record<string, any>)
@@ -3395,7 +3401,7 @@ server.tool("revit_get_connectors", "Get connector origins/sizes/directions for 
       const data = await callRevit("/revit/get-connectors", "POST", req, {
         assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
       });
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+      return { content: [{ type: "text", text: JSON.stringify(projectConnectorWorkGuidance(data, req), null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
 );

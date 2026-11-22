@@ -122,3 +122,29 @@ test("partial output stays valid and explicitly unverified in the model-facing f
   assert.equal(view.native_preview.ok, false);
   assert.deepEqual(view.program_report_not_completion_evidence, {});
 });
+
+test("wrong MEP connector owner redirects a confirmed rollback to compatible native tools", () => {
+  const error = "The owner should be (flex) duct or pipe.\r\nParameter name: connector [Native C# last executed statement: submitted source line 1, column 389.]";
+  const outcome = { persistent_effect: "none", native_transaction_state: "rolled_back", error };
+  const diagnostics = [{ code: "NATIVE_PROGRAM_FAILED", phase: "native", message: error }];
+  const payload = { execution_lane: "native", requested_mode: "apply", execution_status: "failed", execution_ok: false,
+    native_outcome: outcome, diagnostics };
+  const before = JSON.stringify(payload);
+  const view = presentDynamicProgramResult(payload);
+  assert.match(String(view.guidance), /NewTakeoffFitting.*air_terminal_on_duct/);
+  assert.match(String(view.guidance), /inspect.*connector.*rigid duct/i);
+  assert.doesNotMatch(String(view.guidance), /coincident curves/);
+  assert.deepEqual(view.diagnostics, diagnostics);
+  assert.equal(JSON.stringify(payload), before);
+
+  const rejected = [
+    { ...payload, native_outcome: { ...outcome, persistent_effect: "unknown" } },
+    { ...payload, native_outcome: { ...outcome, native_transaction_state: "committed" } },
+    { ...payload, native_outcome: { ...outcome, error: "The owner should be (flex) duct or pipe. Parameter name: main" } },
+    { ...payload, requested_mode: "read" },
+    { ...payload, execution_status: "completed", execution_ok: true },
+  ];
+  for (const input of rejected) {
+    assert.doesNotMatch(String(presentDynamicProgramResult(input).guidance), /air_terminal_on_duct/);
+  }
+});

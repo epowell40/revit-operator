@@ -54,7 +54,8 @@ export function buildProviderUsageCoverageV1(attemptValues, receiptValues) {
       for (const responseId of usage.raw_response_ids) {
         if (covered.has(responseId)) valid = false;
         covered.add(responseId);
-        if (!receipts.some(receipt => receipt.provider === "openai" && receipt.route === (direct ? "desktop_computer" : "codex_agent")
+        if (!receipts.some(receipt => (direct ? ["openai", "gemini", "anthropic"].includes(receipt.provider) : receipt.provider === "openai")
+          && receipt.route === (direct ? "desktop_computer" : "codex_agent")
           && receipt.call_id === responseId && (direct || receipt.turn_id === usage.turn_id))) missing.push(responseId);
       }
       if (missing.length > 0) valid = false;

@@ -100,6 +100,7 @@ test("V2 publication retains the canonical provider ledger after downstream chat
     }
   }));
   const publication = buildAssignmentKernelPublicationV2(journal.snapshot());
+  assert.equal(publication.supports_active_time_renewal_v1,true);
   assert.equal(publication.schema, ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA);
   assert.equal(publication.provider_ledger.schema, ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA);
   assert.deepEqual(publication.provider_ledger.call_ids, ["provider-call-1"]);

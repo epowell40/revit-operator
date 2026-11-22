@@ -61,6 +61,16 @@ Revit context, compacted tool results, and bounded image attachments. They
 return the next smallest Bridge action or tightly coupled action group; the
 host executes it and supplies the result on the next turn.
 
+### Optional Desktop models for local development
+
+Set `OPERATOR_EXTERNAL_DESKTOP_MODELS=1` in the local backend process and
+configure `OPERATOR_GEMINI_API_KEY` or `OPERATOR_ANTHROPIC_API_KEY` using
+the same private environment as the backend. The authenticated loopback
+Desktop client then offers Gemini 4 Neon, Gemini 4 Carbon, and Claude Opus 5.5
+for the providers with credentials. OpenAI still handles configured intake.
+Start a new task to change providers. The selected provider receives the
+task prompt and available model evidence, including images and tool results.
+
 OpenAI, Gemini, and Anthropic also share one exact, bounded `dynamic_program`
 response contract. This lane is disabled by default. When an operator explicitly
 enables the exact development laboratory runner and configures absolute supervisor,

@@ -1,3 +1,8 @@
+import {after as restoreRequestBudget} from 'node:test';
+// These retained projection/compaction fixtures deliberately exercise the tighter supported cap.
+const originalRequestBudget=process.env.OPERATOR_EVIDENCE_REQUEST_BUDGET_BYTES;
+process.env.OPERATOR_EVIDENCE_REQUEST_BUDGET_BYTES='32768';
+restoreRequestBudget(()=>{if(originalRequestBudget===undefined)delete process.env.OPERATOR_EVIDENCE_REQUEST_BUDGET_BYTES;else process.env.OPERATOR_EVIDENCE_REQUEST_BUDGET_BYTES=originalRequestBudget;});
 import {assertCacheAnnotatedInputs} from './desktop_cache_wire.fixtures.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';

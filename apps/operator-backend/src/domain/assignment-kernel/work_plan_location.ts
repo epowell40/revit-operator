@@ -3,6 +3,7 @@ import type { AssignmentBindingV2 } from './identity.js';
 import type { AssignmentWorkPlanV2 } from './work_plan.js';
 import { sameAssignmentBindingV2 } from './identity.js';
 import { kernelAssertV2 } from './errors.js';
+import { nativeDocumentCheckpointRequestMatchesV2 } from '@revitoperator/assignment-kernel-v2-contracts';
 
 /** Assistant interpretation for resuming work. Never target authority or proof. */
 export type WorkPlanLocationHintV2 = Readonly<{
@@ -31,8 +32,19 @@ const object = (v: unknown, allowed: readonly string[]) => Boolean(v && typeof v
 
 /** Actor backcheck eligibility only; never semantic or whole-task verification. */
 function latestEffectTime(snapshot:AssignmentSnapshotV2):number {
-  return Object.values(snapshot.operations).reduce((latest,op)=>op.requested_effect==='apply'&&op.persistent_effect!=='none'
-    ?Math.max(latest,Date.parse(op.result?.completed_at??op.opened_at)):latest,0);
+  return Object.values(snapshot.operations).reduce((latest,op)=>{
+    if(op.requested_effect!=='apply'||op.persistent_effect==='none')return latest;
+    // A bound, settled save checkpoints the same document. It does not make
+    // preceding model reads stale. Images still have their own freshness checks.
+    const checkpoint=op.persistent_effect==='applied'&&op.admission_state==='admitted'&&op.dispatch_state==='dispatched'
+      &&op.settlement_state==='settled'&&!snapshot.input_invalidated_operation_ids?.includes(op.operation_id)
+      &&sameAssignmentBindingV2(op.binding,snapshot.current_binding)
+      &&Boolean(op.result&&sameAssignmentBindingV2(op.result.binding,snapshot.current_binding))
+      &&/^[a-f0-9]{64}$/.test(op.request_identity?.request_signature??'')
+      &&op.request_identity?.request_signature===op.result?.request_identity?.request_signature
+      &&nativeDocumentCheckpointRequestMatchesV2(op,snapshot.current_binding.document_fingerprint);
+    return checkpoint?latest:Math.max(latest,Date.parse(op.result?.completed_at??op.opened_at));
+  },0);
 }
 export function draftingReadbackReasonV2(snapshot:AssignmentSnapshotV2,id:string,at:string,lastEdit=latestEffectTime(snapshot)):string|null {
   const op=snapshot.operations[id];
@@ -44,6 +56,15 @@ export function draftingReadbackReasonV2(snapshot:AssignmentSnapshotV2,id:string
   if(!(Date.parse(op.opened_at)>lastEdit))return 'predates_latest_effect';
   if(!(Date.parse(op.result.completed_at)<=Date.parse(at)))return 'completion_time_unavailable_or_future';
   return null;
+}
+
+/** Reuse an existing area's address without copying its prior check verdict. */
+export function reuseWorkPlanLocationV2(snapshot:AssignmentSnapshotV2,itemId:string,hint:WorkPlanLocationHintV2):WorkPlanLocationHintV2 {
+  kernelAssertV2(!hint.source&&!hint.native,'work_plan_reuse_location_invalid','A reused location cannot replace the source crop or native view.');
+  const previous=snapshot.work_plan?.items.find(item=>item.item_id===itemId)?.location_history?.at(-1);
+  kernelAssertV2(Boolean(previous?.source?.region&&previous.native&&sameAssignmentBindingV2(previous.binding,snapshot.current_binding)),
+    'work_plan_reuse_location_unavailable','Locate this area with a current source crop and model view first.');
+  return {...structuredClone(hint),source:structuredClone(previous!.source),native:structuredClone(previous!.native)};
 }
 
 export function recordWorkPlanLocationV2(snapshot: AssignmentSnapshotV2, itemId: string,
@@ -110,7 +131,7 @@ export function projectCompactWorkPlanLocationV2(item: { location_history?: read
       native:{view_id:n.view_id,view_name:n.view_name},
       binding_current:snapshot?sameAssignmentBindingV2(current.binding,snapshot.current_binding):null,
       drafting:{pass:d.pass,stage:d.stage,element_ids:d.element_ids.slice(0,16),element_count:d.element_ids.length,
-        next_action:d.next_action,remaining:d.remaining},
+        ...(d.stage==='attempted'||d.stage==='drafted'?{next_action:d.next_action}:{}),remaining:d.remaining},
       drafting_passes:projectDraftingPasses(item,snapshot).map(p=>({pass:p.pass,stage:p.stage,needs_recheck:p.needs_recheck})),
       history_count:item.location_history!.length,projection_only:true,
       notice:'Compact actor tracking; full records retained in journal. First 16 element IDs shown. Not host completion proof. Refresh source/model imagery and reconcile on recovery.'};
@@ -139,7 +160,7 @@ export function projectDraftingPasses(item:{location_history?:readonly WorkPlanL
     const regionChanged=JSON.stringify(record.source)!==JSON.stringify(current?.source)||record.native?.view_id!==current?.native?.view_id;
     const needs_recheck=d.stage==='checked'&&(regionChanged||!snapshot||!sameAssignmentBindingV2(record.binding,snapshot.current_binding)
       ||!!snapshot.unresolved_unknown_operation_ids.length||!!laterChange);
-    return {pass:d.pass,stage:d.stage,needs_recheck,recorded_at:record.recorded_at,
+    return {pass:d.pass,stage:d.stage,needs_recheck,recorded_at:record.recorded_at,linked_element_count:d.element_ids.length,
       checked_by:'execution_actor',host_certified:false};
   });
 }

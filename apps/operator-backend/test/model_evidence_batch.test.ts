@@ -1,3 +1,8 @@
+import {after as restoreRequestBudget} from 'node:test';
+// These retained overflow fixtures deliberately exercise the supported tighter cap.
+const originalRequestBudget=process.env.OPERATOR_EVIDENCE_REQUEST_BUDGET_BYTES;
+process.env.OPERATOR_EVIDENCE_REQUEST_BUDGET_BYTES='32768';
+restoreRequestBudget(()=>{if(originalRequestBudget===undefined)delete process.env.OPERATOR_EVIDENCE_REQUEST_BUDGET_BYTES;else process.env.OPERATOR_EVIDENCE_REQUEST_BUDGET_BYTES=originalRequestBudget;});
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as context from '../src/evidence/model_context_budget.js';
@@ -61,7 +66,7 @@ test('compaction explicitly preserves source binding, controls and retrieval wit
 
 test('invalid raw/items/envelopes and irreducible native batches still fail closed', () => {
   for (const output of ['x'.repeat(8193), [{type: 'bogus', text: 'x'}],
-    envelope({...projection('oversize'), extra: 'x'.repeat(9000)})])
+    envelope({...projection('oversize'), extra: 'x'.repeat(context.getEvidenceContextBudget().item_bytes+1)})])
     assert.throws(() => prepare([{type: 'function_call_output', output}]));
   const native = batch().map((r, i) => ({...r, output: [{type: 'input_text', text: envelope(projection(`native${i}`, true))}]}));
   assert.throws(() => prepare(native), /32768-byte model-request/);

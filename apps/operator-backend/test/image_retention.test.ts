@@ -4,6 +4,44 @@ import {sweepImageEvidence,admitEvidenceImage,IMAGE_EVIDENCE_RETENTION} from '..
 const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lS0AAAAASUVORK5CYII=','base64');
 function fixture(){const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-image-retention-')),previous=process.env.OPERATOR_WORKSPACE_ROOT;process.env.OPERATOR_WORKSPACE_ROOT=root;return{root,evidence:path.join(root,'evidence'),dispose:()=>{if(previous===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=previous;fs.rmSync(root,{recursive:true,force:true});}};}
 const image=(assignment='done',extra:any={})=>storeEvidence({scope:{session_id:'session',assignment_id:assignment},source:'storage-test',raw:png,media_type:'image/png',trust_level:'host_observed',verification_relevance:'supporting',...extra});
+
+test('fresh image admission does not replay unrelated assignment journals', {concurrency:false}, t=>{
+ const f=fixture();try{
+  const goals=path.join(f.root,'artifacts','goals');fs.mkdirSync(goals,{recursive:true});
+  const readdir=fs.readdirSync;let goalScans=0;
+  t.mock.method(fs,'readdirSync',(...args:any[])=>{if(String(args[0])===goals)goalScans++;return (readdir as any)(...args);});
+  const stored=image();
+  assert.equal(goalScans,0,'Fresh under-budget captures need no terminal-task discovery');
+  assert.deepEqual(readAuthoritativeEvidence(stored.ref,{session_id:'session',assignment_id:'done'}),png);
+ }finally{t.mock.restoreAll();f.dispose();}
+});
+
+test('pins and required or shared non-image refs need no terminal replay even under expiry pressure', {concurrency:false}, t=>{
+ for(const kind of ['pin','required','authoritative','shared']){const f=fixture();try{
+  const stored=image('done',['required','authoritative'].includes(kind)?{verification_relevance:kind}:{});
+  if(kind==='pin')fs.writeFileSync(path.join(f.evidence,'retention-pins.json'),JSON.stringify({content_hashes:[stored.ref.content_hash]}));
+  if(kind==='shared')image('done',{media_type:'application/octet-stream',source:'shared-protected'});
+  const goals=path.join(f.root,'artifacts','goals');fs.mkdirSync(goals,{recursive:true});
+  const readdir=fs.readdirSync;let goalScans=0;
+  t.mock.method(fs,'readdirSync',(...args:any[])=>{if(String(args[0])===goals)goalScans++;return (readdir as any)(...args);});
+  assert.equal(sweepImageEvidence(f.root,f.evidence,{now:Date.now()+8*24*3600_000,policy:{...IMAGE_EVIDENCE_RETENTION,maxObjects:0,maxBytes:0}}).removedObjects,0);
+  assert.equal(goalScans,0);assert(fs.existsSync(path.join(f.root,stored.ref.artifact_location)));
+ }finally{t.mock.restoreAll();f.dispose();}}
+});
+
+test('age, byte and count pressure still read current canonical journals and protect unproven terminal state', {concurrency:false}, t=>{
+ for(const pressure of ['age','bytes','count']){const f=fixture();try{
+  const stored=image(),goal=path.join(f.root,'artifacts','goals','done');fs.mkdirSync(goal,{recursive:true});
+  const file=path.join(goal,'goal.json');fs.writeFileSync(file,JSON.stringify({status:'complete'}));
+  const read=fs.readFileSync;let goalReads=0;
+  t.mock.method(fs,'readFileSync',(...args:any[])=>{if(String(args[0])===file)goalReads++;return (read as any)(...args);});
+  const options={now:Date.now()+(pressure==='age'?8*24*3600_000:0),policy:{...IMAGE_EVIDENCE_RETENTION,...(pressure==='bytes'?{maxBytes:0}:pressure==='count'?{maxObjects:0}:{})}};
+  assert.equal(sweepImageEvidence(f.root,f.evidence,options).removedObjects,0);assert.equal(goalReads,1);
+  fs.writeFileSync(file,'interrupted journal');
+  assert.equal(sweepImageEvidence(f.root,f.evidence,options).removedObjects,0);assert.equal(goalReads,2,'Terminal discovery is fresh per pressured sweep, never cached across sweeps');
+  assert(fs.existsSync(path.join(f.root,stored.ref.artifact_location)));
+ }finally{t.mock.restoreAll();f.dispose();}}
+});
 test('completed supporting images expire without changing immutable refs; missing pixels cannot verify work',{concurrency:false},()=>{
  const f=fixture();try{
   const stored=image(),refFile=path.join(f.evidence,'refs',stored.ref.evidence_id+'.json'),before=fs.readFileSync(refFile);

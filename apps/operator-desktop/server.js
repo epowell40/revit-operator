@@ -1,3 +1,5 @@
+import {createCombinedReviewDispatcher} from './combined_review_dispatch.mjs';
+import { EXECUTION_INSPECTION_TOOL, inspectExecution } from './desktop_native_tools.mjs';
 import { affirmativeRevitLaunchIntent as sharedRevitLaunchIntent } from "./revit_launch_intent.mjs";
 import { namedObjectTopologyIdentity } from "./named_object_topology.mjs";
 import { immutableEvidenceRetryReason } from "./immutable_evidence_retry.mjs";
@@ -6,12 +8,13 @@ import {executionOrientationInput} from './execution_orientation.mjs';
 import {retainedPdfInput,summarizeInputEnvelope} from './retained_pdf_input.mjs';
 import { computerDragArguments, summarizeComputerDrag } from './computer_drag.mjs';
 import { nonAllowlistedShellCommandMessage } from './shell_command_diagnostic.mjs';
-import { WORK_REPORT_TOOL, submitWorkReportForReview, retainedWorkReportMessage, nativeStoppedWorkReportMessage, assertDesktopHandoffNativeReady, missingWorkReportContinuation, retainedRetrievalStallContinuation, retainOwnerWrittenFindings, ownerWrittenFindingsReceipt, ownerWrittenFindingsMessage } from "./work_report.mjs";
+import { WORK_REPORT_TOOL, submitWorkReportForReview, retainedWorkReportMessage, nativeStoppedWorkReportMessage, assertDesktopHandoffNativeReady, missingWorkReportContinuation, retainedRetrievalStallContinuation, retainedDraftingProgressContinuation, retainedExecutionReserveContinuation, retainOwnerWrittenFindings, ownerWrittenFindingsReceipt, ownerWrittenFindingsMessage } from "./work_report.mjs";
 import {CANONICAL_NATIVE_TASK_GUIDANCE, requireTrackedNativeTask} from './native_task_routing.mjs';
 import { createDesktopReadinessObligation } from "./desktop_readiness_obligation.mjs";
 import { compareNativeChangeObservations, nativeChangeObservationCursor, sameNativeChangeCursorBinding, nativeChangeObservationFromContext, nativeChangeFeedbackModelOutput } from "./native_change_observations.mjs";
 import {buildNativeCodeReviewPacket,reviewExecutedCode,nativeCodeReviewModelOutput,canonicalNativeCodeReviewReceipts,readExecutedCode,nativeCodeSourceModelOutput,NATIVE_CODE_SOURCE_TOOL,captureNativeCodeReviewStart,bindNativeCodeReviewStart} from './native_code_review.mjs';
-import { VISUAL_WORK_REVIEW_TOOL, reviewCurrentWork, visualWorkReviewModelOutput, visualReviewOwner, sameVisualReviewOwner, visualReviewImageEvidenceOptions, readVisualReviewUiIdentityV1, resolveAttachmentReviewImage, resolveNamedReferenceImage } from "./visual_work_review.mjs";
+import {canonicalReviewTaskContext} from './review_task_context.mjs';
+import { VISUAL_WORK_REVIEW_TOOL, selectEditedDrawingRegion, pairedDrawingRegion, refreshedDrawingFeedback, reviewCurrentWork, visualWorkReviewModelOutput, visualReviewOwner, sameVisualReviewOwner, visualReviewImageEvidenceOptions, readVisualReviewUiIdentityV1, resolveAttachmentReviewImage, resolveNamedReferenceImage } from "./visual_work_review.mjs";
 import {workVisibilityInstructions} from './work_visibility.mjs';
 import {closeReviewedInspection,prepareFocusedInspection,reviewedInspectionHasTerminalResult,reviewStoppedAssignment} from './reviewed_inspection_closeout.mjs';
 import {planSavedRevitModelOpen,readStableModelFileForOpen} from './saved_model_open.mjs';
@@ -104,6 +107,7 @@ import {
   ASSIGNMENT_SNAPSHOT_V2_SCHEMA,
   ASSIGNMENT_KERNEL_V2_SESSION_INDEX_FIELD,
   parseAssignmentKernelPublicationV2,
+  parseAssignmentDispatchControlV1,
   nativeArtifactReceiptEffectV1,
   nativeDocumentCheckpointRequestMatchesV2,
   parseAssignmentKernelSessionIndexResponseV2
@@ -2405,6 +2409,10 @@ async function retainAndProjectFunctionOutput(toolCall, functionOutput, options 
     const scope=currentSidecarEvidenceScope();
     if(!['session_id','assignment_id','run_id','generation'].every(k=>functionOutput.host_code_source_read.owner?.[k]===scope[k]))throw Error('native_code_source_binding_changed');
   }
+  if(toolCall.name==='inspect_execution'&&functionOutput.host_execution_inspection){
+    const scope=currentSidecarEvidenceScope();
+    if(!['session_id','assignment_id','run_id','generation'].every(k=>functionOutput.host_execution_inspection.scope?.[k]===scope[k]))throw Error('execution_inspection_binding_changed');
+  }
   const projected = await projectSidecarFunctionOutput({
     toolCall,
     functionOutput,
@@ -2412,6 +2420,14 @@ async function retainAndProjectFunctionOutput(toolCall, functionOutput, options 
     scope: currentSidecarEvidenceScope(),
     storeEvidence: options.storeEvidence || storeSidecarEvidenceOnBackend
   });
+  if(toolCall.name==='inspect_execution'&&functionOutput.host_execution_inspection){
+    // Retain the ordinary evidence, then deliver the bounded diagnostic verbatim.
+    // This host index describes historical results; it is not native verification.
+    const output=JSON.stringify({...functionOutput.host_execution_inspection,diagnostic_evidence_id:projected.evidence_ref.evidence_id});
+    if(Buffer.byteLength(output,'utf8')>16384)throw Error('execution_inspection_output_budget_exceeded');
+    projected.model_output={type:'function_call_output',call_id:functionOutput.call_id,output};
+    projected.telemetry.projected_bytes=Buffer.byteLength(output,'utf8');
+  }
   const focusedFailure=focusedEvidenceFailureOutputV1(toolCall,functionOutput);
   if(focusedFailure) {
     projected.model_output=focusedFailure;
@@ -2649,6 +2665,7 @@ async function readBackendComputerConfig(options = {}) {
   const data = await readBackendJson("/desktop/computer/config", { method: "GET", signal: options.signal });
   return {
     available: !!data?.available,
+    optional_models: Array.isArray(data?.optional_models) ? data.optional_models : [],
     desktop_native_tools: data?.desktop_native_tools === true,
     provider: `${data?.provider || "backend"}`.trim() || "backend",
     model: `${data?.model || COMPUTER_MODEL}`.trim() || COMPUTER_MODEL,
@@ -4758,7 +4775,8 @@ function modelCallReceiptTokenCount(value) {
 
 function normalizeModelCallReceipt(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  if (value.schema !== MODEL_CALL_RECEIPT_SCHEMA || value.provider !== "openai") return null;
+  if (value.schema !== MODEL_CALL_RECEIPT_SCHEMA || !["openai", "gemini", "anthropic"].includes(value.provider)
+      || (value.provider !== "openai" && value.route !== "desktop_computer")) return null;
   const callId = boundedModelCallReceiptString(value.call_id);
   const requestedModel = boundedModelCallReceiptString(value.requested_model);
   const model = boundedModelCallReceiptString(value.model);
@@ -4790,7 +4808,7 @@ function normalizeModelCallReceipt(value) {
   return {
     schema: MODEL_CALL_RECEIPT_SCHEMA,
     call_id: callId,
-    provider: "openai",
+    provider: value.provider,
     route,
     requested_model: requestedModel,
     model,
@@ -5334,6 +5352,7 @@ function recordComputerFunctionToolReceipt(toolCall, functionOutput, step) {
   const requestEffect = computerFunctionToolRequestEffect(toolName, result, args);
   const receipt = {
     schema: "revit-operator.sidecar-function-tool-receipt/v1",
+    execution_binding:computerState.sidecarAssignment?.kernel_version===2?desktopNativeBinding(computerState.sidecarAssignment):null,
     recorded_at: new Date().toISOString(),
     step,
     call_id: `${toolCall?.call_id || ""}`,
@@ -5737,6 +5756,7 @@ function recordCanonicalAssignmentOutcome(value, binding = computerState.sidecar
     ? {
         clarification_id: `${rawClarification.clarification_id || ""}`.trim(),
         question: trimToolText(rawClarification.question, 1200),
+        ...(rawClarification.work_summary ? {work_summary: trimToolText(rawClarification.work_summary, 4000)} : {}),
         missing_fields: Array.isArray(rawClarification.missing_fields)
           ? rawClarification.missing_fields.map((item) => trimToolText(item, 160)).filter(Boolean).slice(0, 32)
           : []
@@ -5771,6 +5791,7 @@ function recordCanonicalAssignmentOutcome(value, binding = computerState.sidecar
       run_id: expectedRunId,
       generation: expectedGeneration,
       question: pendingClarification.question,
+      ...(pendingClarification.work_summary ? {work_summary: pendingClarification.work_summary} : {}),
       missing_fields: pendingClarification.missing_fields
     };
   }
@@ -5843,7 +5864,23 @@ async function restoreSavedComputerAssignment(binding, control, options = {}) {
   const fresh = await readSavedAssignmentExecutor(saved.binding, { readBackendJson: request });
   if (fresh.executor !== "computer") throw new Error("Saved desktop owner changed.");
   assertControl(fresh.snapshot);
-  const conversation = savedComputerConversation(fresh.goal, fresh.snapshot, history);
+  let conversation;
+  try { conversation = savedComputerConversation(fresh.goal, fresh.snapshot, history); }
+  catch(error) {
+    if(error?.code!=='SAVED_CONTEXT_HANDOFF_LIMIT')throw error;
+    // Use the existing paginated work-plan presenter, not another history
+    // summarizer. Both reads are fenced by the same canonical version/control.
+    const items=fresh.snapshot.work_plan?.items??[];
+    const currentIndex=items.reduce((best,item,index)=>
+      (item.location_history?.at(-1)?.recorded_at??'')>(items[best]?.location_history?.at(-1)?.recorded_at??'')?index:best,0);
+    const page=await request('/api/assignments/v2/work-plan',{method:'POST',body:JSON.stringify({...saved.binding,action:'status',start:currentIndex})});
+    const checked=await readSavedAssignmentExecutor(saved.binding,{readBackendJson:request});
+    assertControl(checked.snapshot);
+    if(checked.executor!=='computer'||checked.snapshot.assignment_version!==fresh.snapshot.assignment_version||page?.ok!==true)
+      throw Error('Saved work-plan context changed during recovery. Refresh before continuing.');
+    conversation=savedComputerConversation(checked.goal,checked.snapshot,history,{binding:checked.snapshot.current_binding,
+      assignment_version:checked.snapshot.assignment_version,work_plan:page.work_plan,advisory_followups:page.advisory_followups});
+  }
   computerState.sidecarAssignment = { ...saved.binding, goal_id: saved.binding.assignment_id, kernel_version: 2,
     control_command_id: fresh.snapshot.execution_control.command_id,
     title: saved.goal.title, objective: saved.goal.objective,
@@ -5980,7 +6017,8 @@ function sidecarPendingClarification(workReturn = computerState.workReturn) {
   const clarificationId = `${workReturn.clarification_id || ""}`.trim();
   const question = `${workReturn.question || ""}`.trim();
   if (!clarificationId || !question) return null;
-  const existing = computerState.pendingClarification;
+  const prior = computerState.pendingClarification;
+  const existing = prior?.clarification_id === clarificationId && prior.assignment_id === workReturn.assignment_id && prior.run_id === workReturn.run_id && prior.generation === workReturn.generation ? prior : null;
   return {
     schema: "revit-operator.sidecar-pending-clarification/v1",
     clarification_id: clarificationId,
@@ -5988,7 +6026,8 @@ function sidecarPendingClarification(workReturn = computerState.workReturn) {
     run_id: workReturn.run_id,
     generation: workReturn.generation,
     question,
-    missing_fields: Array.isArray(existing?.missing_fields) ? existing.missing_fields : [],
+    ...(workReturn.work_summary ? {work_summary:workReturn.work_summary} : {}),
+    missing_fields: workReturn.missing_fields ?? existing?.missing_fields ?? [],
     work_return_id: `${workReturn.work_return_id || ""}`.trim() || null,
     work_return_hash: `${workReturn.work_return_hash || ""}`.trim() || null
   };
@@ -6152,7 +6191,7 @@ async function journalSidecarComputerToolReceipt(receipt, options = {}) {
 async function settleSidecarComputerAssignment(outcome, summary, options = {}) {
   const assignment = computerState.sidecarAssignment;
   if (!assignment?.session_id) return null;
-  if (outcome === "complete" && desktopHandoffReadinessRequired()) {
+  if (assignment.kernel_version !== 2 && outcome === "complete" && desktopHandoffReadinessRequired()) {
     // Plain-text/provider termination must not bypass the report-tool guard.
     const probe = options.checkRevitBridgeHealth || checkRevitBridgeHealth;
     assertDesktopHandoffNativeReady(await probe());
@@ -6190,6 +6229,15 @@ async function settleSidecarComputerAssignment(outcome, summary, options = {}) {
       });
     }
     const workReturn = await refreshSidecarWorkReturnAfterSettlement({ readBackendJson: request });
+    // The native loop can return normally after the host stops an unfinished
+    // task. Read its bound outcome before applying the successful-handoff gate:
+    // displaying a recorded failure needs no fresh Revit read and grants no
+    // completion, retry, save, or permission to clear an unknown effect.
+    if (outcome === "complete" && !["blocked", "failed"].includes(workReturn?.status)
+        && desktopHandoffReadinessRequired()) {
+      const probe = options.checkRevitBridgeHealth || checkRevitBridgeHealth;
+      assertDesktopHandoffNativeReady(await probe());
+    }
     const authoritativeStates = new Set([
       "awaiting_user_input", "awaiting_user_review", "complete", "complete_with_issues",
       "verified_noop", "blocked", "failed"
@@ -11577,18 +11625,50 @@ function computerProviderSettings(backendComputer = {}) {
 }
 
 async function reviewCurrentRevitWork(args, options = {}) {
-  const readContext = options.readContext || (async () => {
+  // New ordinary visual checks belong to the working actor. Historical
+  // evidence still uses its original review mode and verdict interpretation.
+  // Explicit inspection closeout / code assessment retain their review path.
+  if(options.sourceRead!==true&&args&&typeof args==='object'&&!Array.isArray(args)
+    &&args.review_mode===undefined&&args.code_evidence_ids===undefined&&args.complete_inspection_item_id===undefined){
+    args={...args,review_mode:'observe'};
+  }
+  const startedAt=performance.now(),stageTimings={};
+  const timed=async(stage,action)=>{
+    const started=performance.now();
+    try{return await action();}
+    finally{const row=stageTimings[stage]??={calls:0,elapsed_ms:0};row.calls++;row.elapsed_ms+=performance.now()-started;}
+  };
+  const contextReader = options.readContext || (async () => {
     // Ping reads serialized UI identity only, never an ExternalEvent. Review
     // must remain usable while a normal Revit dialog is open; attributes still
     // require separate native reads after the dialog is closed.
     return readVisualReviewUiIdentityV1(() => fetchRevitBridge("/revit/ping"));
   });
+  const readContext=()=>timed('ui_identity',contextReader);
   const owner = options.owner || (() => computerState.sidecarAssignment);
-  const assertControl = options.assertControl || (() => assertComputerActionControl());
+  const controlReader = options.assertControl || (() => assertComputerActionControl());
+  const assertControl = ()=>timed('assignment_control',controlReader);
   let canonicalCodeSnapshot=null;
+  const transientRequest=()=>computerState.messages.filter(m=>m.role==='user').map(m=>m.text).join('\n\n');
+  let reviewUserRequest=options.userRequest||transientRequest;
+  if(options.sourceRead!==true&&args?.review_mode!=='observe'&&!options.userRequest&&owner()?.kernel_version===2){
+    await assertControl();
+    const publication=await timed('canonical_task_context',()=>attachSidecarAssignmentKernelPublication(
+      options.readBackend||readBackendJson,{},owner(),{retryDelaysMs:[]}));
+    await assertControl();
+    canonicalCodeSnapshot=publication.assignment_snapshot_v2;
+    const originalTransient=transientRequest();
+    // Resolve now, before either code-only or combined review captures its
+    // request. Reuse this same authenticated publication for code custody.
+    canonicalReviewTaskContext(canonicalCodeSnapshot,owner());
+    reviewUserRequest=()=>{
+      if(transientRequest()!==originalTransient)throw Error('review_task_context_user_direction_changed');
+      return canonicalReviewTaskContext(canonicalCodeSnapshot,owner());
+    };
+  }
   const codeHost={owner:()=>visualReviewOwner(owner()),assertControl,readContext,
     settings:options.settings||(()=>computerProviderSettings()),
-    userRequest:options.userRequest||(()=>computerState.messages.filter(m=>m.role==='user').map(m=>m.text).join('\n\n')),
+    userRequest:reviewUserRequest,
     requestResponse:options.requestResponse||(body=>requestComputerResponse(body,{allowTransientGatewayRetry:false})),
     evidenceScope:options.evidenceScope||evidenceScopeForModelRelay,
     codeReviewPacket:options.codeReviewPacket||(ids=>buildNativeCodeReviewPacket(ids,{
@@ -11596,17 +11676,19 @@ async function reviewCurrentRevitWork(args, options = {}) {
       readCanonicalOwner:async()=>{
         const binding=owner();
         if(binding?.kernel_version!==2)throw Error('native_code_review_canonical_owner_required');
-        const publication=await attachSidecarAssignmentKernelPublication(
-          options.readBackend||readBackendJson,{},binding,{retryDelaysMs:[]});
-        canonicalCodeSnapshot=publication.assignment_snapshot_v2;
-        return publication.assignment_snapshot_v2.current_binding;
+        if(!canonicalCodeSnapshot){
+          const publication=await attachSidecarAssignmentKernelPublication(
+            options.readBackend||readBackendJson,{},binding,{retryDelaysMs:[]});
+          canonicalCodeSnapshot=publication.assignment_snapshot_v2;
+        }
+        return canonicalCodeSnapshot.current_binding;
       },
       canonicalReceipts:(binding,ids)=>canonicalNativeCodeReviewReceipts(canonicalCodeSnapshot,binding,ids),
       canonicalSnapshot:()=>canonicalCodeSnapshot,
       validateCheckpoint:nativeDocumentCheckpointRequestMatchesV2,
       receipts:options.executionReceipts||(()=>computerState.functionToolReceipts),request:options.readBackend||readBackendJson,
       requestStart:options.requestStart||(()=>computerState.nativeCodeReviewStart),
-      userRequest:options.userRequest||(()=>computerState.messages.filter(m=>m.role==='user').map(m=>m.text).join('\n\n'))
+      userRequest:reviewUserRequest
     }))};
   if(options.sourceRead===true)return readExecutedCode(args,codeHost);
   if(args?.review_mode==='code_execution'){
@@ -11628,15 +11710,17 @@ async function reviewCurrentRevitWork(args, options = {}) {
       || expected && (context.process_id!==expected.process_id || context.document.sessionId!==expected.document_session_id || observation.epoch!==expected.epoch))
       throw Error("visual_review_native_read_identity_unavailable");
     const location={process_id:context.process_id,visual_capture_context:context.visual_capture_context};
-    const admission=JSON.parse(await (options.runCaptureScript || runDesktopScript)([
+    const admission=JSON.parse(await timed('native_read_admission',()=>(options.runCaptureScript || runDesktopScript)([
       "-Action","review_native_read_admission","-ReviewSceneBase64",Buffer.from(JSON.stringify(location),"utf8").toString("base64")
-    ]));
+    ])));
     if(admission?.schema!=="operator.visual_review_native_read_admission.v1" || admission.main_window_enabled!==true
       || admission.process_id!==context.process_id || admission.main_window_handle!==location.visual_capture_context?.main_window_handle)
       throw Error("visual_review_native_read_admission_invalid");
     await assertControl();if(!sameVisualReviewOwner(binding,owner()))throw Error("visual_review_owner_changed");
-    const response=await nativeFetch(route,{method:body?"POST":"GET",...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(90000)});
-    return await response.json(); // Keep failed native read receipts in raw evidence too.
+    return await timed('native_read',async()=>{
+      const response=await nativeFetch(route,{method:body?"POST":"GET",...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(90000)});
+      return await response.json(); // Keep failed native read receipts in raw evidence too.
+    });
   };
   const result = await reviewCurrentWork(args, {
     ...codeHost,
@@ -11644,6 +11728,8 @@ async function reviewCurrentRevitWork(args, options = {}) {
     assertControl,
     readContext,
     readTargetContext: options.readTargetContext || (() => readTargetNative("/revit/context")),
+    expectedRegion: options.expectedRegion,
+    readFocusElements: (location,ids)=>readTargetNative("/revit/get-element-summary",{elementIds:ids},location),
     readDraftingDetail: options.readDraftingDetail || (location => readTargetNative("/revit/view-owned-detailing",{viewIds:[location.view_id],limit:2000},location)),
     prepareFocusedInspection:options.prepareFocusedInspection || (async request=>{
       await assertControl();const current=visualReviewOwner(owner());
@@ -11688,7 +11774,7 @@ async function reviewCurrentRevitWork(args, options = {}) {
       pendingReviewCaptures.delete(hash);return stored;
     }),
     settings: options.settings || (() => computerProviderSettings()),
-    userRequest: options.userRequest || (() => computerState.messages.filter(m => m.role === "user").map(m => m.text).join("\n\n")),
+    userRequest: reviewUserRequest,
     readBaseline: options.readBaseline || (async evidenceId => {
       const binding=visualReviewOwner(owner());
       const receipts=(options.reviewReceipts || (()=>computerState.functionToolReceipts))();
@@ -11734,6 +11820,10 @@ async function reviewCurrentRevitWork(args, options = {}) {
     requestResponse: options.requestResponse || (body => requestComputerResponse(body, {allowTransientGatewayRetry:false})),
     evidenceScope: options.evidenceScope || evidenceScopeForModelRelay
   });
+  // Aggregate durations only: no model/image/source payloads or new journal
+  // events. These retained host measurements separate admission/control costs
+  // from native execution; they are not provider timing or completion proof.
+  result.raw_review_evidence.host_stage_timings={schema:'operator.visual_review_host_timing.v1',elapsed_ms:performance.now()-startedAt,stages:stageTimings};
   addComputerEvent(`Independent visual review: ${result.state}. This is supporting visual assessment, not whole-task or native proof.`);
   return result;
 }
@@ -11802,7 +11892,9 @@ async function activateRevitView(target, options = {}) {
         request_effect: "read",
         request_dispatched: activationDispatched,
         status: result?.ok ? "done" : "failed",
-        result_summary: result?.ok ? `Activated Revit view ${result.active_view?.name || result.active_view?.id || "requested target"}.` : null,
+        result_summary: result?.ok ? (result.already_active
+          ? `Revit view ${result.active_view.name} is already active.`
+          : `Activated Revit view ${result.active_view?.name || result.active_view?.id || "requested target"}.`) : null,
         error: result?.ok ? null : result?.error,
         ...(result?.ok ? { result_json: result } : {})
       };
@@ -12443,7 +12535,7 @@ function buildComputerTools(options = {}) {
     }
   });
   if (deterministicDelegateOnly) return tools;
-  tools.push(FOCUSED_EVIDENCE_TOOL_V1);
+  tools.push(FOCUSED_EVIDENCE_TOOL_V1, EXECUTION_INSPECTION_TOOL);
   tools.push({
     type: "function",
     name: "run_dynamic_revit_program",
@@ -12798,6 +12890,13 @@ async function executeFunctionToolCall(toolCall) {
     throw new Error(`${toolCall.name} arguments were not valid JSON.`);
   }
 
+  if(toolCall.name==='inspect_execution') {
+    await assertComputerActionControl();
+    const result=inspectExecution(computerState.sidecarAssignment,computerState.functionToolReceipts,args);
+    const out={type:'function_call_output',call_id:toolCall.call_id,output:JSON.stringify(result)};
+    Object.defineProperty(out,'host_execution_inspection',{value:result});
+    return out;
+  }
   if (toolCall.name === 'operator_retrieve_evidence') {
     const result = await retrieveFocusedEvidenceV1(() => computerState.sidecarAssignment,args,readBackendJson);
     const output = {type:'function_call_output',call_id:toolCall.call_id,output:JSON.stringify(result.model_output)};
@@ -12819,8 +12918,17 @@ async function executeFunctionToolCall(toolCall) {
     return output;
   }
 
+  async function retainTaskInput(args) {
+    const result=await requestTaskInput(computerState.sidecarAssignment,args,readBackendJson);
+    computerState.pendingClarification={schema:'revit-operator.sidecar-pending-clarification/v1',clarification_id:result.clarification_id,
+      assignment_id:result.assignment_id,run_id:result.run_id,generation:result.generation,question:result.question,...(result.work_summary ? {work_summary:result.work_summary} : {}),missing_fields:result.missing_fields};
+    addComputerEvent('Focused question saved; the same assignment is awaiting user input.');
+    return result;
+  }
+
   if (toolCall.name === "report_work_for_review") {
     const result = await submitWorkReportForReview(computerState.sidecarAssignment, args, readBackendJson, {
+      requestInput: retainTaskInput,
       retainWrittenFindings: async (binding, text) => {
         await assertComputerActionControl();
         const snapshot = await readOwnerWritingSnapshot();
@@ -12833,15 +12941,12 @@ async function executeFunctionToolCall(toolCall) {
         }
       }
     });
-    addComputerEvent(result.written_findings ? "Owner-authored written follow-up retained; native verification and task outcome remain separate." : "Work report retained for independent review; completion remains unverified.");
+    if(result.status!=='awaiting_user_input') addComputerEvent(result.written_findings ? "Owner-authored written follow-up retained; native verification and task outcome remain separate." : "Work report retained for independent review; completion remains unverified.");
     return { type: "function_call_output", call_id: toolCall.call_id, output: JSON.stringify(result) };
   }
 
   if(toolCall.name==='request_task_input'){
-    const result=await requestTaskInput(computerState.sidecarAssignment,args,readBackendJson);
-    computerState.pendingClarification={schema:'revit-operator.sidecar-pending-clarification/v1',clarification_id:result.clarification_id,
-      assignment_id:result.assignment_id,run_id:result.run_id,generation:result.generation,question:result.question,missing_fields:result.missing_fields};
-    addComputerEvent('Focused question saved; the same assignment is awaiting user input.');
+    const result=await retainTaskInput(args);
     return {type:'function_call_output',call_id:toolCall.call_id,output:JSON.stringify(result)};
   }
 
@@ -12930,13 +13035,16 @@ async function executeFunctionToolCall(toolCall) {
 
   if (toolCall.name === "activate_revit_view") {
     const result = await activateRevitView(args);
+    const inspection = result.ok && !result.focus ? {
+      inspection_next_step: "Revit confirmed this view is active. This result contains no pixels. If appearance is the question, use review_current_work with this view ID and observed target elements or a stable native visible region. If a focused view cannot answer the question, record the specific unresolved check and continue independent work or return the checked partial. Reopening this view alone adds no evidence."
+    } : {};
     addComputerEvent(result.ok
-      ? `Revit view activated: ${result.active_view.name || "view"} (${result.active_view.id || "unknown"}).`
+      ? `Revit view ${result.already_active ? "already active" : "activated"}: ${result.active_view.name || "view"} (${result.active_view.id || "unknown"}).`
       : `Revit view activation failed: ${result.error || "unknown issue"}.`);
     return {
       type: "function_call_output",
       call_id: toolCall.call_id,
-      output: JSON.stringify(result)
+      output: JSON.stringify({ ...result, ...inspection })
     };
   }
 
@@ -13136,9 +13244,16 @@ async function assertComputerActionControl(options = {}) {
       throw error;
     }
   }
-  const response = await request(`/api/assignments/v2/${encodeURIComponent(assignment.goal_id || assignment.assignment_id)}`, { method: "GET" });
-  const publication = validateSidecarAssignmentKernelPublication(sidecarAssignmentKernelPublicationFromResponse(response), assignment);
-  try { assertComputerDispatchSnapshot(publication.snapshot, {
+  const response = await request(`/api/assignments/v2/${encodeURIComponent(assignment.goal_id || assignment.assignment_id)}`, {
+    method: "GET", cache: "no-store", headers: { "x-operator-assignment-handoff": "dispatch_control_v1" }
+  });
+  // Older servers may ignore this opt-in and return their full publication.
+  // Malformed compact replies and transport errors never trigger another read
+  // or fallback action. Both shapes reach the existing dispatch guard.
+  const snapshot = Object.hasOwn(response || {}, "assignment_dispatch_control_v1")
+    ? parseAssignmentDispatchControlV1(response.assignment_dispatch_control_v1).snapshot
+    : validateSidecarAssignmentKernelPublication(sidecarAssignmentKernelPublicationFromResponse(response), assignment).snapshot;
+  try { assertComputerDispatchSnapshot(snapshot, {
     assignment_id: assignment.goal_id || assignment.assignment_id, session_id: assignment.session_id,
     run_id: assignment.run_id, generation: assignment.generation
   }, assignment.control_command_id || null); } catch (error) {
@@ -13524,12 +13639,22 @@ async function executeComputerLoop(options = {}) {
     // delegate instructions to the single executor. Safety rules stay intact.
     instructions=singleExecutionInstructions(instructions,catalog.guidance,catalog.execution_mode);
     instructions+=workVisibilityInstructions(computerState.speedSettings);
+    instructions+='\nFor reconstruction, keep a coherent area in the paired reference/model view. After the first construction and annotation pass, use review_current_work area_backcheck on that area before exploratory fitting, endcap or neighboring-system searches. Include relevant code_evidence_ids in the same review when code alignment is also needed; selected source coverage is not whole-assignment coverage. Use the returned mismatches to choose concrete repairs. Investigate a missing fact only when it changes an identified repair. Save checked useful repairs before extended investigation or handoff; a later edit is not in an earlier saved file. A reviewed partial is not full completion.';
+    instructions+='\nYou can inspect your own execution with inspect_execution when an error, repeated inspection or conflicting evidence prevents progress. Use its exact call IDs and retained evidence to identify the missing fact. read_executed_code exposes your actual prior C# source; correct that code through the normal native execution tools when the prior effect is known. The computer tool can inspect and operate the visible Revit UI when a supported API path is unsuitable. Current native results, historical images and uncertain effects have different meanings. If a visual review reports a clipped endpoint, inspect an available wider user reference before repeating model reads. Reuse checked connections unless affected by a subsequent edit. Return saved useful work and a specific question when the remaining issue is a user decision.';
+
+    if(['single_actor_review_v1','local_advisory_v1'].includes(catalog.execution_mode)) {
+      if(!tools.some(tool=>tool.name==='native__operator_manage_work_plan')) instructions+='\nThe planning tool is unavailable in this session. Skip checklist declarations, locations and status calls. Track scope in your own context and use the drawing, native evidence and direct handoff tools.';
+      instructions+='\nAfter checking and saving actionable repairs, return the result immediately when the remainder needs a user decision. Use report_work_for_review with needs_input, or request_task_input with work_summary. Include the saved result and specific question. No plan entry, additional image of unchanged work, or guessed graphic replacement is required to ask. Continue independent actionable work first.';
+    }
     hostBudgetOwnsContinuation=Boolean(nativeContext);
     if(hostBudgetOwnsContinuation)updateComputerProgress({turnBudgetAuthority:'assignment_kernel_v2'});
   }
   let transientGatewayRetrySafe = true;
   let workReportReminders = 0;
+  let drawingRegion = null;
+  let observedRegions = [];
   const draftingContinuationProgress = {};
+  const executionReserveProgress = {};
 
   updateComputerProgress({
     phase: "waiting_on_model",
@@ -13593,8 +13718,12 @@ async function executeComputerLoop(options = {}) {
       currentAction: `Evaluating tool calls for step ${step}`
     });
     const outputs = Array.isArray(response.output) ? response.output : [];
+    const executeReviewOrFunction=createCombinedReviewDispatcher(outputs,{execute:executeFunction,
+      assertControl:()=>assertComputerActionControl(),owner:()=>computerState.sidecarAssignment});
     const toolOutputs = [];
     let handledToolCalls = 0;
+    let lastDrawingEditOutput = null;
+    const drawingEdits = [];
 
     for (const item of outputs) {
       if (computerState.stopRequested) {
@@ -13676,7 +13805,7 @@ async function executeComputerLoop(options = {}) {
         const functionOutput = nativeCall
           ? await invokeDesktopNativeTool({assignment:computerState.sidecarAssignment,messageId:response.desktop_message_id,
             responseId:response.id,call:item,context:nativeContext,request:nativeRequest})
-          : await executeFunction({...item,hostDesktopHelperScope:true});
+          : await executeReviewOrFunction({...item,hostDesktopHelperScope:true});
         if (nativeCall) computerState.checkedProjectCopy = functionOutput.checked_copy ?? null;
         if(functionOutput.native_pending) {
           computerState.nativeInteractivePlacement=retainNativeInteractivePlacement(functionOutput.native_pending,
@@ -13715,6 +13844,18 @@ async function executeComputerLoop(options = {}) {
           }
         }
         toolOutputs.push(retainedFunctionOutput.model_output);
+        if (nativeCall && functionOutput.drawing_edit) {
+          lastDrawingEditOutput = retainedFunctionOutput.model_output;
+          drawingEdits.push(functionOutput.drawing_edit);
+        }
+        if (functionOutput.host_visual_work_review) {
+          drawingRegion = pairedDrawingRegion(functionOutput.host_visual_work_review);
+          if (drawingRegion) {
+            observedRegions=[drawingRegion,...observedRegions.filter(r=>r.referenceHash!==drawingRegion.referenceHash
+              || r.location.view_unique_id!==drawingRegion.location.view_unique_id
+              || JSON.stringify(r.focus)!==JSON.stringify(drawingRegion.focus))].slice(0,12);
+          }
+        }
         if(nativeCall&&functionOutput.native_stop_reason) {
           // Native control has stopped this turn. Reuse the normal canonical
           // result presenter; no extra model/helper call or optimistic success.
@@ -13764,6 +13905,25 @@ async function executeComputerLoop(options = {}) {
           return authoritativeCompletion.assistantMessage;
         }
       }
+    }
+
+    if (lastDrawingEditOutput && drawingRegion && !computerState.stopRequested && !computerState.nativeInteractivePlacement) {
+      const region=selectEditedDrawingRegion(observedRegions,drawingRegion,drawingEdits);
+      // Restore the matching observed area only when the actor last viewed a different area.
+      let feedback;
+      try {
+        if(region) {
+          const request=region===drawingRegion?region.request:{...region.request,...region.focus};
+          const observation=await reviewCurrentRevitWork(request,{expectedRegion:region});
+          feedback=refreshedDrawingFeedback(region,observation);
+          if(feedback) {
+            region.location=observation.location;
+            drawingRegion=region;
+          }
+        }
+      } catch { /* A committed edit survives a failed visual refresh. */ }
+      lastDrawingEditOutput.output.push(...(feedback ?? [{type:'input_text',text:
+        'No matched post-edit image pair was available for the working region. Earlier model pixels are historical. For visible work select the changed area and source with review_current_work observe. Preserve the native edit result.'}]));
     }
 
     if (!handledToolCalls) {
@@ -13822,6 +13982,16 @@ async function executeComputerLoop(options = {}) {
     // reasoning continuity only; canonical effects/usage still govern recovery.
     const retainedContext = await retainComputerProviderContext(response,toolOutputs,nativeRequest);
     if (computerState.stopRequested) throw new Error("Stopped by user.");
+    const reserveFeedback=retainedExecutionReserveContinuation(computerState.sidecarAssignment,retainedContext,executionReserveProgress);
+    if(reserveFeedback) {
+      addComputerEvent('Task allowance is running low; preserving time to check and save useful work.');
+      toolOutputs.push(reserveFeedback);
+    }
+    const draftingFeedback=retainedDraftingProgressContinuation(computerState.sidecarAssignment,retainedContext,draftingContinuationProgress);
+    if(draftingFeedback) {
+      addComputerEvent('Drafting progress stalled during tool work; changing the next action.');
+      toolOutputs.push(draftingFeedback);
+    }
     const retrievalFeedback = retainedRetrievalStallContinuation(computerState.sidecarAssignment,retainedContext);
     if(retrievalFeedback) {
       addComputerEvent('Repeated evidence retrieval failed; the same owner must change approach before continuing.');
@@ -13905,6 +14075,16 @@ app.get("/api/runtime-identity", (req, res) => {
   res.json({ ok: true, sidecarRuntime: SIDECAR_RUNTIME });
 });
 
+function defaultComputerSpeedSettings() {
+  return {
+    agent_model: sanitizeSpeedModel(COMPUTER_MODEL, 'gpt-5.6-sol'),
+    agent_reasoning_effort: COMPUTER_REASONING_EFFORT || 'medium',
+    speed_mode: true,
+    context_diet: true,
+    max_recent_turns: 8
+  };
+}
+
 app.get("/api/config", async (_req, res) => {
   try {
     const clientConfig = loadOperatorClientConfig();
@@ -13928,6 +14108,7 @@ app.get("/api/config", async (_req, res) => {
       inputEnabled: INPUT_ENABLED,
       shellEnabled: SHELL_ENABLED,
       computerUseAvailable: !!backendComputer.available,
+      optionalAgentModels: backendComputer.optional_models || [],
       localExecutor: isLocalBackendUrl(resolveBackendUrl()) && authMode === "shared_token"
         ? backendComputer.local_executor || null
         : null,
@@ -13939,13 +14120,7 @@ app.get("/api/config", async (_req, res) => {
       runtimeProfile: operatorRuntimeProfile(),
       certifiedReadUi: browserSafeCertifiedReadUi(),
       maxHybridBackendSteps: MAX_HYBRID_BACKEND_STEPS,
-      speedDefaults: {
-        agent_model: "gpt-5.6-sol",
-        agent_reasoning_effort: "medium",
-        speed_mode: true,
-        context_diet: true,
-        max_recent_turns: 8
-      },
+      speedDefaults: defaultComputerSpeedSettings(),
       environmentStatus: environment?.manifest
         ? {
             environment_type: environment.manifest.environment_type,
@@ -16181,6 +16356,9 @@ app.post("/api/computer/run", async (req, res) => {
     }
     if (!res.headersSent) {
       if (paused || stopped) res.json({ ok: true, desktopCaptureSuppressed: false, stopped: true, ...(paused ? {paused:true} : {}) });
+      else if(savedBinding&&!assignmentExecutionStarted&&!computerState.sidecarAssignment)
+        res.status(503).json({error:computerState.error||"Saved task startup failed.",submission_admission:
+          rejectedChatSubmissionAdmission({session_id:savedBinding.session_id,message_id:messageId},error)});
       else sendJsonError(res, computerState.error || "Canonical Assignment startup failed.", 503);
     }
     finishComputerRunCertifiedRead(

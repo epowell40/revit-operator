@@ -21,6 +21,7 @@ export class ExternalProviderAdmissionError extends Error {
 export async function executeExternalProviderCallV2<T>(input: {
   binding: AssignmentKernelBindingInputV2;
   model: string;
+  provider?: ModelCallReceipt["provider"];
   reasoning_effort: string | null;
   invoke: () => Promise<T>;
   receipt: (result: T) => ModelCallReceipt;
@@ -55,7 +56,7 @@ export async function executeExternalProviderCallV2<T>(input: {
   const callId = `external:${randomUUID()}`;
   const record = (state: Parameters<typeof recordAssignmentProviderCallStateV2>[0]["state"], extra = {}) =>
     recordAssignmentProviderCallStateV2({ binding, call_id: callId, state, ...extra });
-  record("admitted", { provider: "openai", model: input.model, reasoning_effort: input.reasoning_effort,
+  record("admitted", { provider: input.provider ?? "openai", model: input.model, reasoning_effort: input.reasoning_effort,
     gap_ids: gaps.map(gap => gap.gap_id), criterion_ids: [...new Set(gaps.flatMap(gap => gap.criterion_ids))],
     expected_information: interactive ? decision.expected_information : ["Continue the bound external-controller task using its retained evidence."] });
   record("dispatched");

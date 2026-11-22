@@ -1,5 +1,6 @@
 import type { EvidenceRefV1 } from "./evidence_ref.js";
 import { extractMcpStructuredPayload } from "./structured_payload.js";
+import { projectElementLocation } from "./element_location_projection.js";
 
 type Row = Record<string, any>;
 type Edge = [owner: number, connector: number, peer_owner: number, peer_connector: number, domain_index: number];
@@ -18,6 +19,15 @@ type Lists = {
   unresolved_references: Reference[];
   row_issues: [source_row: number, owner: number | null, reason: string][];
 };
+type ConnectorGeometry = {
+  units: 'internal_feet';
+  columns: string[];
+  size_columns: string[];
+  projected_rows_complete: true;
+  native_rows_complete: boolean;
+  rows: unknown[][];
+  notice: string;
+};
 export type ConnectorGraphProjection = {
   schema: "revit-operator.connector-graph-projection.v1";
   source_path: string;
@@ -34,6 +44,10 @@ export type ConnectorGraphProjection = {
   omitted: Record<keyof Lists, number>;
   lists_complete: boolean;
   lists: Lists;
+  /** Optional complete presentation of the observed unambiguous physical ports.
+   * Absent when it cannot fit; never displaces topology or proves model coverage. */
+  connector_geometry?: ConnectorGeometry;
+  element_locations?: { units: 'internal_feet'; rotation_units: 'radians'; columns: string[]; rows: unknown[][]; notice: string };
 };
 
 const record = (v: unknown): Row | null => v !== null && typeof v === "object" && !Array.isArray(v) ? v as Row : null;
@@ -205,6 +219,52 @@ export function projectConnectorGraph(ref: EvidenceRefV1, raw: unknown, maxBytes
     summary.omitted[largest] += n; summary.lists_complete = false;
     if (largest === "owner_components") summary.totals.omitted_component_members += removed.reduce((sum, members) => sum + members.length, 0);
     bytes = Buffer.byteLength(JSON.stringify(summary), "utf8");
+  }
+  // Keep the point/rotation used for copying and the host centerline in the
+  // same targeted read. Never evict connectivity or turn an absent old field
+  // into zero. Larger reads retain their exact raw rows for scoped retrieval.
+  if(owners.size<=64 && [...owners.values()].some(({row})=>row.elementLocation!==undefined)
+    && Buffer.byteLength(JSON.stringify(payload),'utf8')>maxBytes) {
+    const observed=[...owners].filter(([id,{row}])=>!duplicates.has(id)&&row.ok===true).map(([id,{row,index}])=>
+      ({owner:id,source_row:index,...projectElementLocation(row.elementLocation)} as Row));
+    // Columnar packing preserves exact numbers and every reported uncertainty
+    // without repeating field names for every owner. Omitted columns and null
+    // cells are unavailable facts, not zeros. Never trim this table into a
+    // misleading partial inventory or take space from the physical graph.
+    const columns=[...new Set(observed.flatMap(row=>Object.keys(row)))];
+    const locations:NonNullable<ConnectorGraphProjection['element_locations']>={units:'internal_feet',rotation_units:'radians',columns,
+      rows:observed.map(row=>columns.map(key=>row[key]??null)),
+      notice:'Document-internal element locations, not connector origins. Null/absent=unknown. Curve endpoints are not full curved geometry. No host-fit, attachment, source-fidelity or completion proof.'};
+    if(locations.rows.length && Buffer.byteLength(JSON.stringify({...summary,element_locations:locations}),'utf8')<=maxBytes)
+      summary.element_locations=locations;
+  }
+  // Small targeted connector reads also support geometry/label decisions.
+  // Previously only open ports carried coordinates, forcing another retained
+  // read for every connected duct. Add this whole-table accelerator only in
+  // spare space: preserve the existing topology selection and budget behavior.
+  const ports = [...connectors.entries()].filter(([key,{c,owner}])=>
+    !duplicates.has(owner)&&!ambiguous.has(key)&&nonlogical(c)&&physicalDomain(c));
+  // A small raw payload already has an exact inline delivery path. Do not let
+  // this optional table enlarge that combined envelope and displace its graph.
+  if(ports.length>0&&ports.length<=128&&Buffer.byteLength(JSON.stringify(payload),'utf8')>maxBytes) {
+    const geometry:ConnectorGeometry={units:'internal_feet',
+      columns:['owner','native_connector','source_row','domain_index','shape','origin','size','physical_state'],
+      size_columns:['kind','radius_ft','diameter_ft','width_ft','height_ft'],
+      projected_rows_complete:true,native_rows_complete:summary.coverage.rows_complete,
+      rows:ports.map(([, {c,owner,index}])=>{
+        const size=record(c.size);
+        const compactSize=size?['kind','radiusFt','diameterFt','widthFt','heightFt'].map(k=>
+          k==='kind'?(typeof size[k]==='string'&&size[k].length<=32?size[k]:null)
+            :typeof size[k]==='number'&&Number.isFinite(size[k])?size[k]:null):null;
+        return [owner,c.connectorId,index,DOMAINS.indexOf(c.domain),
+          typeof c.shape==='string'&&c.shape.length<=32?c.shape:null,
+          Array.isArray(c.origin)&&c.origin.length===3&&c.origin.every(Number.isFinite)?c.origin:null,
+          compactSize&&compactSize.some(v=>v!==null)?compactSize:null,
+          ['connected','open','unknown'].includes(c.physicalConnectionState)?c.physicalConnectionState:null];
+      }),
+      notice:'Observed ports only; nulls=unknown. No whole-model, fit, service, source-fidelity or completion proof. Native coverage limits above apply; raw rows retrievable.'};
+    if(Buffer.byteLength(JSON.stringify({...summary,connector_geometry:geometry}),'utf8')<=maxBytes)
+      summary.connector_geometry=geometry;
   }
   return summary;
 }

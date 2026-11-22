@@ -1,5 +1,6 @@
 import { EVIDENCE_PROJECTION_SCHEMA, MAX_RETAINED_IMAGE_BYTES_V1, type EvidenceProjectionV1, type EvidenceRefV1 } from "./evidence_ref.js";
 import { projectToolDocumentation } from "./tool_documentation_projection.js";
+import { projectWorkPlanStatus } from './work_plan_status_projection.js';
 import { projectConnectorGraph } from "./connector_graph_projection.js";
 import { projectParameterTable } from "./parameter_table_projection.js";
 import { projectTagReferences } from "./tag_reference_projection.js";
@@ -430,6 +431,10 @@ export function projectEvidence(ref: EvidenceRefV1, raw: unknown, maxBytes = 8_1
       }
     }
   }
+  const planBase = { ...base, key_counts: {}, key_facts: {}, diagnostics: [], target_scope: ref.target_scope,
+    effect_state: null, before_hash: null, after_hash: null };
+  const workPlanStatus = projectWorkPlanStatus(ref, raw, maxBytes - projectionBytes(planBase) - 64);
+  if (workPlanStatus) candidate = { ...planBase, work_plan_status: workPlanStatus, truncated: true };
   const projected_bytes = projectionBytes(candidate);
   if (projected_bytes > maxBytes) throw new Error(`Evidence projection cannot fit configured ${maxBytes}-byte item budget.`);
   return { ...candidate, projected_bytes };

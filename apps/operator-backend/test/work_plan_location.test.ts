@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { recordWorkPlanLocationV2, projectWorkPlanLocationV2, type WorkPlanLocationHintV2 } from '../src/domain/assignment-kernel/work_plan_location.js';
+import { recordWorkPlanLocationV2, reuseWorkPlanLocationV2, projectWorkPlanLocationV2, type WorkPlanLocationHintV2 } from '../src/domain/assignment-kernel/work_plan_location.js';
 import { declareWorkPlanV2 } from '../src/domain/assignment-kernel/work_plan.js';
 import { projectWorkPlan } from '../src/assignments/work_plan_projection.js';
 const hint:WorkPlanLocationHintV2={status:'candidate',reason:'Reviewed full page and enlarged mark; native address still requires revalidation.',
@@ -54,4 +54,20 @@ test('large multilingual source plans with locations remain pageable and do not 
   let start:number|null=0;const seen:string[]=[];
   while(start!==null){const p:NonNullable<ReturnType<typeof projectWorkPlan>>=projectWorkPlan(s.work_plan,start,0,s)!;assert(p.scope.items.length>0);assert(Buffer.byteLength(JSON.stringify(p))<6500);seen.push(...p.scope.items.map(i=>i.item_id));assert(p.scope.next_start===null||p.scope.next_start>start);start=p.scope.next_start;}
   assert.deepEqual(seen,s.work_plan.items.map((i:any)=>i.item_id));
+});
+
+test('a pass update reuses the exact current area without importing an old check verdict',()=>{
+  const s=fixture();
+  s.work_plan=recordWorkPlanLocationV2(s,'main1',hint,'2026-10-12T12:01:00Z');
+  const update={status:'candidate' as const,reason:'Next pass in the same area.'};
+  const before=JSON.stringify(s);
+  const reused=reuseWorkPlanLocationV2(s,'main1',update);
+  assert.deepEqual(reused.source,hint.source);
+  assert.deepEqual(reused.native,hint.native);
+  assert.equal(reused.drafting,undefined);
+  assert.equal(JSON.stringify(s),before);
+  assert.throws(()=>reuseWorkPlanLocationV2(s,'missing',update));
+  assert.throws(()=>reuseWorkPlanLocationV2(s,'main1',{...update,source:hint.source}));
+  s.current_binding={...s.current_binding,run_id:'other'};
+  assert.throws(()=>reuseWorkPlanLocationV2(s,'main1',update));
 });

@@ -4,10 +4,63 @@ import {createHash} from 'node:crypto';
 import {VISUAL_WORK_REVIEW_TOOL,reviewCurrentWork,normalizeVisualReviewRequest,parseVisualWorkReview,visualWorkReviewModelOutput} from './visual_work_review.mjs';
 import * as identityReview from './visual_work_review.mjs';
 import {invokeDesktopNativeTool} from './desktop_native_tools.mjs';
+import {createCombinedReviewDispatcher} from './combined_review_dispatch.mjs';
 const image='iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAYAAACM/rhtAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAcSURBVFhH7cEBAQAAAIIg/69uSEABAAAAAAB8GhkoAAFF1RG0AAAAAElFTkSuQmCC';
 const binding={assignment_id:'assignment',session_id:'session',run_id:'run',generation:1,principal_id:'principal',document_fingerprint:'project'};
 const request={view_id:41,checks:[{id:'gap',expected:'No extra blank row below the headings.'},{id:'border',expected:'Medium grid lines are selected.'}]};
 const now=Date.parse('2026-10-17T12:00:00Z');
+
+test('materiality guidance reaches the real reviewer without suppressing returned defects or uncertainty',async()=>{
+ for(const status of ['matched','mismatch','uncertain']){
+  const f=host();let calls=0;
+  f.h.requestResponse=async body=>{
+   calls++;assert.match(body.instructions,/material consequence/);assert.match(body.instructions,/ALL supplied checks/);
+   assert.match(body.instructions,/does not excuse wrong values/);assert.match(body.instructions,/Unshown or ambiguous conditions remain uncertain/);
+   assert(body.input[0].content.some(c=>c.type==='input_image'));
+   return {id:'materiality',status:'completed',output:[],output_text:JSON.stringify({checks:request.checks.map(c=>({id:c.id,status,observed:'Left annotation hides a duct; right annotation has a wrong value.',correction:status==='mismatch'?'Left: move text clear of duct. Right: correct the displayed value.':''}))})};
+  };
+  const r=await reviewCurrentWork(request,f.h);assert.equal(calls,1);assert.equal(r.state,status);assert.equal(r.whole_task_verified,false);
+  const out=visualWorkReviewModelOutput({output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{evidence_id:'ev1_materiality'}]})},r,'ev1_materiality');
+  const visible=JSON.parse(modelText(out.output)).evidence_projections[0].visual_work_review;
+  assert.deepEqual(visible.checks,r.checks);assert.equal(visible.native_postcondition_verified,false);
+ }
+});
+
+test('review readiness reaches actor with the same images and unchanged visual verdict',async()=>{
+ const f=host();
+ f.h.requestResponse=async()=>({id:'review_readiness',status:'completed',output:[],output_text:JSON.stringify({checks:[
+  {id:'gap',status:'mismatch',observed:'A readable label is missing beside the branch.',correction:'Restore that label.',repair:{readiness:'clear_visual_fix',blocking_fact:''}},
+  {id:'border',status:'mismatch',observed:'A pair of unidentified oval marks is absent.',correction:'Resolve the device meaning before placing anything.',repair:{readiness:'needs_information',blocking_fact:'What do the two oval marks represent?'}}
+ ]})});
+ const r=await reviewCurrentWork(request,f.h),original=JSON.stringify(r);
+ const out=visualWorkReviewModelOutput({output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{evidence_id:'ev1_review'}]})},r,'ev1_review');
+ const v=JSON.parse(modelText(out.output)).evidence_projections[0].visual_work_review;
+ assert.deepEqual(v.repair_focus.ready_check_ids,['gap']);assert.deepEqual(v.repair_focus.needs_information_check_ids,['border']);
+ assert.deepEqual(v.checks,r.checks);assert.equal(v.state,'mismatch');assert.equal(v.whole_task_verified,false);assert.equal(v.native_postcondition_verified,false);
+ assert.equal(out.output.filter(c=>c.type==='input_image').length,1);assert.equal(JSON.stringify(r),original);assert.equal(v.coverage.complete,true);
+});
+
+test('adjacent review dispatch delivers one real combined image/code packet and preserves actor image inputs',async()=>{
+ const f=host(),ids=['A','B'].map(x=>'ev1_'+x.repeat(32));let selected,providerCalls=0;
+ f.h.codeReviewPacket=async value=>{selected=value;return {executions:value.map(evidence_id=>({evidence_id,source:'selected native source'})),coverage:{all_assignment_calls:false}};};
+ f.h.requestResponse=async body=>{
+  providerCalls++;assert(body.input[0].content.some(x=>x.type==='input_image'));
+  assert.deepEqual(JSON.parse(body.input[0].content[0].text).executed_code.executions.map(x=>x.evidence_id),ids);
+  return {id:'combined',status:'completed',output:[],output_text:JSON.stringify({checks:request.checks.map(c=>({...c,status:'matched',observed:'Checked visible outcome.',correction:''})).map(({expected,...c})=>c),code_review:{status:'matched',observed:'Native source and readback agree.',correction:''}})};
+ };
+ const calls=[{type:'function_call',name:'review_current_work',call_id:'visual',arguments:JSON.stringify({...request,review_mode:'independent',code_evidence_ids:[ids[0]]})},
+  {type:'function_call',name:'review_current_work',call_id:'code',arguments:JSON.stringify({review_mode:'code_execution',code_evidence_ids:[ids[1]]})}];
+ const dispatch=createCombinedReviewDispatcher(calls,{owner:()=>binding,assertControl:f.h.assertControl,execute:async call=>{
+  const r=await reviewCurrentWork(JSON.parse(call.arguments),f.h);
+  const o={type:'function_call_output',call_id:call.call_id,output:JSON.stringify(r)};
+  Object.defineProperties(o,{host_visual_work_review:{value:r},raw_evidence:{value:{...r}}});return o;
+ }});
+ const a=await dispatch(calls[0]),b=await dispatch(calls[1]);
+ assert.equal(a.host_visual_work_review.state,'matched',a.host_visual_work_review.reason);
+ assert.equal(b.host_code_work_review.state,'matched',b.host_code_work_review.reason);assert.equal(providerCalls,1);assert.deepEqual(selected,ids);
+ const projected=visualWorkReviewModelOutput({output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{evidence_id:'ev1_review'}]})},a.host_visual_work_review,'ev1_review');
+ assert(projected.output.some(x=>x.type==='input_image'),'Combined dispatcher must preserve the actual image WeakMap identity');
+});
 
 test('matched review feedback reaches the actor with bounded reuse guidance and no native completion claim',async()=>{
  for(const state of ['matched','mismatch','uncertain']) {
@@ -17,12 +70,64 @@ test('matched review feedback reaches the actor with bounded reuse guidance and 
   const feedback=JSON.parse(modelText(output.output)).evidence_projections[0].visual_work_review;
   assert.equal(feedback.state,state);assert.equal(feedback.native_postcondition_verified,false);assert.equal(feedback.whole_task_verified,false);
   assert.equal(f.calls.providers.length,1);assert.equal(feedback.coverage.complete,true);
+  assert.deepEqual(feedback.repair_focus[state==='matched'?'reuse_unchanged_check_ids':state==='mismatch'?'repair_check_ids':'clarify_check_ids'],r.checks.filter(c=>c.status===state).map(c=>c.id));
+  assert.match(feedback.repair_focus.scope,/not native elements/);
+  assert.equal(output.output.filter(x=>x.type==='input_image').length,1);
   if(state==='matched') {
    assert.match(feedback.guidance,/Reuse this review for these unchanged checks/);
    assert.match(feedback.guidance,/stale evidence or an uncovered UI requirement/);
    assert.match(feedback.guidance,/required code\/save\/file checks/);
   } else assert.doesNotMatch(feedback.guidance,/proceed to the existing final report/);
  }
+});
+
+test('review repair navigation separates actionable findings from uncertainty without changing verdicts',async()=>{
+ const f=host(),original=f.h.requestResponse;
+ f.h.requestResponse=async body=>{
+  const r=await original(body),parsed=JSON.parse(r.output_text);
+  parsed.checks[0]={...parsed.checks[0],status:'mismatch',correction:'Move the existing label clear of the marker.'};
+  parsed.checks[1]={...parsed.checks[1],status:'uncertain',correction:'The symbol is not readable.'};
+  return {...r,output_text:JSON.stringify(parsed)};
+ };
+ const r=await reviewCurrentWork(request,f.h),before=JSON.stringify(r);
+ const envelope={output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{evidence_id:'ev1_review'}]})};
+ const projected=visualWorkReviewModelOutput(envelope,r,'ev1_review');
+ const v=JSON.parse(modelText(projected.output)).evidence_projections[0].visual_work_review;
+ assert.deepEqual(v.repair_focus.repair_check_ids,['gap']);assert.deepEqual(v.repair_focus.clarify_check_ids,['border']);
+ assert.deepEqual(v.repair_focus.reuse_unchanged_check_ids,[]);assert.deepEqual(v.checks,r.checks);
+ assert.match(v.repair_focus.next_action,/save the useful repair/);assert.match(v.repair_focus.next_action,/named fact/);
+ assert.equal(JSON.stringify(r),before);assert.equal(v.whole_task_verified,false);assert.equal(f.calls.providers.length,1);
+});
+
+test('four detailed combined findings reach the actor together without repeating repair guidance',async()=>{
+ const f=host('mismatch'),checks=[
+  {id:'coverage',expected:'Compare all visible routes, symbols and annotations in this area.'},
+  {id:'routes',expected:'Follow each visible route between common architectural landmarks; distinguish a crossing from a known connection.'},
+  {id:'symbols',expected:'Count symbols on each side of each branch separately. Report the source and current counts, the local landmark, and any uncertainty.'},
+  {id:'labels',expected:'Compare sizes, labels, leaders and symbols at their hosts, excluding content outside the shared readable region.'}
+ ];
+ f.h.codeReviewPacket=async()=>({executions:[{source:'selected executed source'}]});
+ f.h.referenceAttachmentRead=async()=>({filename:'reference.pdf',image_url:'data:image/png;base64,'+image,
+  evidence_ref:{evidence_id:'ev1_reference',content_hash:'sha256:'+createHash('sha256').update(Buffer.from(image,'base64')).digest('hex')},
+  source_render:{source_read_call_id:'call_source',attachment_id:'reference',source_sha256:'b'.repeat(64),image_sha256:createHash('sha256').update(Buffer.from(image,'base64')).digest('hex'),page:1,visual_scope:'region',requested_region:{min_u:0.2,min_v:0.3,max_u:0.5,max_v:0.7},width_px:3000,height_px:2800,limitation:'Only this region is visible. Not model evidence or a placement transform.'}});
+ f.h.requestResponse=async body=>{f.calls.providers.push(body);return {id:'combined-detailed',status:'completed',output:[],output_text:JSON.stringify({
+  checks:checks.map(c=>({id:c.id,status:'mismatch',observed:`For ${c.id}, the reference shows a branch continuing beside the doorway with two repeated symbols and a size label. The current drawing stops before that doorway, so the expected downstream features cannot be seen. Neighboring geometry is visible but does not establish this branch's connections.`,correction:'Extend the existing branch to the reference landmark, add the missing supported features and label, and read back its physical connections. Preserve the adjacent system.'})),
+  code_review:{status:'uncertain',observed:'The selected transactions committed, but their output does not independently establish inherited dimensions or identify the dependent element removed by the fitting operation. Successful execution alone does not establish these requested properties or the scope of that collateral change.',correction:'Check the inherited dimensions and the removed dependent element identity. Do not repeat the write to obtain verification.'}
+ })};};
+ const r=await reviewCurrentWork({...request,checks,reference_attachment_read:{call_id:'call_source',page:1},code_evidence_ids:['ev1_'+'A'.repeat(32)]},f.h);
+ assert.equal(r.state,'mismatch',r.reason);
+ // Exercise the ordinary native-region and evidence-envelope metadata too;
+ // a tiny synthetic screen envelope concealed the production packing failure.
+ r.capture.frame.viewport={source:'UIDocument.ActiveView/UIView.GetZoomCorners',viewId:41,viewType:'FloorPlan',zoomCornersXyz:[[-40.123456789,-45.123456789,32.166666666],[85.123456789,18.123456789,32.166666666]],coordinateUnits:'feet',displayPlaneOnly:true,placementMappingAvailable:false};
+ r.baseline={evidence_id:'ev1_previous_review',capture:{evidence_id:'ev1_previous_capture',content_hash:'sha256:'+'e'.repeat(64)},location:{...r.location},frame:{...r.capture.frame},native_state:{...r.location,viewport:r.capture.frame.viewport},historical_context:true};
+ const retained=JSON.stringify(r);
+ const envelope={schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{schema:'revit-operator.evidence-projection.v1',evidence_id:'ev1_review',content_hash:'sha256:'+'d'.repeat(64),byte_count:73000,media_type:'application/json',source:'operator_desktop.function.review_current_work',trust_level:'untrusted_caller',assignment_id:'00000000-0000-4000-8000-000000000001',run_id:'sidecar:00000000-0000-4000-8000-000000000002',attempt_id:null,generation:1,target_scope:['41','42','43','Floor Plan','00000000-0000-4000-8000-000000000003'],artifact_ref:'ev1_review',verification_relevance:'supporting',additional_evidence:true,projected_bytes:6600}],omitted:0,retrieval:'Retained evidence.'};
+ const output=visualWorkReviewModelOutput({output:JSON.stringify(envelope)},r,'ev1_review'),text=modelText(output.output),v=JSON.parse(text).evidence_projections[0].visual_work_review;
+ assert.deepEqual(v.checks,r.checks);assert.equal(v.coverage.complete,true);assert.equal(v.coverage.next_start,null);
+ assert.deepEqual(v.code_review,r.code_review);assert.equal(v.repair_focus.selected_code_status,'uncertain');
+ assert.equal(v.baseline.evidence_id,r.baseline.evidence_id);assert.equal(v.baseline.presentation_complete,false);assert.equal(v.retrieval.baseline_path,'baseline');
+ assert.equal(output.output.filter(x=>x.type==='input_image').length,2);assert(Buffer.byteLength(text)<=8192);
+ assert.equal(JSON.stringify(r),retained);assert.equal(v.native_postcondition_verified,false);assert.equal(v.whole_task_verified,false);
 });
 test('PDF source review reuses a selected delivered attachment image instead of requiring a new PNG attachment',async()=>{
  const selected={call_id:'call_source',page:1};
@@ -396,7 +501,7 @@ test('projection binds the actual host review to its retained artifact and bound
 
 
 test('combined review uses one provider request for visual checks and exact executed-code assessment',async()=>{
- const f=host(),packet={executions:[{call_id:'call_write',source:'executed source',transaction:{status:'committed'}}],coverage:{all_assignment_calls:false}};
+ const f=host(),packet={executions:[{call_id:'call_write',source:'executed source',transaction:{status:'committed'}}],coverage:{all_assignment_calls:false},prior_read_context:{basis:'recent_prior_native_read_code_and_returns',read_executions:[{mode:'read',source:'read target',program_result:'41 point=(1,2,3)'}],limits:'Historical observations, not current verification.'}};
  f.h.codeReviewPacket=async ids=>{assert.deepEqual(ids,['ev1_'+'A'.repeat(32)]);return packet;};
  f.h.requestResponse=async body=>{f.calls.providers.push(body);const r=response();const parsed=JSON.parse(r.output_text);parsed.code_review={status:'mismatch',observed:'Code also deletes unrelated equipment.',correction:'Restore only the unintended deletion through an authorized correction.'};r.output_text=JSON.stringify(parsed);return r;};
  const r=await reviewCurrentWork({...request,code_evidence_ids:['ev1_'+'A'.repeat(32)]},f.h);
@@ -494,7 +599,13 @@ test('accepted inspection closeout updates text once while retaining exact curre
  assert(Buffer.byteLength(final.output[0].text)<=8192);
 });
 test('observation cannot close inspection or request code approval, and stale or foreign captures remain unavailable',async()=>{
- for(const extra of [{complete_inspection_item_id:'inspect'},{code_evidence_ids:['ev1_code']},{recheck_evidence_id:'ev1_old'}])assert.throws(()=>normalizeVisualReviewRequest({...request,review_mode:'observe',...extra}));
+ for(const extra of [{complete_inspection_item_id:'inspect'},{code_evidence_ids:['ev1_code']}])assert.throws(()=>normalizeVisualReviewRequest({...request,review_mode:'observe',...extra}));
+ // Retained-area observation was intentionally added earlier. Parsing a
+ // reference never admits unowned before pixels or grants code approval.
+ assert.doesNotThrow(()=>normalizeVisualReviewRequest({...request,review_mode:'observe',recheck_evidence_id:'ev1_old'}));
+ const missing=host();missing.h.readBaseline=async()=>{throw Error('unowned baseline');};
+ const refused=await reviewCurrentWork({...request,review_mode:'observe',recheck_evidence_id:'ev1_old'},missing.h);
+ assert.equal(refused.state,'unavailable');assert.equal(missing.calls.providers.length,0);
  for(const fault of ['native-change','foreign-owner']){const f=host();let n=0;f.h.readContext=async()=>{const s=snapshot();if(n++&&fault==='native-change')s.context.nativeChangeObservations.throughSequence=1;return s;};
  if(fault==='foreign-owner')f.h.capture=async()=>{f.setOwner({...binding,run_id:'foreign'});return {image_base64:image,frame:snapshot().frame};};
  const r=await reviewCurrentWork({...request,review_mode:'observe'},f.h);assert.equal(r.state,'unavailable');assert.equal(f.calls.providers.length,0);}

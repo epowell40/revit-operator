@@ -656,7 +656,7 @@ import { beginTeammateLoopOwner, endTeammateLoopOwner, guardTeammateMcpCall } fr
 import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../src/contracts.js";
 import { controlAssignmentExecutionV2 } from "../src/assignments/assignment_kernel_v2_controls.js";
 import { operationTargetIdentityAliasesV2 } from "../src/domain/assignment-kernel/operation_target_identity.js";
-import { existingMepConnectionFixture } from "./existing_mep_connection.fixtures.js";
+import { existingMepConnectionFixture,existingTerminalSurfaceFixture,existingTerminalSurfaceWithPeerFixture } from "./existing_mep_connection.fixtures.js";
 import { existingMepConnectionPostconditionSatisfiedV2 } from "../src/verification/existing_mep_connection_readback_v2.js";
 import {inlineAccessoryFixture} from './inline_accessory_readback.fixtures.js';
 import {committedInlineAccessoryReadbackPlanV2,inlineAccessoryPostconditionSatisfiedV2,inlineAccessoryIncomingPostconditionV2} from '../src/verification/inline_accessory_evidence_v2.js';
@@ -4214,3 +4214,24 @@ test('original XLSX read crosses no-write operation admission without permitting
   assert.equal(Object.keys(getAssignmentKernelSnapshotV2(goal.id)!.operations).length,1);
  });
 });
+
+for(const variant of ['connected','broken','incomplete-footprint','connected-peer-context'] as const)test(`direct terminal surface with collateral ${variant} uses native controller readback without inflating work credit`,()=>workspace(()=>{
+ const f=variant==='connected-peer-context'?existingTerminalSurfaceWithPeerFixture():existingTerminalSurfaceFixture(),{goal,snapshot}=setup('apply');f.affected.push('element_id:99');
+ Object.assign(f.apply,{transaction:{status:'committed',committed:true,added_element_ids:[],deleted_element_ids:[],modified_element_ids:[10,20,99],affected_element_ids:[10,20,99]},
+  changeTracking:{documentChangedObserved:true,exhaustiveChangeInventory:variant!=='incomplete-footprint',eventCount:1,matchingEventCount:1,distinctWrapperMatchCount:1,captureFailureCount:0}});
+ const apply=openAssignmentKernelOperationV2({snapshot,controller_request_id:'surface-apply',provider_turn_id:'apply',capability_id:'revit_call_tool',classified_effect:'apply',arguments:f.input,opened_at:'2026-09-26T03:00:00.000Z'});
+ markAssignmentKernelOperationDispatchStartedV2(apply);const receipt=envelope(apply.operation_id,apply.binding,f.apply,'applied');
+ Object.assign(receipt.structuredContent.operation_result_v2,{affected_target_identities:f.affected,result_schema_id:'operator-native/POST:/revit/connect-existing-mep-branch/v2',completed_at:'2026-09-26T03:00:01.000Z'});
+ settleAssignmentKernelOperationV2(apply,receipt);prepareCodexAssignmentProgressV2(apply.binding);
+ const read=openAssignmentKernelOperationV2({snapshot:getAssignmentKernelSnapshotV2(goal.id)!,controller_request_id:'surface-read',provider_turn_id:'read',capability_id:'revit_call_tool',classified_effect:'read',target_tokens:f.scan.results.map(r=>`id:${r.id}`),arguments:{method:'POST',path:'/revit/get-connectors',body:{elementIds:f.scan.results.map(r=>r.id),includeAllRefs:true}},opened_at:'2026-09-26T03:00:02.000Z'});
+ markAssignmentKernelOperationDispatchStartedV2(read);if(variant==='broken')f.scan.results[1].connectors[0].physicalConnectedTo=[];
+ const response=envelope(read.operation_id,read.binding,f.scan);Object.assign(response.structuredContent.operation_result_v2,{result_schema_id:'operator-native/POST:/revit/get-connectors/v2',completed_at:'2026-09-26T03:00:03.000Z'});
+ const settled=settleAssignmentKernelOperationV2(read,response),valid=variant==='connected'||variant==='connected-peer-context';
+ assert.equal(settled.observation?.facts.some(f=>f.fact_id==='verification.postcondition_satisfied'&&f.value===true),valid);
+ assert.equal(deriveProgressGapsV2(settled.snapshot).some(g=>g.gap_id===`verification:${apply.operation_id}`),!valid);
+ assert.deepEqual(settled.snapshot.operations[apply.operation_id]!.result!.affected_target_identities,f.affected);
+ if(valid){assert.equal(settled.snapshot.operations[read.operation_id]!.verification_of_operation_id,apply.operation_id);
+  if(variant==='connected-peer-context')assert.deepEqual(settled.snapshot.operations[read.operation_id]!.input,{method:'POST',path:'/revit/get-connectors',body:{elementIds:[10,20,30],includeAllRefs:true}});
+  assert(!Object.values(settled.snapshot.operations[read.operation_id]!.target.semantic_scope??{}).includes('id:30'),'Related peer is retained input, not a principal verification target');
+  assert.deepEqual(settled.observation!.facts.filter(f=>f.fact_id==='verification.deliverable_target_identities').map(f=>f.value),[['element_id:20']]);}
+}));

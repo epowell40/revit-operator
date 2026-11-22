@@ -221,11 +221,14 @@ export function parseAssignmentKernelSessionIndexResponseV2(value) {
  * benchmark, Work Packet, and Protocol V2 consumers. This checks envelope and
  * provider-ledger coherence without reconstructing canonical Assignment truth.
  */
-export function parseAssignmentKernelPublicationV2(value) {
+function validateAssignmentKernelPublicationV2(value) {
   const publication = record(value);
   if (!publication || publication.schema !== ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA) publicationInvalid("schema");
   if (publication.supports_explicit_resource_renewal_v1 !== undefined
       && publication.supports_explicit_resource_renewal_v1 !== true) publicationInvalid("resource_renewal_capability");
+  if (publication.supports_active_time_renewal_v1 !== undefined
+      && (publication.supports_active_time_renewal_v1 !== true
+        || publication.supports_explicit_resource_renewal_v1 !== true)) publicationInvalid("active_time_renewal_capability");
   const assignmentId = requiredString(publication.assignment_id);
   const assignmentVersion = publication.assignment_version;
   const snapshot = record(publication.snapshot);
@@ -336,9 +339,64 @@ export function parseAssignmentKernelPublicationV2(value) {
       }
     }
   }
+  if (snapshot.provider_usage_hold !== undefined) parseProviderUsageHoldV1(snapshot.provider_usage_hold, binding);
+  return publication;
+}
+
+export function parseAssignmentKernelPublicationV2(value) {
+  const publication = validateAssignmentKernelPublicationV2(value);
   const parsed = structuredClone(publication);
-  if (snapshot.provider_usage_hold !== undefined) parsed.snapshot.provider_usage_hold = parseProviderUsageHoldV1(snapshot.provider_usage_hold, binding);
+  if (publication.snapshot.provider_usage_hold !== undefined) parsed.snapshot.provider_usage_hold = parseProviderUsageHoldV1(publication.snapshot.provider_usage_hold, publication.snapshot.current_binding);
   return parsed;
+}
+
+export const ASSIGNMENT_DISPATCH_CONTROL_V1_SCHEMA = "revit-operator.assignment-dispatch-control/v1";
+const dispatchPendingFields = ['pending_review_ids', 'pending_input_variable_ids', 'unresolved_unknown_operation_ids',
+  'in_flight_operation_ids', 'in_flight_provider_call_ids'];
+const dispatchBooleanFields = ['terminal', 'quiescent', 'provider_budget_exhausted', 'provider_usage_hold', 'completion_proposal'];
+function dispatchControlInvalid(reason) { throw new TypeError('assignment_dispatch_control_invalid:' + reason); }
+
+/** An authenticated control-read projection, never model/evidence or completion
+ * authority. Validate the SAME complete publication/ledger before projecting;
+ * keep every field consumed by the existing dispatch guard. No control cache. */
+export function projectAssignmentDispatchControlV1(value) {
+  // Validate the same complete ledger, but copy only the returned control fields.
+  // The full parser keeps its independent-copy contract for its other callers.
+  const publication = validateAssignmentKernelPublicationV2(value), source = publication.snapshot;
+  const snapshot = {
+    assignment_version: publication.assignment_version,
+    current_binding: structuredClone(source.current_binding),
+    // A newly created canonical task has no explicit Pause/Resume command.
+    // Represent that existing absence as null, never as a fabricated Resume.
+    execution_control: source.execution_control === undefined ? null : structuredClone(source.execution_control),
+    outcome: source.outcome, terminal: source.terminal, quiescent: source.quiescent,
+    provider_budget_exhausted: source.provider_budget_exhausted,
+    provider_usage_hold: Boolean(source.provider_usage_hold), completion_proposal: Boolean(source.completion_proposal),
+    ...Object.fromEntries(dispatchPendingFields.map(key => [key, structuredClone(source[key])]))
+  };
+  return parseAssignmentDispatchControlV1({schema: ASSIGNMENT_DISPATCH_CONTROL_V1_SCHEMA,
+    assignment_id: publication.assignment_id, assignment_version: publication.assignment_version, snapshot});
+}
+
+export function parseAssignmentDispatchControlV1(value) {
+  const p = record(value), s = record(p?.snapshot), b = record(s?.current_binding), control = record(s?.execution_control);
+  if (p?.schema !== ASSIGNMENT_DISPATCH_CONTROL_V1_SCHEMA || !requiredString(p.assignment_id)
+      || !Number.isSafeInteger(p.assignment_version) || p.assignment_version < 1
+      || !s || s.assignment_version !== p.assignment_version) dispatchControlInvalid('identity');
+  if (!b || b.assignment_id !== p.assignment_id || !requiredString(b.session_id) || !requiredString(b.run_id)
+      || !requiredString(b.principal_id) || !Number.isSafeInteger(b.generation) || b.generation < 1
+      || b.document_fingerprint !== undefined && !requiredString(b.document_fingerprint)) dispatchControlInvalid('binding');
+  if (!Object.hasOwn(s, 'execution_control') || s.execution_control !== null && (!control || !['running', 'paused'].includes(control.state)
+      || typeof control.command_id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(control.command_id)
+      || typeof control.changed_at !== 'string' || !Number.isFinite(Date.parse(control.changed_at)))) dispatchControlInvalid('control');
+  if (!requiredString(s.outcome) || !dispatchBooleanFields.every(key => typeof s[key] === 'boolean')
+      || !dispatchPendingFields.every(key => {
+        const ids = requiredStringArray(s[key]); return ids && new Set(ids).size === ids.length;
+      })) dispatchControlInvalid('state');
+  const fields = ['assignment_version', 'current_binding', 'execution_control', 'outcome', ...dispatchBooleanFields, ...dispatchPendingFields];
+  if (Object.keys(s).some(key => !fields.includes(key))
+      || Object.keys(p).some(key => !['schema', 'assignment_id', 'assignment_version', 'snapshot'].includes(key))) dispatchControlInvalid('unexpected_payload');
+  return structuredClone(p);
 }
 
 export const ASSIGNMENT_KERNEL_V2_CONTROL_EVIDENCE_SCHEMA = "revit-operator.assignment-kernel-control-evidence/v2";

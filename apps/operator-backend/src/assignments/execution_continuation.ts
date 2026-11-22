@@ -1,3 +1,4 @@
+import {draftingConstructionProgressV2} from '../domain/assignment-kernel/progress/native_work_progress.js';
 import { createHash } from 'node:crypto';
 import type { AssignmentSnapshotV2 } from '../domain/assignment-kernel/snapshot.js';
 import { projectWorkPlan } from './work_plan_projection.js';
@@ -19,10 +20,17 @@ export function projectExecutionContinuation(snapshot: AssignmentSnapshotV2, now
   if (snapshot.progress_blocker) return hold(snapshot.progress_blocker.code);
   const budget=assignmentWorkBudgetStatusV2(snapshot,DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2,now);
   if(snapshot.provider_budget_exhausted || Object.values(budget.resources).some(r=>r.remaining===null||r.remaining<=0))return hold('budget_exhausted');
-  if(snapshot.spec.execution_policy?.ready_work_handoff!=='continue_ready_work_v1')return hold('ordinary_task_reporting');
+  // Resource telemetry must not depend on declaring a work plan. A unified
+  // actor can be executing useful tools without ready plan items. Preserve
+  // the scheduling hold; this is pacing advice, not permission to continue.
+  const resourceAdvice={remaining_resources:budget.resources,checkpoint_recommended:budget.checkpoint_recommended,
+    token_runway:budget.token_runway};
+  const resourceOnly=(reason:string)=>({...hold(reason),...resourceAdvice,resource_advice_only:true});
+  if(snapshot.spec.execution_policy?.ready_work_handoff!=='continue_ready_work_v1')return resourceOnly('ordinary_task_reporting');
   const plan=projectWorkPlan(snapshot.work_plan,undefined,0,snapshot);
   const next=plan?.ready_items.items??[];
-  if(!next.length)return hold('no_ready_work');
+  if(!next.length)return {...resourceOnly('no_ready_work'),
+    construction_progress:draftingConstructionProgressV2(snapshot,DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2.max_no_progress_epochs)};
   // Repeated observations, status reads, location edits and token use are not
   // construction progress. Preserve the existing domain's no-progress limits.
   const applied=Object.values(snapshot.operations).filter(o=>o.persistent_effect==='applied'&&o.settlement_state==='settled')
@@ -33,6 +41,7 @@ export function projectExecutionContinuation(snapshot: AssignmentSnapshotV2, now
     .filter(r=>r.drafting?.stage==='checked').map(r=>i.item_id+':'+r.drafting!.pass)))].sort();
   const progress_key=createHash('sha256').update(JSON.stringify({applied,checked,claims,backchecked})).digest('hex');
   return {...base,state:'ready',reason:'ready_work_remaining',progress_key,next_items:next,
-    remaining_resources:budget.resources,checkpoint_recommended:budget.checkpoint_recommended,
+    ...resourceAdvice,
+    construction_progress:draftingConstructionProgressV2(snapshot,DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2.max_no_progress_epochs),
     notice:'A completed response is not a completed assignment. Continue one useful discrepancy, inspect and check off the result, then select the next. Existing native/provider admission remains authoritative.'};
 }

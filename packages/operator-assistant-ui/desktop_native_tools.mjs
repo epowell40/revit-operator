@@ -45,10 +45,10 @@ export function singleExecutionInstructions(instructions,guidance,executionMode)
   if(executionMode==='single_actor_review_v1') {
     instructions=instructions.replaceAll('Keep the final native inspection checklist item pending while a backend helper performs the edits and attribute checks; ask it to return a scoped handoff before completing that item. ','')
       .replaceAll('For the final review, pass complete_inspection_item_id naming the sole remaining declared inspection item; the host can submit its existing retained native reads through normal checklist validation after a current matched review.','');
-    guidance+='\nThis assignment uses the advisory work plan: work-plan item IDs are not native inspection IDs. Do not pass complete_inspection_item_id to visual review. Keep native readbacks, required independent visual/code review and save/file evidence; then record scoped work-plan claims and report_work_for_review once. Claims remain advisory, not host-verified completion. A failed review or unknown effect remains unresolved.';
+    guidance+='\nFor visually guided repairs, compare the fresh post-edit image pair when returned with the native batch. Sweep the working region for other clear missing components before zooming in on ambiguous symbols. When continuing an existing partial drawing, select the next visible discrepancy from a readable current model/reference pair before broad connector, family or type inventories. If you cannot identify a clear discrepancy from that pair, use one area_backcheck to obtain a bounded punch list; this is not a mandatory pre-edit review for clear work or blank reconstruction. Query the identity, type, geometry and preservation facts needed for the selected repair together; do not audit unrelated systems before adding an obvious missing callout. An explicit connection or system audit still needs its requested scope. At a coherent repair milestone on a multi-area drawing backcheck, use review_current_work with review_mode:area_backcheck when the remaining scope has not already been reviewed. Compare ONE room, branch or legible region per pair; use its corresponding supplied detail crop and landmarks. A wide overview helps locate work but does not clear the areas within it. Include a check for the edited work, and combine code review if needed. The reviewer returns a punch list for visible geometry, repeated symbols and annotations. Act on clear differences first; track what was checked before moving to the next requested area. Reuse a current area review until an edit or missing coverage calls for another. Use one focused read to resolve an ambiguity, then record a specific deferral and move on if it remains. Once checked repairs are saved and actionable work is exhausted, batch remaining plan updates and submit the partial report. This assignment uses the advisory work plan: work-plan item IDs are not native inspection IDs. Do not pass complete_inspection_item_id to visual review. Keep native readbacks, required independent visual/code review and save/file evidence; then record scoped work-plan claims and report_work_for_review once. Claims remain advisory, not host-verified completion. A failed review or unknown effect remains unresolved.';
   }
   guidance+='\nFor a bounded edit to existing text, labels or parameters, choose one scoped inspection strategy. Reuse a known typed contract; when required preservation fields need C#, use the directly exposed executor for one bounded read instead of first discovering and calling several overlapping readers. Typed inspection is not a prerequisite to custom code. If searching is needed, use a focused capability name such as find text notes, not a compound list of every requested property; includeSchemas=true returns the contract with the match. Reuse the chosen inspection for independent post-edit readback. Gather the requested values and preservation fields together, apply the known related edits in one supported batch, then compare those fields. Do not enumerate every view element, tessellate unrelated curves or duplicate a sufficient typed read with C# solely for reassurance. Explicit preservation requirements still need relevant before/after evidence; use a scoped C# read when the typed contract lacks those fields. In custom reads use supported Revit classes and null-safe category/location access, not GetType/reflection. TextNote orientation is TextElement.BaseDirection and UpDirection, not a Rotation property; preserve Coord, type and alignment as applicable. Check Curve.IsBound before GetEndPoint or normalized Evaluate: a full circle is an unbounded Arc, so read its Center, Radius and axes instead. Keep native values/units; do not silently skip unsupported preservation fields. Keep write receipts and independent actual result reads; a returned success or code review is not native verification. For drawing-content checks prefer capture_mode:native_visible_region; use visible_work for an actual application UI/display requirement. For displayed text, combine readability/overlap checks and any required executed-code review into one final review_current_work call. A current matched review covers only its checked region and conditions: reuse it when unchanged instead of another zoom, screenshot or reviewer call merely to confirm the same pixels. Obtain missing evidence or recheck after relevant edits, uncertain results, or an uncovered UI requirement. Then issue one concise report_work_for_review with actual findings and remaining limits; do not add an interim report or reopen completed inspection just for bookkeeping.';
-  guidance+='\nFor a drawing reconstruction with a requested separate RVT, use focused native readback of the first usable batch, then checkpoint it with native Save As at the authorized result path before opening or creating a family to refine existing geometry. Read back the actual locations, dimensions and hosting or connections in scope. Inspect the exact saved file and retain remaining discrepancies. Honor review-before-save and no-save instructions and never overwrite source files. Do not save while effects are unknown. Continue required corrections and save the updated result after confirmed edits. A draft checkpoint still requires its own native verification and does not finish the assignment or replace required final visual checks.';
+  guidance+='\nFor a drawing reconstruction with a requested separate RVT, use focused native readback of the first usable batch, then checkpoint it with native Save As at the authorized result path before opening or creating a family to refine existing geometry. Read back the actual locations, dimensions and hosting or connections in scope. Inspect the exact saved file and retain remaining discrepancies. Use the actual native Save As outcome and its exact output path/hash/file evidence to describe what was saved. Reading the same open Document after Save As is not an independent saved-file check. Do not repeat an unchanged in-memory read just to claim file persistence. Reuse the scoped pre-save readback as historical result evidence when no relevant edit occurred; refresh any required current evidence after session changes. Required independent reopen checks remain required, and a missing file proof or unknown save remains unresolved. Never claim an independent reopen unless it actually happened. Honor review-before-save and no-save instructions and never overwrite source files. Do not save while effects are unknown. Continue required corrections and save the updated result after confirmed edits. A draft checkpoint still requires its own native verification and does not finish the assignment or replace required final visual checks.';
   const changes=[
     ['Complete requested Revit work through delegate_revit_task using the current user objective, including simple model/view questions and PDF exports. That executor records native operations, verification and the saved outcome. inspect_revit_context is useful for orientation and progress, but its local result alone cannot finish a saved task. ','Complete requested Revit work directly through native__ tools using the full current user objective. The existing backend records native operations, verification and the saved outcome. A supporting context read alone cannot finish a saved task. '],
     ['Use delegate_revit_task for supported native load/assignment stages and verification','Use native__ tools for supported native load/assignment stages and verification'],
@@ -157,6 +157,8 @@ export async function invokeDesktopNativeTool({assignment,messageId,responseId,c
   Object.defineProperty(output,'native_model_output',{value:{type:'function_call_output',call_id:call.call_id,output:content}});
   Object.defineProperty(output,'native_stop_reason',{value:result.stop_reason??null});
   const checkedCopy=result.checked_copy,binding=desktopNativeBinding(assignment);
+  const edit = committedDrawingEditLocation(call, result, binding);
+  if (edit) Object.defineProperty(output,'drawing_edit',{value:edit});
   if(checkedCopy&&Object.keys(binding).every(key=>checkedCopy.binding?.[key]===binding[key])
     &&checkedCopy.message?.role==='assistant'
     &&typeof checkedCopy.message.message_id==='string'
@@ -169,3 +171,120 @@ export async function invokeDesktopNativeTool({assignment,messageId,responseId,c
 
 
 
+
+// This signal schedules a read-only observation. It never verifies an edit.
+export function isCommittedDrawingEdit(call, result, binding) {
+  return committedDrawingEditLocation(call, result, binding) !== null;
+}
+
+export function committedDrawingEditLocation(call, result, binding) {
+  if (!result?.result?.success || result.stop_reason) return null;
+  let args;
+  try { args = typeof call.arguments === 'string' ? JSON.parse(call.arguments) : call.arguments; }
+  catch { return null; }
+  let name = call.name;
+  if (name === 'native__invoke') { name = 'native__' + args?.tool; args = args?.arguments; }
+  const program = name === 'native__operator_run_dynamic_revit_program' && args?.mode === 'apply';
+  const route = name === 'native__revit_call_tool' && args?.method === 'POST'
+    && typeof args.path === 'string' && !['/revit/save-as','/revit/save'].includes(args.path)
+    && args.body?.dryRun !== true;
+  if (!program && !route) return null;
+  const projections = [];
+  for (const block of result.result.contentItems ?? []) {
+    if (block?.type !== 'inputText' || typeof block.text !== 'string' || block.text.length > 32768) continue;
+    let envelope;
+    try { envelope = JSON.parse(block.text); } catch { continue; }
+    if (envelope?.schema !== 'revit-operator.model-evidence-envelope.v1' || !Array.isArray(envelope.evidence_projections)) continue;
+    projections.push(...envelope.evidence_projections.filter(p => p?.trust_level === 'authoritative_native'
+      && ['assignment_id','run_id','generation'].every(k => binding?.[k] != null && p[k] === binding[k])
+      && /^opv2_[a-f0-9]{64}$/.test(p.attempt_id)));
+  }
+  const edit = projections.find(p => p.source === 'assignment_kernel_v2:' + name.slice(8)
+    && (p.effect_state === 'applied' || (route && p.effect_state == null && p.key_facts?.['transaction.status'] === 'committed')));
+  if (!edit) return null;
+  const payload = edit.inline_payload;
+  if (route && payload?.status === 'Connected' && payload.applied === true
+      && Array.isArray(payload.terminalConnector?.origin) && payload.terminalConnector.origin.length === 3
+      && payload.terminalConnector.origin.every(Number.isFinite)) return {points:[payload.terminalConnector.origin]};
+  // Only use the automatic native spatial readback returned with THIS apply.
+  // Its rows are navigation hints. Program text and collateral IDs cannot locate an edit.
+  const summary = program && projections.find(p => p.source === 'assignment_kernel_v2:revit_call_tool'
+    && p.inline_payload?.scope === 'requested_element_ids_only')?.inline_payload;
+  // Full-result navigation bounds survive row paging. Never locate a large
+  // edit from only its first page, or mistake these bounds for verification.
+  const extent=summary?.spatial_extent,count=summary?.coverage?.source_rows;
+  if(extent&&Object.keys(extent).length===4&&extent.scope==='navigation_only'
+    &&Number.isSafeInteger(count)&&count>0&&count<=4096&&extent.source_rows===count
+    &&summary.coverage.spatial_rows===count
+    &&[extent.min,extent.max].every(p=>Array.isArray(p)&&p.length===3&&p.every(Number.isFinite))
+    &&extent.min.every((n,i)=>n<=extent.max[i])){
+    return {points:[0,1].flatMap(x=>[0,1].flatMap(y=>[0,1].map(z=>
+      [x?extent.max[0]:extent.min[0],y?extent.max[1]:extent.min[1],z?extent.max[2]:extent.min[2]])))};
+  }
+  if (summary?.coverage?.source_rows_exhausted && summary.rows?.length === summary.coverage.source_rows) {
+    const points = summary.rows.map(row => {
+      const v = row?.values;
+      if (v?.found !== true || !v.uniqueId) return null;
+      if (v.location?.type === 'point') return ['x','y','z'].map(k => v.location[k]);
+      return ['x','y','z'].map(k => (v.boundingBox?.min?.[k] + v.boundingBox?.max?.[k]) / 2);
+    });
+    if (points.length && points.every(x => x?.every(Number.isFinite))) return {points};
+  }
+  return {points:[]};
+}
+
+/** On-demand inspection of the current actor's retained function receipts. */
+export const EXECUTION_INSPECTION_TOOL = {
+  type:'function', name:'inspect_execution', strict:false,
+  description:'Inspect your own recent tool execution when work stalls or evidence is confusing. Lists exact call IDs, errors, native outcomes and retained evidence links. Use call_id for a focused result including capture/reference identities and review findings. This reads the current run only and performs no model action. Use operator_retrieve_evidence for full retained values, read_executed_code for actual C# source, review_current_work observe for fresh images, or the computer tool to inspect a UI problem. Diagnose a specific question, correct the request or choose a different supported approach, and continue useful work. Repeated reads of this history cannot verify a task.',
+  parameters:{type:'object',additionalProperties:false,properties:{
+    call_id:{type:'string',minLength:1,maxLength:240},
+    before_call_id:{type:'string',minLength:1,maxLength:240}
+  }}
+};
+export function inspectExecution(assignment, receipts, args={}) {
+  const binding=desktopNativeBinding(assignment);
+  if(!args||typeof args!=='object'||Array.isArray(args)||Object.keys(args).some(k=>!['call_id','before_call_id'].includes(k))
+    ||args.call_id&&args.before_call_id||Object.values(args).some(v=>typeof v!=='string'||!v.length||v.length>240))throw Error('execution_inspection_request_invalid');
+  const own=receipts.filter(r=>r.tool_name!=='inspect_execution'&&Object.entries(binding).every(([k,v])=>r.execution_binding?.[k]===v));
+  const at=args.before_call_id?own.findIndex(r=>r.call_id===args.before_call_id):own.length;
+  if(at<0)throw Error('execution_inspection_call_unavailable');
+  const selected=args.call_id?own.filter(r=>r.call_id===args.call_id):own.slice(Math.max(0,at-8),at);
+  if(args.call_id&&selected.length!==1)throw Error('execution_inspection_call_unavailable');
+  const text=(v,n)=>typeof v==='string'?{text:v.slice(0,n),complete:v.length<=n}:null;
+  const rows=selected.map(r=>{
+    const v=r.result??{},projections=[],diagnostics=[];
+    for(const block of v.content??[]) {
+      if(block?.type!=='inputText'||typeof block.text!=='string'||block.text.length>32768)continue;
+      try{const envelope=JSON.parse(block.text);
+        // Compiler failures can precede a native evidence projection. They are
+        // useful diagnostics, never an attestation about transaction effects.
+        if(envelope.schema==='revit-operator.dynamic-revit-program-run.v1'){
+          for(const d of (Array.isArray(envelope.diagnostics)?envelope.diagnostics:[]).slice(0,4))
+            diagnostics.push({code:text(d.code,80),message:text(d.message,700),phase:text(d.phase,80),severity:text(d.severity,40),repair_action:text(d.repair_action,80),line:Number.isInteger(d.line)?d.line:null});
+        }
+        if(envelope.schema==='revit-operator.model-evidence-envelope.v1')projections.push(...(envelope.evidence_projections??[]).filter(p=>
+          ['assignment_id','run_id','generation'].every(k=>p[k]===binding[k])));}catch{}
+    }
+    const row={call_id:r.call_id,tool:r.tool_name,recorded_at:r.recorded_at,
+      transport_status:r.status,requested_effect:r.request_effect,request_dispatched:r.request_dispatched,
+      evidence_id:r.evidence_ref?.evidence_id??null,error:text(v.error??v.reason,600),diagnostics:diagnostics.slice(0,4),native_stop_reason:v.native_stop_reason??null,
+      native_outcomes:projections.slice(0,4).map(p=>({evidence_id:p.evidence_id,source:p.source,
+        trust_level:p.trust_level,effect_state:p.effect_state,transaction:p.key_facts?.['transaction.status']??null,
+        execution_error:text(p.native_execution_audit?.error??p.inline_payload?.native_outcome?.error,600)}))};
+    if(args.call_id)Object.assign(row,{
+      route:r.arguments?.path??null,mode:r.arguments?.mode??r.arguments?.review_mode??null,
+      review_state:v.state??null,location:v.location??null,capture:v.capture??null,reference:v.reference??null,
+      checks:(v.checks??[]).slice(0,8).map(c=>({id:c.id,status:c.status,observed:text(c.observed,700),correction:text(c.correction,700)})),
+      guidance:text(v.guidance,1200)
+    });
+    return row;
+  });
+  const result={schema:'operator.execution-inspection.v1',ok:true,read_only:true,scope:binding,
+    coverage:{scope:'retained_current_run_function_calls',complete_history:false,retained:own.length,returned:rows.length,
+      older_before_call_id:!args.call_id&&at>rows.length?selected[0].call_id:null},
+    calls:rows,native_postcondition_verified:false,whole_task_verified:false,
+    guidance:'Transport success does not establish model correctness. Reconcile unknown writes before retrying. Capture references are historical until refreshed; image metadata alone does not mean pixels were delivered. Unavailable history remains unavailable. Reuse established checks and report a specific user decision when it is the only remainder.'};
+  if(Buffer.byteLength(JSON.stringify(result),'utf8')>16000)throw Error('execution_inspection_use_call_id');
+  return result;
+}

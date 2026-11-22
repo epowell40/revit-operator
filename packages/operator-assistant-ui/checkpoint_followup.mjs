@@ -31,7 +31,8 @@ export function checkpointResourceRenewalContext(publication,goal) {
     throw new Error('This task does not support an additional allowance. Its saved work and prior usage are retained.');
   if(!context.checkpoint||context.paused||!checkpointResourceRenewalAvailable(s,publication.supports_explicit_resource_renewal_v1))
     throw new Error('Settle the current apply checkpoint before explicitly renewing its allowance.');
-  return {...context.checkpoint,resource_renewal:{provider_calls:64,total_tokens:16_000_000}};
+  return {...context.checkpoint,resource_renewal:{provider_calls:64,total_tokens:16_000_000,
+    ...(publication.supports_active_time_renewal_v1===true?{active_execution_ms:1_200_000}:{})}};
 }
 
 /** Read fences from the authenticated canonical publication, never a display badge.

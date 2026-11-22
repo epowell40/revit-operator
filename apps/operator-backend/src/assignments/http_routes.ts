@@ -27,7 +27,7 @@ import {
   supplyAssignmentInputResultV2,
   type AssignmentKernelBindingInputV2
 } from "./assignment_kernel_v2_lifecycle.js";
-import { getAssignmentKernelSnapshotV2 } from "./assignment_kernel_v2_store.js";
+import { getAssignmentKernelSnapshotV2, getAssignmentKernelDispatchControlV1 } from "./assignment_kernel_v2_store.js";
 import {
   leaseFromOperation,
   markAssignmentKernelOperationDispatchStartedV2,
@@ -36,7 +36,7 @@ import {
 } from "./assignment_kernel_v2_execution.js";
 import { AssignmentKernelErrorV2, sameAssignmentBindingV2, type AssignmentSnapshotV2 } from "../domain/assignment-kernel/index.js";
 import { getRequestAssignmentPrincipalId, requestMatchesAssignmentPrincipalId } from "../request_context.js";
-import { getAssignmentKernelPublicationV2, listAssignmentKernelSessionIndexV2 } from "./assignment_kernel_v2_publication.js";
+import { buildAssignmentKernelPublicationV2, listAssignmentKernelSessionIndexV2 } from "./assignment_kernel_v2_publication.js";
 
 type JsonMap = Record<string, unknown>;
 
@@ -209,17 +209,33 @@ export async function handleAssignmentHttpRoute(
       && !url.pathname.startsWith("/api/assignments/v2/operations/")
       && !url.pathname.startsWith("/api/assignments/v2/criteria/")) {
     const assignmentId = decodeURIComponent(url.pathname.slice("/api/assignments/v2/".length)).trim().slice(0, 240);
-    const publication = assignmentId ? getAssignmentKernelPublicationV2(assignmentId) : null;
-    if (!publication) {
+    if (req.headers["x-operator-assignment-handoff"] === "dispatch_control_v1") {
+      const control = assignmentId ? getAssignmentKernelDispatchControlV1(assignmentId) : null;
+      if (!control) {
+        writeJson(res, assignmentId ? 404 : 400, { error: assignmentId ? "Assignment not found." : "assignment id is required." });
+        return true;
+      }
+      if (!authorizeSession(control.current_binding.session_id)) return true;
+      if (!v2PrincipalAllowed(control)) {
+        writeJson(res, 403, { error: "Forbidden (Assignment belongs to another principal)." });
+        return true;
+      }
+      res.setHeader("cache-control", "no-store");
+      writeJson(res, 200, { ok: true, assignment_dispatch_control_v1: control.control });
+      return true;
+    }
+    const snapshot = assignmentId ? getAssignmentKernelSnapshotV2(assignmentId) : null;
+    if (!snapshot) {
       writeJson(res, assignmentId ? 404 : 400, { error: assignmentId ? "Assignment not found." : "assignment id is required." });
       return true;
     }
-    if (!authorizeSession(publication.snapshot.current_binding.session_id)) return true;
-    if (!v2PrincipalAllowed(publication.snapshot)) {
+    if (!authorizeSession(snapshot.current_binding.session_id)) return true;
+    if (!v2PrincipalAllowed(snapshot)) {
       writeJson(res, 403, { error: "Forbidden (Assignment belongs to another principal)." });
       return true;
     }
-    writeJson(res, 200, { ok: true, assignment_kernel_v2: publication });
+    res.setHeader("cache-control", "no-store");
+    writeJson(res, 200, { ok: true, assignment_kernel_v2: buildAssignmentKernelPublicationV2(snapshot) });
     return true;
   }
   if (req.method === "POST" && url.pathname === "/api/assignments/v2/operations/children") {
@@ -326,7 +342,7 @@ export async function handleAssignmentHttpRoute(
       requireV2Principal(getAssignmentKernelSnapshotV2(binding.assignment_id));
       const result = manageAssignmentWorkPlan({ binding, action: String(body?.action), declaration: body?.declaration as any, completion_proposal: body?.completion_proposal as any,
         expected_assignment_version: body?.expected_assignment_version as number | undefined,
-        location_hint: body?.location_hint as any,
+        location_hint: body?.location_hint as any, reuse_location: body?.reuse_location as boolean | undefined,
         scope_check: body?.scope_check as any,
         item_id: body?.item_id as string, reason: body?.reason as string, operation_ids: body?.operation_ids as string[], start: body?.start as number,
         operation_start: body?.operation_start as number, assumption_start: body?.assumption_start as number,
@@ -382,7 +398,8 @@ export async function handleAssignmentHttpRoute(
         clarification_id: String(body?.clarification_id ?? "").trim(),
         variable_ids: Array.isArray(body?.variable_ids) ? body.variable_ids.map(String) : [],
         ...(Array.isArray(body?.new_variable_ids) ? { new_variable_ids: body.new_variable_ids.map(String) } : {}),
-        question: String(body?.question ?? "").trim()
+        question: String(body?.question ?? "").trim(),
+        ...(body?.work_summary !== undefined ? {work_summary: body.work_summary as string} : {})
       });
       writeJson(res, 202, { ok: true, assignment_snapshot_v2: snapshot });
     } catch (error) {

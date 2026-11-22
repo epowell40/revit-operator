@@ -88,11 +88,13 @@ export function assignmentWorkspaceGoalV2(raw) {
     _executionControl: snapshot.execution_control || null,
     _providerUsageHold: hold || null,
     _canRenewResources: checkpointResourceRenewalAvailable(snapshot, publication.supports_explicit_resource_renewal_v1),
+    _resourceRenewalAddsTime: publication.supports_active_time_renewal_v1 === true,
     _canResume: !snapshot.terminal && !heldBlocker && snapshot.quiescent && !(snapshot.unresolved_unknown_operation_ids || []).length && !snapshot.pending_input_variable_ids.length && !snapshot.pending_review_ids.length,
     _canPause: !snapshot.terminal && snapshot.execution_control?.state !== "paused",
     _canRecover: !snapshot.terminal && (snapshot.in_flight_operation_ids || []).length > 0,
     _pendingInputs: Object.values(snapshot.clarifications || {}).filter(item => !item.resolved_at).map(item => ({
       clarification_id: item.clarification_id, variable_id: item.variable_id, question: item.question,
+      ...(typeof item.work_summary === "string" && item.work_summary ? {work_summary: item.work_summary} : {}),
       ...assignmentInputMetadata(spec, item.variable_id)
     })),
     _projection: {

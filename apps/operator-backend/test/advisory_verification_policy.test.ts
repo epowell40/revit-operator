@@ -174,24 +174,25 @@ async function readyWorkFixture(fn:Parameters<typeof fixture>[1]) {
  try{await fixture('installation',fn);}finally{if(previous===undefined)delete process.env.OPERATOR_LOCAL_READY_WORK_HANDOFF;else process.env.OPERATOR_LOCAL_READY_WORK_HANDOFF=previous;}
 }
 
-test('unfinished untracked drafting cannot bypass persistent-task handoff through an omitted checklist',()=>readyWorkFixture(async f=>{
+test('optional checklist absence cannot reject an explicitly unverified partial report',()=>readyWorkFixture(async f=>{
  assert.equal(f.state().work_plan?.items.length??0,0);
  const before=structuredClone(f.state());
- assert.throws(()=>manageAssignmentWorkPlan({binding:f.binding,action:'propose_completion',completion_proposal:proposal}),/ready_work_remaining.*one useful next work item/i);
  const uiRoot=['../packages/operator-assistant-ui','../../packages/operator-assistant-ui','../operator-desktop'].map(p=>path.resolve(p)).find(p=>fs.existsSync(path.join(p,'work_report.mjs')))!;
  const ui=await import(pathToFileURL(path.join(uiRoot,'work_report.mjs')).href);
- assert.match(ui.WORK_REPORT_TOOL.description,/one useful next work item.*no exhaustive upfront inventory/i);
  const owner={kernel_version:2,session_id:f.binding.session_id,goal_id:f.binding.assignment_id,run_id:f.binding.run_id,generation:f.binding.generation};
- await assert.rejects(ui.submitWorkReportForReview(owner,proposal,async(_route:string,options:any)=>{
+ const report={claimed_completed:['Moved and saved the two existing equipment labels.'],remaining_work:['Two diffuser connections and their size callouts remain unresolved.'],uncertainties:['The reference does not establish the transition or concealed route.']};
+ const response=await ui.submitWorkReportForReview(owner,report,async(_route:string,options:any)=>{
   const body=JSON.parse(options.body);return manageAssignmentWorkPlan({binding:f.binding,action:body.action,completion_proposal:body.completion_proposal});
- }),/ready_work_remaining/);
- assert.deepEqual(f.state(),before,'refusal cannot create scope, certify claims or settle the task');
- manageAssignmentWorkPlan({binding:f.binding,action:'declare',declaration:{items:[{item_id:'next-area',description:'Resolve the next observed drawing discrepancy',source_basis:'Reference and current view'}],assumptions:[]}});
- assert.throws(()=>manageAssignmentWorkPlan({binding:f.binding,action:'propose_completion',completion_proposal:proposal}),/ready_work_remaining/);
- manageAssignmentWorkPlan({binding:f.binding,action:'defer',item_id:'next-area',reason:'The user explicitly requires review before continuing this area.'});
- manageAssignmentWorkPlan({binding:f.binding,action:'propose_completion',completion_proposal:proposal});
- assert.equal(f.state().outcome,'awaiting_user_review');
+ });
+ assert.equal(response.outcome,'awaiting_user_review');assert.equal(f.state().terminal,false);
  assert.equal(f.state().completion_proposal?.verified,false);
+ assert.deepEqual(f.state().completion_proposal?.remaining_work,report.remaining_work);
+ assert.deepEqual(f.state().completion_proposal?.uncertainties,report.uncertainties);
+ assert.deepEqual(f.state().operations,before.operations);assert.deepEqual(f.state().criteria,before.criteria);
+ assert.deepEqual(f.state().provider_calls,before.provider_calls);assert.deepEqual(f.state().work_plan,before.work_plan);
+ assert.equal(f.state().advisory_followups?.filter(x=>x.state==='open').length,2);
+ assert.match(ui.retainedWorkReportMessage({name:'report_work_for_review'},{output:JSON.stringify(response)}),/not independently verified/);
+ __testOnlyResetGoalListCache();assert.equal(f.state().outcome,'awaiting_user_review');
 }));
 
 test('an untracked advisory report without remaining work retains ordinary unverified review',()=>readyWorkFixture(f=>{
@@ -731,6 +732,35 @@ test("authenticated new work receives a bounded allocation without resetting usa
     await steerAssignment(checkpointCommand(f,"second-idle-direction"));
     assert.equal(defaultAssignmentWorkBudgetV2(f.state(),DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2).max_provider_calls,119,"idle new direction cannot accumulate credit");
   }); } finally { if(previous===undefined)delete process.env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE;else process.env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE=previous; }
+});
+
+test('renewed window reaches actor context and preserves ready-work handoff guard after long history',async()=>{
+  const old=process.env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE;process.env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE='verified_native_changes_v1';
+  try{await readyWorkFixture(async f=>{
+    manageAssignmentWorkPlan({binding:f.binding,action:'declare',declaration:{items:[
+      {item_id:'next-area',description:'Draft the next visible branch',source_basis:'User PDF'}],assumptions:[]}});
+    // Synthetic retained history tests the controller seam, not paid calls or native proof.
+    for(let i=0;i<200;i++)recordCompletedAssignmentProviderReceiptV2({binding:f.binding,call_id:'history-'+i,
+      provider:'fixture',model:'fixture',reasoning_effort:null,gap_ids:[],criterion_ids:[],expected_information:['Known prior usage'],
+      admitted_at:new Date().toISOString(),provider_duration_ms:0,
+      usage:{input_tokens:100,cached_input_tokens:80,cache_write_input_tokens:0,output_tokens:1,total_tokens:101,reasoning_tokens:null,estimated_cost_usd:null},success:true});
+    manageAssignmentWorkPlan({binding:f.binding,action:'propose_completion',completion_proposal:proposal});
+    const before=structuredClone(f.state()),base=checkpointCommand(f,'renew-long-history');
+    await steerAssignment({...base,checkpoint:{...base.checkpoint,resource_renewal:{provider_calls:64,total_tokens:16_000_000}}});
+    const after=f.state(),budget=assignmentWorkBudgetStatusV2(after,DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2,new Date().toISOString());
+    assert.equal(budget.resources.provider_calls.used,200);assert.equal(budget.resources.provider_calls.remaining,64);
+    assert.equal(budget.checkpoint_recommended,false);assert.deepEqual(after.provider_calls,before.provider_calls);
+    assert.deepEqual(after.spec,before.spec);
+    const context=JSON.parse(codexAssignmentEvidenceContextV2(after,undefined,budget));
+    assert.equal(context.host_budget.checkpoint_recommended,false);
+    assert.equal(context.host_budget.resources.provider_calls.remaining,64);
+    assert.throws(()=>manageAssignmentWorkPlan({binding:f.binding,action:'propose_completion',completion_proposal:proposal}),/ready_work_remaining/);
+    __testOnlyResetGoalListCache();assert.deepEqual(f.state(),after);
+    controlAssignmentExecutionV2({binding:f.binding,action:'pause',command_id:'pause-renewed',expected_command_id:null});
+    controlAssignmentExecutionV2({binding:f.binding,action:'resume',command_id:'resume-renewed',expected_command_id:'pause-renewed'});
+    assert.deepEqual(f.state().user_followup_allocation,after.user_followup_allocation);
+    assert.equal(assignmentWorkBudgetStatusV2(f.state(),DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2,new Date().toISOString()).resources.provider_calls.remaining,64);
+  });}finally{if(old===undefined)delete process.env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE;else process.env.OPERATOR_LOCAL_PROGRESS_ALLOWANCE=old;}
 });
 
 test('explicit resource renewal travels through authenticated checkpoint steering and durable reducer replay',async()=>{

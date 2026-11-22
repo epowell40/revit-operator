@@ -325,6 +325,11 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
     }
     if (requestUrl.pathname === "/revit/get-connectors") {
       connectorInspectionBodies.push(JSON.parse(requestBody || "{}"));
+      if (connectorInspectionBodies.at(-1)?.elementIds?.includes(42)) {
+        res.end(JSON.stringify({status:'Ok',results:[{id:42,ok:true,category:'OST_DuctTerminal',connectorCount:1,returnedConnectorCount:1,connectorScanTruncated:false,
+          connectors:[{domain:'DomainHvac',connectorType:'End',physicalConnectionState:'open',referenceScanComplete:true,referenceReadErrorCount:0,physicalConnectedTo:[]}]}],
+          canonical_attempt_settlement:{method:'POST',path:'/revit/get-connectors',requested_effect:'read',effect_state:'none'}}));return;
+      }
       res.end(JSON.stringify({ status: "Ok", verificationParameters: { schema: "revit-operator.duct-verification-parameters/v1", items: [] } }));
       return;
     }
@@ -397,6 +402,7 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
 
   const tools = await withTimeout(client.listTools(), "listing MCP tools");
   const names = new Set(tools.tools.map((tool) => tool.name));
+  assert.match(tools.tools.find(t=>t.name==="operator_run_dynamic_revit_program")?.description??"", /air_terminal_on_duct/);
   assert.equal(tools.tools.length, names.size, "Duplicate registrations cannot be hidden by the alias set.");
   assert.deepEqual([...names].sort(), [...SUPPORTED_MCP_ALIASES].sort(), "Laboratory registration must match the reviewed supported catalog exactly.");
   const connectorSchema = tools.tools.find(tool => tool.name === "revit_get_connectors")!.inputSchema;
@@ -603,6 +609,18 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   assert.equal(connectorInspectionBodies[0].includeCoordinateSystem, true);
   assert.equal(connectorInspectionBodies[0].onlyOpenPhysicalConnectors, false);
   assert.match((combinedInspection as any).content[0].text, /duct-verification-parameters/);
+
+  for (const request of [
+    {name:'revit_get_connectors',arguments:{elementIds:[42]}},
+    {name:'revit_call_tool',arguments:{method:'POST',path:'/revit/get-connectors',body:{elementIds:[42]}}}
+  ]) {
+    const openTerminal = await client.callTool(request);
+    assert.notEqual(openTerminal.isError,true);
+    const text=JSON.stringify(openTerminal.content);
+    assert.match(text,/air_terminal_on_duct/,'Actual typed and generic MCP results must expose the existing attachment capability');
+    assert.match(text,/discovery_only/);
+    assert.match(text,/compatibility_verified/);
+  }
 
   const observation = await withTimeout(client.callTool({
     name: "revit_observe_model",

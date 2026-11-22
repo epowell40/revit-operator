@@ -42,6 +42,6 @@ test('actual drafting observation producer crosses Responses consumer with bound
  assert.equal(index.source_sha256,createHash('sha256').update(JSON.stringify(raw)).digest('hex'));
  assert.equal(JSON.stringify(result),retained);assert.equal(result.raw_review_evidence.drafting_native_read.views[0].items.length,300);
  const oversized=structuredClone(wire);oversized[0].output[0].text=JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',omitted:0,retrieval:'Retrieve.',
-  evidence_projections:[{schema:'revit-operator.evidence-projection.v1',evidence_id:'ev1_review',visual_work_review:{rows:'x'.repeat(9000)}}]});
+  evidence_projections:[{schema:'revit-operator.evidence-projection.v1',evidence_id:'ev1_review',visual_work_review:{rows:'x'.repeat(25000)}}]});
  assert.throws(()=>assertBoundedModelEvidencePayload(oversized),/8192-byte evidence item budget/);
 });

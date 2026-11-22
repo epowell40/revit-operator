@@ -206,6 +206,35 @@ test('content verified journal cache preserves cold replay, payloads, duplicates
  assert(cache.stats().entries<=2&&cache.stats().bytes<=4*1024*1024);
 });
 
+test('fresh exact validated history prefix reuses reduction while changed or invalid history remains authoritative',()=>{
+ const cache=createContentVerifiedJournalV2({maxEntries:2,maxBytes:4*1024*1024});
+ const events=[...createJournal().events()];
+ for(let i=2;i<=80;i++)events.push({...events[0]!,event_id:`prefix-${i}`,assignment_version:i,
+   event_type:'work_unit_state_changed',work_unit_id:'work-1',state:i%2?'active':'pending',reason:'Exact retained history'} as AssignmentEventV2);
+ cache.open(events);
+ const tail=[81,82,83].map(i=>({...events.at(-1)!,event_id:`tail-${i}`,assignment_version:i,state:'active'}) as AssignmentEventV2);
+ const fresh=[...events,...tail],clone=globalThis.structuredClone;let copies=0;let actual;
+ try{globalThis.structuredClone=((v:unknown)=>{copies++;return clone(v);}) as typeof structuredClone;actual=cache.open(fresh).snapshot();}
+ finally{globalThis.structuredClone=clone;}
+ assert(copies<20,'A fresh byte-identical validated prefix plus three events must not replay all80 transitions');
+ assert.deepEqual(actual,reduceAssignmentEventsV2(fresh));
+ const altered=structuredClone(fresh);(altered[0] as any).spec.source_user_request='Changed same-identity prefix.';
+ assert.deepEqual(cache.open(altered).snapshot(),reduceAssignmentEventsV2(altered),'Prefix identity/version alone cannot authorize reuse');
+ assert.notEqual(cache.open(events).snapshot().spec.source_user_request,'Changed same-identity prefix.');
+ for(const bad of [
+   [...events,{...tail[0]!,assignment_version:99}],
+   [...events,tail[0]!,{...tail[1]!,binding:{...binding,generation:2}}],
+   [...events,tail[0]!,tail[0]!],
+   [...events].reverse()
+ ]){assert.throws(()=>cache.open(bad));assert.deepEqual(cache.open(events).snapshot(),reduceAssignmentEventsV2(events));}
+ const rewind=events.slice(0,40);assert.deepEqual(cache.open(rewind).snapshot(),reduceAssignmentEventsV2(rewind));
+ const one=createContentVerifiedJournalV2({maxEntries:1});one.open(events);
+ assert.deepEqual(one.open(fresh).snapshot(),reduceAssignmentEventsV2(fresh));
+ const duplicateDelivery=one.open(fresh);duplicateDelivery.append(tail.at(-1)!);
+ assert.deepEqual(one.open(fresh).snapshot(),reduceAssignmentEventsV2(fresh));
+ assert.throws(()=>one.open([...fresh,tail.at(-1)!]));
+});
+
 test('journal forks isolate clarification and supersession bookkeeping',()=>{
  const parent=createJournal(spec('apply',true));
  parent.append(event(parent,{event_type:'input_requested',variable_id:'replacement_text',clarification_id:'clarification-1',question:'Replacement?'}));
@@ -1396,4 +1425,38 @@ test('native code not-started results require host authority without implying ta
    assert.deepEqual(journal.snapshot(),before);assert.deepEqual(journal.events(),events);
   }
  }
+});
+
+test('warm journal and validated prefixes do not reserialize retained events', () => {
+  const journal=createJournal(), events=[...journal.events()];
+  const cache=createContentVerifiedJournalV2();cache.open(events);
+  const next=event(journal,{event_type:'work_unit_state_changed',work_unit_id:'work-1',state:'active',reason:'new work'});
+  const fresh=structuredClone(events), stringify=JSON.stringify;
+  let historySerializations=0;
+  try {
+    JSON.stringify=((value:unknown,...args:any[])=>{if(Array.isArray(value)&&value.some(e=>e?.event_type==='assignment_created'))historySerializations++;return (stringify as any)(value,...args);}) as typeof JSON.stringify;
+    cache.open(fresh).append(next);
+    cache.open([...fresh,next]).snapshot();
+  } finally {JSON.stringify=stringify;}
+  assert.equal(historySerializations,0,'Fresh content comparison must not encode the entire accepted history again');
+  assert.deepEqual(cache.open([...events,next]).snapshot(),reduceAssignmentEventsV2([...events,next]));
+  const altered=structuredClone(events);(altered[0] as any).spec.source_user_request='changed same binding';
+  assert.equal(cache.open(altered).snapshot().spec.source_user_request,'changed same binding');
+  assert.deepEqual(cache.open(events).snapshot(),journal.snapshot());
+});
+
+test('history matching preserves every field, event order and caller isolation', () => {
+  const journal=createJournal(), events=journal.events();
+  assert.equal(journal.matchesHistoryPrefix(structuredClone(events)),true);
+  const unknown=structuredClone(events);(unknown[0] as any).unrecognized_field='changed';
+  assert.equal(journal.matchesHistoryPrefix(unknown),false);
+  const changed=structuredClone(events);(changed[0] as any).spec.source_user_request='different';
+  assert.equal(journal.matchesHistoryPrefix(changed),false);
+  assert.equal(journal.matchesHistoryPrefix([]),false);
+  const next=event(journal,{event_type:'work_unit_state_changed',work_unit_id:'work-1',state:'active',reason:'new work'});
+  assert.equal(journal.matchesHistoryPrefix([...events,next]),true);
+  journal.append(next);
+  assert.equal(journal.matchesHistoryPrefix([...events,next].reverse()),false);
+  next.actor='caller mutation';
+  assert.equal(journal.matchesHistoryPrefix([...events,next]),false);
 });

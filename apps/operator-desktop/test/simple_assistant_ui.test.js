@@ -1,4 +1,4 @@
-import { agentModelRequiresReasoning, normalizeAgentModel } from '../public/agent_model_catalog.mjs';
+import { agentModelRequiresReasoning, isOptionalProviderModel, normalizeAgentModel } from '../public/agent_model_catalog.mjs';
 import { linkedTextParts, mergeConversationHistory } from '../public/conversation_ui.js';
 import { taskDraftKey } from "../public/task_navigation.mjs";
 import assert from "node:assert/strict";
@@ -28,7 +28,7 @@ function bootModelSettings(storage) {
   const elements = { agentModel, agentReasoning: control(), showWork: control() };
   const settings = runInNewContext(['readBoolSetting', 'writeBoolSetting', 'readStringSetting', 'writeStringSetting',
     'normalizeSpeedModel', 'normalizeReasoningEffort', 'getSpeedSettings', 'synchronizeModelReasoning', 'initializeSpeedControls'].map(functionSource).join('\n')
-    + '; initializeSpeedControls(); getSpeedSettings', { elements, agentModelRequiresReasoning, normalizeAgentModel,
+    + '; initializeSpeedControls(); getSpeedSettings', { elements, agentModelRequiresReasoning, isOptionalProviderModel, normalizeAgentModel,
       localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) } });
   return { model: agentModel, reasoning: elements.agentReasoning, showWork: elements.showWork, settings };
 }

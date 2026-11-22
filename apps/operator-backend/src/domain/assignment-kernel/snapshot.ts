@@ -29,6 +29,7 @@ export interface AssignmentSnapshotV2 {
     clarification_id: string;
     variable_id: InputVariableIdV2;
     question: string;
+    work_summary?: string;
     requested_at: string;
     resolved_at?: string;
   }>>>;

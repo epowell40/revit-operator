@@ -113,6 +113,7 @@ export function renderWorkReturnMarkdown(workReturn: WorkReturnV1): string {
     "",
     ...(workReturn.deviations_or_open_items.length ? workReturn.deviations_or_open_items.map(item => `- ${item}`) : ["- None."])
   ];
+  if (workReturn.work_summary) lines.push("", "## Work reported by Operator", "", workReturn.work_summary);
   if (workReturn.question) lines.push("", "## Question", "", workReturn.question);
   lines.push("", "## Recommended Next Step", "", workReturn.recommended_next_step, "");
   return lines.join("\n");

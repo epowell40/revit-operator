@@ -1,4 +1,4 @@
-import { agentModelRequiresReasoning, normalizeAgentModel } from './agent_model_catalog.mjs';
+import { agentModelRequiresReasoning, isOptionalProviderModel, normalizeAgentModel } from './agent_model_catalog.mjs';
 import { parseTaskNavigation, renderTaskList, renderSessionStart, taskDraftKey, taskStateLabel, currentTaskState, computerStateMatchesTask, computerStateIncludesSubmittedMessage } from "./task_navigation.mjs";
 import { createComposerDraftStore, staleComposerNotice, saveComposerRefreshTarget, readComposerRefreshTarget, clearComposerRefreshTarget } from "./composer_draft.mjs";
 import { beginComposerSend, selectChatSubmissionMode, startsFreshComputerConversation, routeSavedChatSubmission } from "./composer_intake.mjs";
@@ -4228,10 +4228,13 @@ function getSpeedSettings() {
 
 function synchronizeModelReasoning() {
   if (!elements.agentReasoning) return;
-  const requiresReasoning = agentModelRequiresReasoning(elements.agentModel?.value);
+  const model = elements.agentModel?.value;
+  const requiresReasoning = agentModelRequiresReasoning(model);
+  const optional = isOptionalProviderModel(model);
   for (const option of elements.agentReasoning.options || []) {
-    if (option.value === "none") option.disabled = requiresReasoning;
+    option.disabled = (option.value === "none" && requiresReasoning) || (optional && ["xhigh", "max"].includes(option.value));
   }
+  if (optional && ["xhigh", "max"].includes(elements.agentReasoning.value)) elements.agentReasoning.value = "medium";
   if (requiresReasoning && elements.agentReasoning.value === "none") {
     elements.agentReasoning.value = "low";
     writeStringSetting("operator.agentReasoning", "low");
@@ -4775,6 +4778,15 @@ function renderAssignmentInputsV2(goal) {
     const form = document.createElement("form");
     const label = document.createElement("label");
     label.textContent = question.question;
+    if (question.work_summary) {
+      const details = document.createElement("details");
+      const heading = document.createElement("summary");
+      heading.textContent = "Review saved work";
+      const content = document.createElement("div");
+      renderAssistantBlocks(content, question.work_summary, renderLinkedText);
+      details.append(heading, content);
+      container.appendChild(details);
+    }
     const control = createAssignmentInputControl(document, question);
     const input = control.input;
     label.appendChild(input);
@@ -5356,6 +5368,10 @@ async function sendComputerPrompt(submission, { browserFreshnessChecked = false,
     await syncComputerState();
   } catch (error) {
     applyDesktopPreviewCaptureState("cleared");
+    if(mayRestoreRejectedChatSubmission(submission,error)&&state.activeRunKind==='computer'
+      &&state.sessionId===submission.sessionId&&state.computerSubmissionMessageId===submission.id){
+      state.computerSubmissionMessageId='';state.activeRunKind='';setStreaming(false);
+    }
     state.pendingComputerUserMessages = state.pendingComputerUserMessages.filter((message) => message?.id !== submission.id);
     renderMessages();
     throw error;
@@ -5594,7 +5610,30 @@ async function sendPrompt(input, attachments = [], { browserFreshnessChecked = f
   return sendBackendPrompt(submission, { browserFreshnessChecked: true });
 }
 
+function applyRuntimeSpeedDefaults(config) {
+  if (config?.backendConfigStatus !== 'ready') return;
+  const defaults = config.speedDefaults;
+  // A fresh browser has no user preference. Do not let its static HTML
+  // fallback silently override the configured workstation model on Resume.
+  if (elements.agentModel && !normalizeSpeedModel(readStringSetting('operator.agentModel', ''), '')) {
+    const model = normalizeSpeedModel(defaults?.agent_model, '');
+    if (model && (!isOptionalProviderModel(model) || config.optionalAgentModels?.includes(model))) elements.agentModel.value = model;
+  }
+  if (elements.agentReasoning && !readStringSetting('operator.agentReasoning', ''))
+    elements.agentReasoning.value = normalizeReasoningEffort(defaults?.agent_reasoning_effort, elements.agentReasoning.value);
+}
+
 function applySidecarConfig(config = {}) {
+  applyRuntimeSpeedDefaults(config);
+  if (elements.agentModel && config.backendConfigStatus === "ready") {
+    const available = new Set(Array.isArray(config.optionalAgentModels) ? config.optionalAgentModels : []);
+    for (const option of elements.agentModel.options || []) {
+      if (!isOptionalProviderModel(option.value)) continue;
+      option.hidden = !available.has(option.value);
+      option.disabled = option.hidden;
+    }
+    synchronizeModelReasoning();
+  }
   state.attachmentLimits = config.attachmentLimits || null;
   state.backendUrl = config.backendUrl || "";
   state.backendLocal = !!config.backendLocal;
@@ -5834,7 +5873,7 @@ async function submitTaskDirection({renewResources=false}={}) {
       ? "Direction saved. Delivery is not yet confirmed." : "Direction saved.");
   } catch (error) {
     if (error?.code === "SIDECAR_BROWSER_STALE") await showStaleComposerNotice();
-    else setStatus(checkpointSaved ? "Direction saved. Refresh the task and use Resume when it is ready." : error.message || "Could not send the direction. Your draft is retained.");
+    else setStatus(checkpointSaved ? `Direction saved. ${error.message || "Continuation could not be confirmed."} Refresh the task before using Resume.` : error.message || "Could not send the direction. Your draft is retained.");
   } finally { releaseSubmissionLock(); }
 }
 
@@ -5883,6 +5922,8 @@ function renderCompactWork() {
   document.querySelector("#taskResumeButton").disabled = Boolean(state.assignmentResumePending);
   const renewalButton=document.querySelector('#taskBudgetContinueButton');
   if(renewalButton){
+    renewalButton.textContent=goal?._resourceRenewalAddsTime===true
+      ?'Continue with +20 min / +64 calls / +16M tokens':'Continue with +64 calls / +16M tokens';
     renewalButton.hidden=state.streaming||state.goalSelectionPinned||goal?._assignmentPhase!=='awaiting_user_review'
       ||goal?._canRenewResources!==true;
     renewalButton.disabled=Boolean(state.composerSubmissionPending||state.assignmentResumePending||goal?._providerUsageHold);

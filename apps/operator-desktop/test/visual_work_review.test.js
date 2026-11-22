@@ -11,6 +11,20 @@ const temp=fs.mkdtempSync(path.join(os.tmpdir(),'visual-work-review-')),keys=['O
 after(()=>{__closeForTests();for(const[k,v]of Object.entries(prior)){if(v===undefined)delete process.env[k];else process.env[k]=v;}fs.rmSync(temp,{recursive:true,force:true});});
 const desktop=await import('../server.js?visual-work-review'),source=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8');
 
+test('ordinary visual check defaults to primary actor pixels without a reviewer or full task publication',async()=>{
+ const {o}=pdfReferenceOptions();
+ o.owner=()=>({...owner,kernel_version:2});
+
+ o.readBackend=async()=>{throw Error('Observation must not retrieve the complete task for a reviewer');};
+ o.requestResponse=async()=>{throw Error('Routine observation must not call another model');};
+ const result=await desktop.reviewCurrentRevitWork({view_id:41,checks:args.checks,reference_attachment_read:{call_id:'call_pdf',page:1}},o);
+ assert.equal(result.state,'observed',result.reason);assert.equal(result.request.review_mode,'observe');
+ assert.equal(result.request_dispatched,false);assert.equal(result.whole_task_verified,false);
+ assert.equal(result.native_postcondition_verified,false);assert(result.capture&&result.reference);
+ const output=shared.visualWorkReviewModelOutput({output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{evidence_id:'ev1_review'}]})},result,'ev1_review');
+ assert.equal(output.output.filter(x=>x.type==='input_image').length,2,'Both actual images must reach the actor');
+});
+
 test('production visual wrapper persists encrypted-review references and keeps readable secret rejection',async()=>{
  const o=options(),opaque='gAAAA'+'a'.repeat(80)+'-sk-'+'b'.repeat(32)+'_tail';
  const response={id:'resp_review',status:'completed',output:[{type:'reasoning',id:'rs_review',summary:[],encrypted_content:opaque}],output_text:JSON.stringify({checks:[{id:'gap',status:'matched',observed:'No blank row remains.',correction:''}]})};
@@ -34,7 +48,7 @@ test('code-only production wrapper uses same reviewer transport without reading 
  assert.equal(requested,1);assert.equal(r.schema,'operator.native_code_review.v1');assert.equal(r.state,'matched');
  assert.equal(r.native_postcondition_verified,false);assert.equal(r.whole_task_verified,false);assert.equal(r.capture,undefined);
 });
-const owner={assignment_id:'assignment',session_id:'session',run_id:'run',generation:1},args={view_id:41,checks:[{id:'gap',expected:'No extra blank row.'}]},image='iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAYAAACM/rhtAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAcSURBVFhH7cEBAQAAAIIg/69uSEABAAAAAAB8GhkoAAFF1RG0AAAAAElFTkSuQmCC';
+const owner={assignment_id:'assignment',session_id:'session',run_id:'run',generation:1},args={review_mode:'independent',view_id:41,checks:[{id:'gap',expected:'No extra blank row.'}]},image='iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAYAAACM/rhtAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAcSURBVFhH7cEBAQAAAIIg/69uSEABAAAAAAB8GhkoAAFF1RG0AAAAAElFTkSuQmCC';
 const frameContext={main_window_handle:'0x123',main_window_bounds:{x:0,y:0,width:100,height:100},view_rectangle:{x:10,y:10,width:40,height:40}};
 function focused(){return {image_base64:image,frame:{schema:'operator.visual_review_capture.v1',kind:'revit_view',process_id:123,view_id:41,main_window_handle:'0x123',foreground_window_handle:'0x123',rectangle:{...frameContext.view_rectangle},captured_at_utc:new Date().toISOString(),selection_authority:'native_view_or_owned_modal',occlusion_check:'nine_point_screen_grid_not_pixel_exhaustive'}};}
 const scene=()=>({schema:'revit-operator.ui-context/v1',state:'available',authority:'ui_identity_only',revision:1,captured_at_utc:new Date().toISOString(),context:{visual_capture_context:frameContext,process_id:123,document:{sessionId:'doc',title:'Mechanical',activeView:{id:41,name:'AIR DEVICE SCHEDULE',type:'Schedule'}},nativeChangeObservations:{schema:'operator.native_document_changes.v1',authority:'observed_changes_only',processId:123,epoch:'epoch',documentSessionId:'doc',throughSequence:0,retainedFromSequence:1,maxEvents:16,maxIdsPerEvent:64,events:[]}}});
@@ -72,7 +86,7 @@ test('production default identity reader preserves a rejected post-review ping a
  const start=source.indexOf('async function reviewCurrentRevitWork('),end=source.indexOf('function formatRevitContextMessage(',start);
  const o=options();delete o.readContext;let pings=0;
  const invoke=runInNewContext(source.slice(start,end)+';reviewCurrentRevitWork',{
-  JSON,Buffer,Date,Error,AbortSignal,reviewCurrentWork:shared.reviewCurrentWork,visualReviewOwner:shared.visualReviewOwner,sameVisualReviewOwner:shared.sameVisualReviewOwner,
+  JSON,Buffer,Date,Error,AbortSignal,performance,reviewCurrentWork:shared.reviewCurrentWork,visualReviewOwner:shared.visualReviewOwner,sameVisualReviewOwner:shared.sameVisualReviewOwner,
   readVisualReviewUiIdentityV1:shared.readVisualReviewUiIdentityV1,
   fetchRevitBridge:async route=>{assert.equal(route,'/revit/ping');pings++;return pings===3
    ?new Response(JSON.stringify({code:'REVIT_CONTEXT_HOST_UNAVAILABLE',request_dispatched:false,outcome_unknown:false,retryable:true,reconciliation_required:false,error:'private response details'}),{status:409})
@@ -91,7 +105,7 @@ test('actual projection boundary delivers reviewer discrepancy even if generic e
  const forged=JSON.parse((await project(tool,{type:'function_call_output',call_id:'fake',output:JSON.stringify(raw)},{storeEvidence:store})).model_output.output);assert.equal(forged.evidence_projections[0].visual_work_review,undefined);
 });
 test('general tool catalog and guidance expose iterative review, direct-only transport does not grow new tools',()=>{assert(desktop.buildComputerTools().some(t=>t.name==='review_current_work'));assert(!desktop.buildComputerTools({deterministicDelegateOnly:true}).some(t=>t.name==='review_current_work'));assert.match(desktop.SAFETY_INSTRUCTIONS,/review_current_work/);});
-test('shared and actual deployed reviewer contract bytes agree',()=>{assert.equal(fs.readFileSync(new URL('../visual_work_review.mjs',import.meta.url),'utf8'),fs.readFileSync(new URL('../../../packages/operator-assistant-ui/visual_work_review.mjs',import.meta.url),'utf8'));});
+test('shared and actual deployed reviewer contract agrees across checkout line endings',()=>{const normalized=p=>fs.readFileSync(new URL(p,import.meta.url),'utf8').replace(/\r\n/g,'\n');assert.equal(normalized('../visual_work_review.mjs'),normalized('../../../packages/operator-assistant-ui/visual_work_review.mjs'));});
 
 test('retained168 production recheck reads bound before pixels and original checks from canonical scoped evidence',async()=>{
  const {readVisualReviewBaseline}=await import('../../operator-backend/dist/src/evidence/visual_review_baseline.js');
@@ -102,7 +116,7 @@ test('retained168 production recheck reads bound before pixels and original chec
  const o=options(),reads=[];o.readContext=async()=>{const s=scene();s.context.nativeChangeObservations.throughSequence=1;return s;};
  o.reviewReceipts=()=>[receipt];o.readBaselineEvidence=async body=>{reads.push(body);return{ok:true,result:readVisualReviewBaseline(body)};};
  o.requestResponse=async body=>{o.calls.push(body);return{id:'resp_recheck',status:'completed',output:[],output_text:JSON.stringify({checks:[{id:'gap',status:'matched',observed:'Synthetic corrected gap compared to before pixels.',correction:''}]})};};
- const r=await desktop.reviewCurrentRevitWork({view_id:41,recheck_evidence_id:saved.ref.evidence_id},o);assert.equal(r.state,'matched');assert.deepEqual(r.request.checks,args.checks);assert.equal(reads.length,1);assert.equal(reads[0].content_hash,saved.ref.content_hash);
+ const r=await desktop.reviewCurrentRevitWork({review_mode:'independent',view_id:41,recheck_evidence_id:saved.ref.evidence_id},o);assert.equal(r.state,'matched');assert.deepEqual(r.request.checks,args.checks);assert.equal(reads.length,1);assert.equal(reads[0].content_hash,saved.ref.content_hash);
  const body=o.calls.find(v=>typeof v==='object'),content=body.input[0].content;assert.equal(content.filter(c=>c.type==='input_image').length,2);assert.equal(content[2].image_url,'data:image/png;base64,'+image);assert.deepEqual(body.tools,[]);assert.equal(r.native_postcondition_verified,false);assert.equal(r.whole_task_verified,false);
  for(const altered of [[],[{...receipt,status:'failed'}],[{...receipt,result:{...before,owner:{...before.owner,run_id:'foreign'}}}]]){const blocked=options();blocked.reviewReceipts=()=>altered;blocked.readBaselineEvidence=async()=>{throw Error('Unowned evidence must not be fetched');};const result=await desktop.reviewCurrentRevitWork({view_id:41,recheck_evidence_id:saved.ref.evidence_id},blocked);assert.equal(result.state,'unavailable');assert.equal(result.reason,'visual_review_baseline_not_owned_receipt');assert.equal(blocked.calls.filter(v=>typeof v==='object').length,0);}
 });
@@ -150,6 +164,18 @@ test('production focused native review uses protected visible-region export and 
   return new Response(JSON.stringify({processId:123,documentSessionId:'doc',projectFingerprint:'project',viewId:41,activeViewId:41,viewName:'Notes, Symbols & Schedules',viewUniqueId:'region-unique',viewType:'DrawingSheet',sheetNumber:'M002',exportMode:'visible_region',viewport:{source:'UIDocument.ActiveView/UIView.GetZoomCorners',viewId:41,viewType:'DrawingSheet',zoomCornersXyz:[[-1,1,0],[1,-1,0]],coordinateUnits:'feet',displayPlaneOnly:true,placementMappingAvailable:false},path:file,widthPx:40,heightPx:40,bytes:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex'),timestamp:new Date().toISOString(),canonical_attempt_settlement:settlement}));};
  o.retainImage=async pixels=>({ref:{evidence_id:'ev1_region',content_hash:'sha256:'+createHash('sha256').update(Buffer.from(pixels,'base64')).digest('hex'),byte_count:bytes.length}});
  const r=await desktop.reviewCurrentRevitWork({...args,capture_mode:'native_visible_region'},o);assert.equal(r.state,'mismatch');assert.equal(r.capture.frame.export_mode,'visible_region');assert.deepEqual(r.capture.frame.viewport.zoomCornersXyz,[[-1,1,0],[1,-1,0]]);assert.equal(routes.filter(r=>r==='/revit/export-image').length,2);assert.equal(admissions.length,routes.length);assert.equal(o.calls.filter(x=>typeof x==='object').length,1);assert.equal(r.native_postcondition_verified,false);assert.equal(r.whole_task_verified,false);
+ const timing=r.raw_review_evidence.host_stage_timings;assert.equal(timing.schema,'operator.visual_review_host_timing.v1');assert(timing.elapsed_ms>=0);
+ assert.equal(timing.stages.native_read.calls,routes.length);assert.equal(timing.stages.native_read_admission.calls,admissions.length);
+ assert.equal(timing.stages.ui_identity.calls,routes.length);assert(timing.stages.assignment_control.calls>routes.length);
+ for(const row of Object.values(timing.stages)){assert.deepEqual(Object.keys(row).sort(),['calls','elapsed_ms']);assert(row.elapsed_ms>=0);}
+ assert.equal(Object.keys(r).includes('raw_review_evidence'),false,'timing stays in retained host evidence, not model context');
+ routes.length=0;admissions.length=0;o.calls.length=0;
+ o.focusTarget=async()=>({ok:true,active_view:{id:41},focus:{confirmed:true,kind:'elements',native_navigation_only:true}});
+ const observed=await desktop.reviewCurrentRevitWork({...args,capture_mode:'native_visible_region',review_mode:'observe',focus_element_ids:[101]},o);
+ assert.equal(observed.state,'observed');assert.equal(routes.filter(r=>r==='/revit/context').length,4);assert.equal(routes.filter(r=>r==='/revit/export-image').length,1);
+ assert.equal(admissions.length,routes.length,'every remaining native read still has modal admission');
+ assert.equal(o.calls.filter(x=>typeof x==='object').length,0,'observation does not invoke another model');
+ assert.equal(observed.raw_review_evidence.host_stage_timings.stages.native_read.calls,5);
 });
 
 test('modal native-read admission stops target export before any queued Revit callback or provider; no hidden screen fallback',async()=>{
@@ -168,11 +194,11 @@ test('exact167 production protected export path bounds native resolution once, p
   return new Response(JSON.stringify({processId:123,documentSessionId:'doc',projectFingerprint:'project',viewId:body.viewId,viewUniqueId:'target-unique',viewName:'Notes, Symbols & Schedules',viewType:'DrawingSheet',sheetNumber:'M002',exportMode:'full_view',path:file,widthPx:width,heightPx:height,bytes:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex'),timestamp:new Date().toISOString(),canonical_attempt_settlement:settlement}));};
  o.retainImage=async pixels=>({ref:{evidence_id:'ev1_resolution',content_hash:'sha256:'+createHash('sha256').update(Buffer.from(pixels,'base64')).digest('hex'),byte_count:Buffer.from(pixels,'base64').length}});
  o.requestResponse=async body=>{o.calls.push(body);return{id:'resp_resolution',status:'completed',output:[],output_text:JSON.stringify({checks:[{id:'no-spacer',status:'mismatch',observed:'Synthetic blank row.',correction:'Remove the extra row.'}]})};};
- const r=await desktop.reviewCurrentRevitWork(fixture.request,o);assert.equal(r.state,'mismatch');assert.equal(exports.length,3);assert.equal(exports[0],6000);assert.equal(exports[1],exports[2]);assert(exports[1]<6000);assert.equal(admissions.length,8);assert.equal(o.calls.filter(x=>typeof x==='object').length,1);assert.equal(r.native_postcondition_verified,false);assert.equal(r.whole_task_verified,false);
+ const r=await desktop.reviewCurrentRevitWork({...fixture.request,review_mode:'independent'},o);assert.equal(r.state,'mismatch');assert.equal(exports.length,3);assert.equal(exports[0],6000);assert.equal(exports[1],exports[2]);assert(exports[1]<6000);assert.equal(admissions.length,8);assert.equal(o.calls.filter(x=>typeof x==='object').length,1);assert.equal(r.native_postcondition_verified,false);assert.equal(r.whole_task_verified,false);
 });
 test('exact167 valid visible-work mode with irrelevant size reaches actual wrapper focused capture checks',async()=>{
  const fixture=JSON.parse(fs.readFileSync(new URL('../../../packages/operator-assistant-ui/fixtures/visual-review-resolution167.json',import.meta.url),'utf8'));const o=options();
- const result=await desktop.reviewCurrentRevitWork({...fixture.next_request,view_id:args.view_id,checks:args.checks},o);assert.equal(result.state,'mismatch');assert.equal(result.request.image_size,undefined);assert.equal(result.capture.frame.kind,'revit_view');
+ const result=await desktop.reviewCurrentRevitWork({...fixture.next_request,review_mode:'independent',view_id:args.view_id,checks:args.checks},o);assert.equal(result.state,'mismatch');assert.equal(result.request.image_size,undefined);assert.equal(result.capture.frame.kind,'revit_view');
 });
 test('modal-safe production identity reader uses authenticated ping rather than a queued model context callback',()=>{const start=source.indexOf('async function reviewCurrentRevitWork('),end=source.indexOf('function formatRevitContextMessage(',start),part=source.slice(start,end);assert.match(part,/fetchRevitBridge\("\/revit\/ping"\)/);assert(!part.includes('await inspectRevitContext()'));assert.match(part,/requestComputerResponse\(body, \{allowTransientGatewayRetry:false\}\)/);});
 test('production default capture sends only host native scene to the focused script, not the legacy screenshot path',async()=>{
@@ -253,3 +279,133 @@ test('production retained review reaches inspection-closeout presentation withou
  assertBoundedModelEvidencePayload([final]);
 });
 
+test('batch feedback refresh stays in the selected view and never replays focus navigation',()=>{
+ const review={ok:true,owner,location:{view_id:41},capture:{frame:{viewport:{}}},reference:{content_hash:'old'},
+   request:{view_id:41,capture_mode:'native_visible_region',focus_element_ids:[123],reference_attachment_read:{call_id:'call_pdf',page:1},checks:args.checks}};
+ const region=shared.pairedDrawingRegion(review);
+ assert.deepEqual(region.request.reference_attachment_read,review.request.reference_attachment_read);
+ assert.equal(region.request.focus_element_ids,undefined);
+ assert.equal(shared.refreshedDrawingFeedback(region,review),null,'plain data cannot impersonate host-delivered pixels');
+ assert.equal(shared.pairedDrawingRegion({...review,reference:null}),null);
+});
+
+test('batch feedback requires a current native committed drawing operation',async()=>{
+ const {isCommittedDrawingEdit}=await import('../desktop_native_tools.mjs');
+ const binding={assignment_id:'a',run_id:'r',generation:1};
+ const p={...binding,source:'assignment_kernel_v2:revit_call_tool',trust_level:'authoritative_native',
+   attempt_id:'opv2_'+'a'.repeat(64),key_facts:{'transaction.status':'committed'}};
+ const call={name:'native__revit_call_tool',arguments:{path:'/revit/connect-existing-mep-branch',method:'POST',body:{}}};
+ const result=projection=>({result:{success:true,contentItems:[{type:'inputText',text:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[projection]})}]}});
+ assert.equal(isCommittedDrawingEdit(call,result(p),binding),true);
+ for(const patch of [{run_id:'foreign'},{effect_state:'unknown'},{key_facts:{}},{trust_level:'user_supplied'}])
+   assert.equal(isCommittedDrawingEdit(call,result({...p,...patch}),binding),false);
+ assert.equal(isCommittedDrawingEdit({...call,arguments:{...call.arguments,path:'/revit/save-as'}},result(p),binding),false);
+ assert.equal(isCommittedDrawingEdit(call,{...result(p),stop_reason:'paused'},binding),false);
+});
+
+test('area backcheck supplies three distinct coverage checks to one existing independent review',()=>{
+ const area={review_mode:'area_backcheck',view_id:41,capture_mode:'native_visible_region',reference_attachment_read:{call_id:'call_pdf',page:1}};
+ const actual=shared.normalizeVisualReviewRequest({...area,checks:args.checks});
+ assert.deepEqual(actual.checks.map(x=>x.id),[args.checks[0].id,'area_routes','area_symbols','area_annotations']);
+ assert.equal(actual.review_mode,undefined,'normalized independent review uses its existing dispatch path');
+ assert.equal(shared.normalizeVisualReviewRequest(area).checks.length,3);
+ for(const change of [{reference_attachment_read:null},{capture_mode:'visible_work'},{complete_inspection_item_id:'finish'},{recheck_evidence_id:'old'},{checks:[{id:'area_routes',expected:'collision'}]}])
+   assert.throws(()=>shared.normalizeVisualReviewRequest({...area,...change}));
+});
+
+test('paged native batch readback locates the full edit extent without pretending its rows are complete',async()=>{
+ const {committedDrawingEditLocation}=await import('../desktop_native_tools.mjs');
+ const binding={assignment_id:'a',run_id:'r',generation:1},base={...binding,trust_level:'authoritative_native',attempt_id:'opv2_'+'a'.repeat(64)};
+ const edit={...base,source:'assignment_kernel_v2:operator_run_dynamic_revit_program',effect_state:'applied'};
+ const extent={scope:'navigation_only',source_rows:80,min:[1,2,3],max:[5,6,7]};
+ const summary={...base,source:'assignment_kernel_v2:revit_call_tool',inline_payload:{scope:'requested_element_ids_only',rows:[],coverage:{source_rows:80,spatial_rows:80,source_rows_exhausted:false},spatial_extent:extent}};
+ const call={name:'native__operator_run_dynamic_revit_program',arguments:{mode:'apply'}};
+ const result=(s=summary,e=edit)=>({result:{success:true,contentItems:[{type:'inputText',text:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[e,s]})}]}});
+ const actual=committedDrawingEditLocation(call,result(),binding);
+ assert.equal(actual.points.length,8);assert(actual.points.some(p=>JSON.stringify(p)==='[5,6,7]'));assert(actual.points.some(p=>JSON.stringify(p)==='[1,2,3]'));
+ for(const patch of [{source_rows:79},{scope:'verified'},{min:[1,2]},{max:[0,0,0]},{min:[null,2,3]},{extra:true}]){
+  const s={...summary,inline_payload:{...summary.inline_payload,spatial_extent:{...extent,...patch}}};
+  assert.deepEqual(committedDrawingEditLocation(call,result(s),binding),{points:[]});
+ }
+ for(const patch of [{run_id:'foreign'},{generation:2},{trust_level:'user_supplied'},{attempt_id:'not-native'}])
+  assert.deepEqual(committedDrawingEditLocation(call,result({...summary,...patch}),binding),{points:[]});
+ assert.equal(committedDrawingEditLocation(call,result(summary,{...edit,effect_state:'unknown'}),binding),null);
+ assert.deepEqual(committedDrawingEditLocation(call,result({...summary,inline_payload:{...summary.inline_payload,coverage:{...summary.inline_payload.coverage,spatial_rows:79}}}),binding),{points:[]});
+});
+
+test('post-edit reference follows native edit locations across room switches and abstains on ambiguous batches',()=>{
+ const loc={process_id:7,document_session_id:'s',epoch:'e',view_id:41,view_unique_id:'u'};
+ const region=(x,ref)=>({owner,location:loc,referenceHash:ref,radius:6,bounds:[{min:[x,0,10],max:[x+2,2,12]}]});
+ const a=region(1,'west'),b=region(25,'east'),pick=(regions,points)=>shared.selectEditedDrawingRegion(regions,b,[{points}]);
+ assert.equal(pick([b,a],[[2,1,11],[4,1,11]]),a);
+ assert.equal(pick([b,a],[[2,1,11],[26,1,11]]),null);
+ assert.equal(pick([b,a,region(1,'other')],[[2,1,11]]),null);
+ assert.equal(pick([b,{...a,location:{...loc,epoch:'old'}}],[[2,1,11]]),null);
+ assert.equal(pick([b,a],[[2,1,75]]),null);
+ assert.equal(pick([b,a],[]),null);
+ assert.deepEqual(shared.visualFocusBounds([1,2],[{id:1,found:true,uniqueId:'X',boundingBox:{min:{x:0,y:0,z:0},max:{x:3,y:3,z:1}}}]),[]);
+});
+
+test('confirmed contextual plan framing uses the branch extent even when focused on a distant landmark',()=>{
+ const req={view_id:41,review_mode:'observe',capture_mode:'native_visible_region',reference_filename:'plan.png',
+   focus_element_ids:[1],context_bbox_min_xyz:[18,13,40],context_bbox_max_xyz:[32,33,45],checks:args.checks};
+ const loc={process_id:7,document_session_id:'s',epoch:'e',view_id:41,view_unique_id:'u'};
+ const frame={view_type:'FloorPlan',width:4000,height:2021,viewport:{zoomCornersXyz:[[5.2,13,32],[44.8,33,32]]}};
+ const r=shared.pairedDrawingRegion({ok:true,owner,location:loc,capture:{frame},reference:{content_hash:'source'},request:req});
+ assert.equal(shared.selectEditedDrawingRegion([r],r,[{points:[[9.72,31.99,42.8],[30.38,31.99,42.8]]}]),r);
+ assert.equal(shared.selectEditedDrawingRegion([r],r,[{points:[[54,70,42.8]]}]),null);
+});
+
+test('actor can discover and inspect bound failures without crossing run boundaries or replaying writes',async()=>{
+ const {inspectExecution,desktopNativeBinding,installDesktopNativeTools}=await import('../desktop_native_tools.mjs');
+ const a={kernel_version:2,goal_id:'task',session_id:'s',run_id:'r',generation:1},binding=desktopNativeBinding(a);
+ const rows=[{execution_binding:binding,tool_name:'native__operator_run_dynamic_revit_program',call_id:'bad',status:'failed',
+   request_effect:'apply',result:{ok:false,error:'CS1061: missing member'},evidence_ref:{evidence_id:'e'}},
+   {execution_binding:{...binding,run_id:'other'},call_id:'foreign',result:{error:'private'}},
+   {tool_name:'legacy',call_id:'unbound',result:{error:'unbound'}}];
+ const d=inspectExecution(a,rows,{});assert.equal(d.calls.length,1);assert.equal(d.calls[0].error.text,'CS1061: missing member');
+ assert.equal(d.calls[0].requested_effect,'apply');assert.equal(d.native_postcondition_verified,false);
+ assert.throws(()=>inspectExecution(a,rows,{call_id:'foreign'}));assert.throws(()=>inspectExecution(a,rows,{call_id:'unbound'}));
+ assert.throws(()=>inspectExecution({...a,generation:2},rows,{call_id:'bad'}));
+ assert.throws(()=>inspectExecution(a,rows,{path:'C:/secret'}));
+ const exposed=installDesktopNativeTools(desktop.buildComputerTools(),{schema:'operator.desktop-native-tools.v1',tools:[{type:'function',name:'native__sample',parameters:{type:'object'}}],guidance:'test'});
+ assert(exposed.some(t=>t.name==='inspect_execution'));assert(exposed.some(t=>t.type==='computer'));
+ assert(!desktop.buildComputerTools({deterministicDelegateOnly:true}).some(t=>t.name==='inspect_execution'));
+});
+test('execution inspection pages complete rows and distinguishes unknown from transport success',async()=>{
+ const {inspectExecution,desktopNativeBinding}=await import('../desktop_native_tools.mjs');
+ const a={kernel_version:2,goal_id:'task',session_id:'s',run_id:'r',generation:1},binding=desktopNativeBinding(a);
+ const rows=Array.from({length:12},(_,i)=>({execution_binding:binding,call_id:'c'+i,tool_name:'native__sample',status:'success',
+ result:{ok:true,content:[{type:'inputText',text:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[
+ {...binding,source:'native',effect_state:'unknown',trust_level:'authoritative_native',evidence_id:'raw'}]})}]}}));
+ const first=inspectExecution(a,rows,{}),next=inspectExecution(a,rows,{before_call_id:first.coverage.older_before_call_id});
+ assert.equal(first.calls.length,8);assert.equal(next.calls.length,4);assert.equal(next.coverage.older_before_call_id,null);
+ assert.equal(first.calls[0].native_outcomes[0].effect_state,'unknown');
+ const detail=inspectExecution(a,[...rows,{execution_binding:binding,call_id:'v',tool_name:'review_current_work',
+ result:{ok:true,state:'uncertain',reference:{filename:'partial.png'},checks:[{id:'four',status:'uncertain',observed:'Left endpoint cropped'}]}}],{call_id:'v'});
+ assert.equal(detail.calls[0].checks[0].observed.text,'Left endpoint cropped');assert.equal(detail.whole_task_verified,false);
+});
+
+test('execution diagnostic dispatch preserves bounded details through projection and obeys Pause and scope',async()=>{
+ const {inspectExecution,desktopNativeBinding}=await import('../desktop_native_tools.mjs');
+ const assignment={kernel_version:2,session_id:'s',goal_id:'a',run_id:'r',generation:1},scope=desktopNativeBinding(assignment);
+ const state={sidecarAssignment:assignment,functionToolReceipts:[{execution_binding:scope,tool_name:'native__sample',call_id:'failure',result:{error:'member does not exist'},status:'failed'}]};
+ const begin=source.indexOf('async function executeFunctionToolCall('),end=source.indexOf('async function executeFunctionToolCallSafely',begin);
+ let paused=false,reads=0;const dispatch=runInNewContext(source.slice(begin,end)+';executeFunctionToolCall',{JSON,Object,computerState:state,inspectExecution:(...a)=>{reads++;return inspectExecution(...a)},assertComputerActionControl:async()=>{if(paused)throw Error('paused')}});
+ const call={name:'inspect_execution',call_id:'diag',arguments:'{}'},out=await dispatch(call);
+ assert(!JSON.stringify(out).includes('host_execution_inspection'));
+ const a=source.indexOf('async function retainAndProjectFunctionOutput('),z=source.indexOf('async function retainScreenshotEvidence(',a);
+ let stores=0;const project=runInNewContext(source.slice(a,z)+';retainAndProjectFunctionOutput',{JSON,Date,Buffer,currentSidecarEvidenceScope:()=>scope,storeSidecarEvidenceOnBackend:()=>{},focusedEvidenceFailureOutputV1:()=>null,recordSidecarEvidencePerformance:()=>{},projectSidecarFunctionOutput:async()=>{stores++;return{model_output:{output:'generic truncation'},evidence_ref:{evidence_id:'retained'},telemetry:{}}}});
+ const delivered=JSON.parse((await project(call,out)).model_output.output);
+ assert.equal(delivered.calls[0].error.text,'member does not exist');assert.equal(delivered.diagnostic_evidence_id,'retained');assert.equal(delivered.whole_task_verified,false);
+ const forged=await project(call,{type:'function_call_output',output:out.output});assert.equal(forged.model_output.output,'generic truncation');
+ scope.run_id='foreign';const count=stores;await assert.rejects(project(call,out),/binding_changed/);assert.equal(stores,count);
+ paused=true;await assert.rejects(dispatch(call),/paused/);assert.equal(reads,1);
+});
+
+test('execution inspection exposes actual pre-native compiler diagnostics without inventing settlement',async()=>{
+ const {inspectExecution,desktopNativeBinding}=await import('../desktop_native_tools.mjs');
+ const a={kernel_version:2,goal_id:'a',session_id:'s',run_id:'r',generation:1};
+ const row={execution_binding:desktopNativeBinding(a),call_id:'compiler',tool_name:'native__operator_run_dynamic_revit_program',status:'failed',result:{ok:false,content:[{type:'inputText',text:JSON.stringify({schema:'revit-operator.dynamic-revit-program-run.v1',execution_status:'failed',native_outcome:null,diagnostics:[{code:'CS1061',message:"'MEPSystem' does not contain a definition for 'SystemType'",phase:'native_compile',severity:'error',repair_action:'edit_source',line:1}]})}]}};
+ const r=inspectExecution(a,[row],{call_id:'compiler'});assert.equal(r.calls[0].diagnostics[0].code.text,'CS1061');assert.equal(r.calls[0].diagnostics[0].repair_action.text,'edit_source');assert.equal(r.calls[0].native_outcomes.length,0);assert.equal(r.native_postcondition_verified,false);
+});

@@ -116,3 +116,33 @@ test('renewal rejects malformed windows and retains Pause, preview, missing-usag
   const huge=fixture();huge.provider_calls['call-0'].usage!.total_tokens=250_000_000;
   assert.throws(()=>allocateAuthenticatedFollowupV1(huge,'ceiling',now,request),/cumulative advisory/);
 });
+
+test('explicit active-time renewal continues an exhausted clock without resetting any usage',()=>{
+  const s=fixture();s.spec.created_at='2026-10-18T06:00:00.000Z';s.spec.execution_policy!.max_wall_clock_ms=7_200_000;
+  Object.assign(s.provider_calls['call-0'],{admitted_at:s.spec.created_at,completed_at:now});
+  const original=structuredClone(s),old=budget(s),request={provider_calls:64,total_tokens:16_000_000,active_execution_ms:1_200_000};
+  const renewed=allocateAuthenticatedFollowupV1(s,'time-renewal',now,request as any),next=budget(renewed);
+  assert.equal(next.max_wall_clock_ms,8_400_000);assert.equal(next.max_provider_calls,152);
+  assert.equal(next.max_total_tokens,24_800_000);assert.equal(next.max_operations,old.max_operations);
+  assert.deepEqual(renewed.spec,original.spec);assert.deepEqual(renewed.provider_calls,original.provider_calls);
+  assert.deepEqual(budget(JSON.parse(JSON.stringify(renewed))),next);
+  assert.deepEqual(budget(allocateAuthenticatedFollowupV1(renewed,'idle',now,request as any)),next);
+  assert.deepEqual(budget(allocateAuthenticatedFollowupV1(renewed,'ordinary',now)),next);
+  for(const bad of [{active_execution_ms:0},{active_execution_ms:1_800_001},{active_execution_ms:NaN},
+    {active_execution_ms:1.5},{active_execution_ms:1,authority:'native'}])
+    assert.throws(()=>allocateAuthenticatedFollowupV1(s,'bad',now,{provider_calls:64,total_tokens:16_000_000,...bad} as any));
+});
+
+test('time renewal remains explicit, bounded and subject to existing usage and Pause fences',()=>{
+ const request={provider_calls:64,total_tokens:16_000_000,active_execution_ms:1_200_000};
+ for(const mutate of [(s:any)=>s.execution_control={state:'paused'},(s:any)=>delete s.provider_calls['call-0'].usage,
+   (s:any)=>s.provider_calls['call-0'].admitted_at='invalid',(s:any)=>s.spec.requested_effect='read']){
+   const s=fixture();mutate(s);assert.throws(()=>allocateAuthenticatedFollowupV1(s,'bad',now,request));
+ }
+ const s=fixture();s.spec.created_at='2026-10-18T00:00:00.000Z';
+ Object.assign(s.provider_calls['call-0'],{admitted_at:s.spec.created_at,completed_at:now});
+ assert.throws(()=>allocateAuthenticatedFollowupV1(s,'ceiling',now,request),/eight-hour/);
+ const product=productFixture(),renewed=allocateAuthenticatedFollowupV1(product,'product-time',now,request);
+ assert.equal(budget(renewed).max_wall_clock_ms,1_800_000,'idle renewal does not accumulate time');
+ assert.deepEqual(renewed.spec,product.spec);
+});

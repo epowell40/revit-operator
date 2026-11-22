@@ -18,6 +18,8 @@ export type WorkReturnV1 = {
   primary_artifacts: string[];
   deviations_or_open_items: string[];
   question: string | null;
+  work_summary?: string;
+  missing_fields?: readonly string[];
   clarification_id: string | null;
   recommended_next_step: string;
   affected_targets: string[];

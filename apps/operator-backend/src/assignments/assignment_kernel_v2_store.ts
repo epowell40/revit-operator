@@ -1,5 +1,6 @@
 import { createContentVerifiedJournalV2 } from './content_verified_journal_v2.js';
 import { createContentVerifiedProjection } from "../goals/content_verified_projection.js";
+import { ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA, ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA, projectAssignmentDispatchControlV1 } from '@revitoperator/assignment-kernel-v2-contracts';
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -185,7 +186,7 @@ function journalForMutation(value:unknown):AssignmentKernelJournalRecordV2 {
     quarantined_events:Array.isArray(source.quarantined_events)?[...source.quarantined_events]:[]};
 }
 
-const assignmentSnapshotProjection = createContentVerifiedProjection<AssignmentSnapshotV2 | null>((value) => {
+function projectAssignmentSnapshot(value: unknown): AssignmentSnapshotV2 | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const raw = (value as { assignment_kernel_v2?: unknown }).assignment_kernel_v2;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
@@ -194,7 +195,43 @@ const assignmentSnapshotProjection = createContentVerifiedProjection<AssignmentS
   // The fresh parsed record is private to this projection. The pure reducer
   // validates and copies each event; do not clone the complete history twice.
   return record.events.length > 0 ? journalProjection.open(record.events).snapshot() : null;
-});
+}
+
+const assignmentSnapshotProjection = createContentVerifiedProjection(projectAssignmentSnapshot);
+
+/** Validate the same complete canonical publication before selecting control
+ * fields. No caller-provided state or relaxed ledger validation. */
+export function buildAssignmentDispatchControlV1(snapshot: AssignmentSnapshotV2) {
+  return projectAssignmentDispatchControlV1({
+    schema: ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA,
+    assignment_id: snapshot.current_binding.assignment_id,
+    assignment_version: snapshot.assignment_version,
+    snapshot,
+    provider_ledger: {
+      schema: ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA,
+      assignment_id: snapshot.current_binding.assignment_id,
+      run_id: snapshot.current_binding.run_id,
+      generation: snapshot.current_binding.generation,
+      call_ids: snapshot.provider_call_ids,
+      calls: snapshot.provider_calls,
+      in_flight_call_ids: snapshot.in_flight_provider_call_ids
+    }
+  });
+}
+
+// Read/hash the complete persisted bytes on EVERY call. Only identical bytes
+// reuse this small validated projection, avoiding a full drawing-history clone
+// for each Pause/dispatch check. Changed bytes use the existing full reducer
+// and shared publication validator; semantic errors never fall back to cache.
+const assignmentDispatchProjection = createContentVerifiedProjection(value => {
+  const snapshot = projectAssignmentSnapshot(value);
+  return snapshot ? { control: buildAssignmentDispatchControlV1(snapshot), current_binding: snapshot.current_binding } : null;
+}, { maxEntries: 64, maxProjectionBytes: 1024 * 1024 });
+
+export function getAssignmentKernelDispatchControlV1(goalId: string) {
+  const filePath = getGoalStoragePath(goalId);
+  return filePath ? assignmentDispatchProjection.read(filePath) : null;
+}
 
 export function getAssignmentKernelSnapshotV2(goalId: string): AssignmentSnapshotV2 | null {
   const filePath = getGoalStoragePath(goalId);

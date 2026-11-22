@@ -146,11 +146,14 @@ test('only an absent documentation name yields a correction; malformed or ambigu
  assert.throws(()=>desktopNativeToolDescription([{...tool,description:'x'.repeat(262145)}],{tool:'existing'}),/too_large/);
 });
 
-for(const descriptionMode of ['invoke','direct','known','missing','large']) test(`bound desktop ${descriptionMode} preserves ownership without another model and is never redispatched`,async()=>{
- const describe=descriptionMode!=='invoke'&&descriptionMode!=='direct',missing=descriptionMode==='missing';
+for(const descriptionMode of ['invoke','direct','known','missing','large','gemini']) test(`bound desktop ${descriptionMode} preserves ownership without another model and is never redispatched`,async()=>{
+ const alternate=descriptionMode==='gemini';
+ const model=alternate?'gemini-4-neon':'test-model';
+ const describe=descriptionMode!=='invoke'&&descriptionMode!=='direct'&&!alternate,missing=descriptionMode==='missing';
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'desktop-native-'));
  const env={OPERATOR_WORKSPACE_ROOT:root,REVIT_OPERATOR_MODE:'development',OPERATOR_LOCAL_EXECUTOR_PROFILE:'',
-  OPERATOR_ASSIGNMENT_KERNEL_V2:'1',OPERATOR_BRAIN:'codex',OPERATOR_TOOL_EXPOSURE_PROFILE:'laboratory',OPERATOR_HOSTED_ENABLED:'0',OPERATOR_REVIT_TRANSPORT:'direct'};
+  OPERATOR_ASSIGNMENT_KERNEL_V2:'1',OPERATOR_BRAIN:'codex',OPERATOR_TOOL_EXPOSURE_PROFILE:'laboratory',OPERATOR_HOSTED_ENABLED:'0',OPERATOR_REVIT_TRANSPORT:'direct',
+  OPERATOR_EXTERNAL_DESKTOP_MODELS:alternate?'1':'0',OPERATOR_GEMINI_API_KEY:'test-only-fake'};
  const old=Object.fromEntries(Object.keys(env).map(k=>[k,process.env[k]]));Object.assign(process.env,env);__testOnlyResetGoalListCache();
  try {await runWithRequestContext({operator_backend_auth:createOperatorBackendAuth('shared_token','test-only')},async()=>{
   const objective='Update the marked note and inspect the actual sheet.';
@@ -188,12 +191,13 @@ for(const descriptionMode of ['invoke','direct','known','missing','large']) test
   assert.match(catalog.guidance,/Finish the tracked save and independent file inspection before the final review/);
   assert.match(catalog.guidance,/Include pre-save code evidence IDs with fresh post-save visuals/);
   assert.match(catalog.guidance,/Honor explicit review-before-save requests/);
-  const receipt=createOpenAiModelCallReceipt({route:'desktop_computer',requested_model:'test-model',reasoning_effort:'medium',started_at_utc:new Date().toISOString(),duration_ms:1,
-   response:{id:'response',status:'completed',model:'test-model',usage:{input_tokens:1,output_tokens:1,total_tokens:2}}});
+  const receipt=createOpenAiModelCallReceipt({route:'desktop_computer',requested_model:model,reasoning_effort:'medium',started_at_utc:new Date().toISOString(),duration_ms:1,
+   response:{id:'response',status:'completed',model,usage:{input_tokens:1,output_tokens:1,total_tokens:2}}});
+  if(alternate)receipt.provider='gemini';
   const response={...retained().response,model_call_receipt:receipt};
   if(describe)response.output[0]={...response.output[0],name:'native__describe_tool',arguments:JSON.stringify({tool:missing?'operator_get_assignment_status':programTool.name})};
   if(descriptionMode==='direct')response.output[0]={...response.output[0],name:'native__'+programTool.name,arguments:JSON.stringify({source:'exact owner source',mode:'read'})};
-  await retainDesktopResponse({...binding,kernelVersion:2},'message',{},()=>executeExternalProviderCallV2({binding,model:'test-model',reasoning_effort:'medium',
+  await retainDesktopResponse({...binding,kernelVersion:2},'message',{model},()=>executeExternalProviderCallV2({binding,model,provider:receipt.provider,reasoning_effort:'medium',
    invoke:async()=>response,receipt:r=>r.model_call_receipt,errorReceipt:()=>null}),()=>null);
   const input={message_id:'message',response_id:'response',call_id:'tool-call'};
   await assert.rejects(executeDesktopNativeCall({...binding,generation:2},input),/owner_binding/);

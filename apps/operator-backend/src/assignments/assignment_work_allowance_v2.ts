@@ -2,6 +2,7 @@ import { assignmentWorkAllowanceV2, defaultAssignmentWorkBudgetV2 } from "../dom
 export { assignmentWorkAllowanceV2, defaultAssignmentWorkBudgetV2 } from "../domain/assignment-kernel/effective_work_budget.js";
 import type { AssignmentSnapshotV2, AssignmentProgressBudgetV2 } from "../domain/assignment-kernel/index.js";
 import { assignmentActiveExecutionTimeMsV2 } from "../domain/assignment-kernel/progress/execution_time.js";
+import {providerTokenRunway} from './provider_token_runway.js';
 import { ordinaryInputTokens, standardProviderTextTokenCostUsd, validTokenCount, PROVIDER_TOKEN_PRICING_SNAPSHOT } from "../provider_token_cost.js";
 
 /** Resource telemetry, not permission to extend a lease or certify a result.
@@ -31,9 +32,34 @@ export function assignmentWorkBudgetStatusV2(snapshot: AssignmentSnapshotV2, ord
     operations: meter(Object.keys(snapshot.operations).length, budget.max_operations),
     active_execution_ms: meter(assignmentActiveExecutionTimeMsV2(snapshot, now), budget.max_wall_clock_ms)
   };
-  const near = Object.entries(resources).filter(([, value]) => value.used === null || value.used >= value.limit * 0.75).map(([key]) => key);
+  // An explicit renewal is a bounded new window, not a reset of lifetime usage.
+  // Warn when its reserve is reached; a large retained history must not make a
+  // completely fresh window look exhausted (or admit a premature handoff).
+  // Ordinary follow-ups/Resume do not create a new window. This projection
+  // changes no allocation, admission limit, usage receipt or completion proof.
+  const renewal = snapshot.user_followup_allocation?.resource_renewal;
+  const request = renewal?.request;
+  const bounded = (n: unknown, max: number): n is number => Number.isSafeInteger(n) && Number(n)>0 && Number(n)<=max;
+  const renewedWindow = renewal && typeof renewal.command_id==='string' && renewal.command_id.length>0
+    && Number.isFinite(Date.parse(renewal.authorized_at))
+    && Date.parse(renewal.authorized_at)>=Date.parse(snapshot.spec.created_at)
+    && Date.parse(renewal.authorized_at)<=Date.parse(now)
+    && request && bounded(request.provider_calls,64) && bounded(request.total_tokens,16_000_000)
+    && bounded(renewal.ceilings?.max_provider_calls,2048) && renewal.ceilings.max_provider_calls>=budget.max_provider_calls
+    && bounded(renewal.ceilings?.max_total_tokens,256_000_000) && renewal.ceilings.max_total_tokens>=budget.max_total_tokens
+    && calls.every(call=>validTokenCount(call.usage?.total_tokens)) ? request : undefined;
+  const near = Object.entries(resources).filter(([key,value]) => {
+    const timeWindow=renewedWindow && bounded(renewedWindow.active_execution_ms,1_800_000)
+      && bounded(renewal?.ceilings.max_wall_clock_ms,28_800_000)
+      && renewal!.ceilings.max_wall_clock_ms!>=budget.max_wall_clock_ms ? renewedWindow.active_execution_ms : undefined;
+    const window = key==='active_execution_ms' ? timeWindow
+      : renewedWindow && (key==='provider_calls'||key==='total_tokens') ? renewedWindow[key] : undefined;
+    return value.used===null || (window===undefined ? value.used>=value.limit*.75
+      : value.remaining!<=Math.min(value.limit,window)*.25);
+  }).map(([key])=>key);
   const allowance=assignmentWorkAllowanceV2(snapshot);
   return { resources, cached_input_tokens: cached,
+    token_runway:providerTokenRunway(calls,snapshot.current_binding,resources.total_tokens.remaining,now),
     allocation: { source_work_allowance: snapshot.spec.execution_policy?.source_work_allowance ?? null,
       ...(allowance.source_required_plan?{source_required_plan:{
         basis:'Immutable exact intake requires a durable work plan, with a retained edit batch and dependent inspection; one bounded planning window, not checked work or completion.'}}:{}),

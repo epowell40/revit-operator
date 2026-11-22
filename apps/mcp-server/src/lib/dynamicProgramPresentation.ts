@@ -39,8 +39,12 @@ export function presentDynamicProgramResult(value: RecordValue): RecordValue {
         && failure.complete === true && failure.reported_element_count === 2 && failure.returned_element_count === 2
         && Array.isArray(ids) && ids.length === 2 && ids[0] !== ids[1] && ids.every(id => Number.isSafeInteger(id) && id > 0);
     });
+    const curveConnectorRequired = rollbackGuidance && typeof outcome.error === "string"
+      && /^the owner should be \(flex\) duct or pipe\.\s+parameter name:\s*connector(?:\s|$)/i.test(outcome.error);
     const correctionIdentityGuidance = joinedWallRollback
       ? " For this joined-wall insert conflict, use one focused current-model read to identify the existing wall among the two attempt-time IDs and compare the join with the intended full opening width. Continue independent openings in separate bounded batches so this conflict cannot roll back their work. Isolate the conflicting opening for correction or report it as blocked if the source does not support a placement. Do not reuse a rolled-back insert ID, shift the opening by guesswork, unjoin surrounding walls or repeat the same batch."
+      : curveConnectorRequired
+      ? " NewTakeoffFitting requires a duct- or pipe-owned connector. Inspect the connector owner and intended host. For an existing air terminal with an open connector and a compatible rigid duct at the intended connection point, look up /revit/connect-existing-mep-branch with connectionMode air_terminal_on_duct. For a duct or pipe takeoff, use the compatible branch curve's open connector. Confirm fit and write authorization before applying, then check the physical connection."
       : rollbackGuidance
       ? " For a curve correction, endpoints alone are not unique: coincident curves may be intentional. Inspect matching identities, owner/style and geometry with a bounded read-only query, then use the intended observed UniqueId with doc.GetElement(uniqueId). Do not choose or delete an arbitrary match."
       : "";

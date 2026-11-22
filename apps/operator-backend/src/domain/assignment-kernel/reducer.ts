@@ -20,6 +20,7 @@ import { advisoryVerificationV2 } from "./execution_policy.js";
 import { appendDiscoveredInputV2, assignmentInputVariablesV2, workUnitInputVariableIdsV2 } from "./input_registry.js";
 import { invalidateDependentInputResultsV2 } from "./input_result_freshness.js";
 import { canonicalJsonV2 } from "./canonical.js";
+import { isDeepStrictEqual } from "node:util";
 import { nativeFailureDependencyLinksV1, nativeArtifactResultEffectV2, nativeDocumentCheckpointResultV2, operationInputSchemaGapErrorV2, nativeCompletionReconciliationEffectV1 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { validateResultDeliveryV2 } from "./result_delivery.js";
 import { declareWorkPlanV2, completeWorkPlanItemV2, workPlanPendingV2, deferWorkPlanItemV2, workPlanItemDeferredV2 } from "./work_plan.js";
@@ -678,6 +679,7 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         snapshot = { ...snapshot, work_unit_states: { ...snapshot.work_unit_states, [event.work_unit_id]: event.state } };
         break;
       case "input_requested": {
+        if (event.work_summary !== undefined) kernelAssertV2(typeof event.work_summary === "string" && event.work_summary.trim().length > 0 && event.work_summary.length <= 4000, "input_summary_invalid", "Reported work must be a bounded nonempty string.");
         if (event.declaration) {
           kernelAssertV2(event.declaration.variable?.variable_id === event.variable_id, "input_declaration_binding_invalid", "Question and declared variable must agree.");
           snapshot = appendDiscoveredInputV2(snapshot, event.declaration);
@@ -691,7 +693,7 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
           pending_input_variable_ids: [...new Set([...snapshot.pending_input_variable_ids, event.variable_id])].sort(),
           clarifications: { ...snapshot.clarifications, [event.clarification_id]: {
             clarification_id: event.clarification_id, variable_id: event.variable_id,
-            question: event.question, requested_at: event.occurred_at
+            question: event.question, ...(event.work_summary ? {work_summary: event.work_summary} : {}), requested_at: event.occurred_at
           } }
         };
         break;
@@ -1182,6 +1184,13 @@ export class AssignmentJournalV2 {
   }
 
   events(): readonly AssignmentEventV2[] { return structuredClone(this.#events); }
+  /** Compare every retained field against freshly read history without encoding
+   * it again. Returns no mutable references or trusted state. Object property
+   * order is immaterial; event order, values, types and unknown fields are not. */
+  matchesHistoryPrefix(events: readonly AssignmentEventV2[]): boolean {
+    return events.length >= this.#events.length
+      && this.#events.every((event, index) => isDeepStrictEqual(event, events[index]));
+  }
   snapshot(): AssignmentSnapshotV2 { return structuredClone(current(this.#state)); }
   /** Immutable serialized projection for cache accounting; never exposes state. */
   serializedSnapshot(): string { return JSON.stringify(current(this.#state)); }
