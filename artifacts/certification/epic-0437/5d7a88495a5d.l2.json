@@ -5653,7 +5653,7 @@
     },
     {
       "path": "apps/operator-backend/test/desktop_bounded_window.test.ts",
-      "sha256": "sha256:c66a8ddc926dbf6a4f4fbb75da2650e9b46b7ed3f80d018da10e5e55c5ae833a"
+      "sha256": "sha256:bb7a3fbb39b0ec7ffeab393fdbbeaba84fa9d19f80ec70574a1403b79cd9f7fa"
     },
     {
       "path": "apps/operator-backend/test/desktop_cache_stable_history.test.ts",
@@ -12745,7 +12745,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:eb21bc06d06ce7b2b8bb17e4961a5034fd2c6c4a916a1d55e37c2136b74c19ae",
+  "inputs_hash": "sha256:63c2cda845a03204f307ff10a68328796bdfee0436be863c460daefc45db039d",
   "result": {
     "passed": true,
     "checks": [
