@@ -10,6 +10,20 @@ const binding={assignment_id:'assignment',session_id:'session',run_id:'run',gene
 const request={view_id:41,checks:[{id:'gap',expected:'No extra blank row below the headings.'},{id:'border',expected:'Medium grid lines are selected.'}]};
 const now=Date.parse('2026-10-17T12:00:00Z');
 
+test('review readiness reaches actor with the same images and unchanged visual verdict',async()=>{
+ const f=host();
+ f.h.requestResponse=async()=>({id:'review_readiness',status:'completed',output:[],output_text:JSON.stringify({checks:[
+  {id:'gap',status:'mismatch',observed:'A readable label is missing beside the branch.',correction:'Restore that label.',repair:{readiness:'clear_visual_fix',blocking_fact:''}},
+  {id:'border',status:'mismatch',observed:'A pair of unidentified oval marks is absent.',correction:'Resolve the device meaning before placing anything.',repair:{readiness:'needs_information',blocking_fact:'What do the two oval marks represent?'}}
+ ]})});
+ const r=await reviewCurrentWork(request,f.h),original=JSON.stringify(r);
+ const out=visualWorkReviewModelOutput({output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{evidence_id:'ev1_review'}]})},r,'ev1_review');
+ const v=JSON.parse(modelText(out.output)).evidence_projections[0].visual_work_review;
+ assert.deepEqual(v.repair_focus.ready_check_ids,['gap']);assert.deepEqual(v.repair_focus.needs_information_check_ids,['border']);
+ assert.deepEqual(v.checks,r.checks);assert.equal(v.state,'mismatch');assert.equal(v.whole_task_verified,false);assert.equal(v.native_postcondition_verified,false);
+ assert.equal(out.output.filter(c=>c.type==='input_image').length,1);assert.equal(JSON.stringify(r),original);assert.equal(v.coverage.complete,true);
+});
+
 test('adjacent review dispatch delivers one real combined image/code packet and preserves actor image inputs',async()=>{
  const f=host(),ids=['A','B'].map(x=>'ev1_'+x.repeat(32));let selected,providerCalls=0;
  f.h.codeReviewPacket=async value=>{selected=value;return {executions:value.map(evidence_id=>({evidence_id,source:'selected native source'})),coverage:{all_assignment_calls:false}};};

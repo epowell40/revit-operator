@@ -1,7 +1,7 @@
 import {nativeChangeObservationFromContext} from './native_change_observations.mjs';
 import {nativeViewActivationRequest} from './native_view_activation.mjs';
 import {createHash} from 'node:crypto';
-import {reviewRepairFocus} from './review_repair_focus.mjs';
+import {reviewRepairFocus,normalizeRepairGuidance} from './review_repair_focus.mjs';
 import {normalizeCodeEvidenceIds,parseNativeCodeReview,NATIVE_CODE_REVIEW_INSTRUCTIONS,NATIVE_CODE_REVIEW_SCOPE,nativeCodeReviewSessionDiagnostic,NATIVE_CODE_SESSION_RECOVERY} from './native_code_review.mjs';
 import {nativeSheetArtifactState,nativeSheetRenderState,sameNativeSheetRendering} from './native_sheet_render_state.mjs';
 import {buildDraftingCorrectionIndex} from './drafting_correction_index.mjs';
@@ -312,7 +312,8 @@ export const VISUAL_WORK_REVIEW_INSTRUCTIONS=
   'Do not infer selection from color alone: system or category graphics can also be blue. Suggest checking selection or a suitable screen display setting rather than asserting highlighted objects without evidence. Verify physical connections through native readback, not pixels; assess visible alignment and readability separately. A Thin Lines screen image does not establish printed lineweights. Unclear geometry or a requested printed appearance not shown stays uncertain. '+
   'If a check does not follow from or conflicts with the user-request excerpt, mark uncertain and explain. '+
   'Return ONLY JSON {"checks":[{"id":"supplied id","status":"matched|mismatch|uncertain","observed":"specific visible evidence or limit","correction":"specific correction for mismatch, otherwise empty or an inspection suggestion"}]}. '+
-  'Return exactly all supplied ids once, no extra keys. Keep observed and correction each at most 600 characters. Never report whole-task completion.';
+  'For each mismatch also include repair:{"readiness":"clear_visual_fix|needs_information","blocking_fact":""}. Missing appearance does not identify the intended component or connection. Use clear_visual_fix only when the supplied evidence specifies the visible correction unambiguously, with an empty blocking_fact; native identity, feasibility and permissions still require actor checks. Otherwise use needs_information and name the one missing fact, at most 300 characters. Do not tell the actor to insert an unidentified symbol or invent hidden routing. If a grouped check mixes clear and ambiguous changes, use needs_information and describe the clear change separately in correction so the actor can still act on it. Matched and uncertain checks omit repair. '+
+  'Return exactly all supplied ids once, no other keys. Keep observed and correction each at most 600 characters. Never report whole-task completion.';
 
 function scene(snapshot,viewId,now){
   if(snapshot?.schema!=='revit-operator.ui-context/v1'||snapshot.state!=='available'||snapshot.authority!=='ui_identity_only'
@@ -463,10 +464,11 @@ export function parseVisualWorkReview(response,request){
   if(!object(parsed)||Object.keys(parsed).some(k=>!['checks',...(request.code_evidence_ids?['code_review']:[])].includes(k))||!Array.isArray(parsed.checks)||parsed.checks.length!==request.checks.length)throw Error('visual_review_check_coverage_incomplete');
   const ids=new Set(request.checks.map(c=>c.id)),seen=new Set();
   const checks=parsed.checks.map(c=>{
-    if(!object(c)||Object.keys(c).some(k=>!['id','status','observed','correction'].includes(k))||!ids.has(c.id)||seen.has(c.id)
+    if(!object(c)||Object.keys(c).some(k=>!['id','status','observed','correction','repair'].includes(k))||!ids.has(c.id)||seen.has(c.id)
       ||!['matched','mismatch','uncertain'].includes(c.status)||!bounded(c.observed,600)||typeof c.correction!=='string'||c.correction.length>600
       ||c.status==='mismatch'&&!c.correction.trim())throw Error('visual_review_check_result_invalid');
-    seen.add(c.id);return {id:c.id,expected:request.checks.find(e=>e.id===c.id).expected,status:c.status,observed:c.observed,correction:c.correction};
+    const repair=normalizeRepairGuidance(c);
+    seen.add(c.id);return {id:c.id,expected:request.checks.find(e=>e.id===c.id).expected,status:c.status,observed:c.observed,correction:c.correction,...(repair?{repair}:{})};
   });
   const codeReview=request.code_evidence_ids?parseNativeCodeReview(parsed.code_review):null;
   const statuses=[...checks.map(c=>c.status),...(codeReview?[codeReview.status]:[])];
