@@ -99,3 +99,11 @@ test("a report with no completed work cannot imply completion or hide its open i
  assert.match(report.split("## Details")[0],/No completed work was reported/);
  assert.match(report,/Resolve the arrow target/);assert.match(report,/No edit was dispatched/);
 });
+
+test('Responses keeps the user-question field optional and a completed read report does not request input',async()=>{
+ assert.equal(WORK_REPORT_TOOL.strict,false,'Responses auto-strict conversion must not require optional needs_input');
+ assert(!WORK_REPORT_TOOL.parameters.required.includes('needs_input'));
+ const report={claimed_completed:['Read the current project and view.'],remaining_work:[],uncertainties:['Version observed from UI.'],written_findings:'The corrected read and visible window agree.'};
+ const calls=[];await submitWorkReportForReview(binding,report,async(_route,options)=>{const x=JSON.parse(options.body);calls.push(x);return x.action==='status'?{ok:true,outcome:'active',verification_policy:'advisory'}:{ok:true,verification_policy:'advisory',completion_proposal:report}},{requestInput:()=>assert.fail('No user decision was requested')});
+ assert.deepEqual(calls.map(x=>x.action),['status','propose_completion']);assert.equal(calls[1].completion_proposal.needs_input,undefined);
+});
