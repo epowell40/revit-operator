@@ -171,7 +171,11 @@ test("the transport-independent domain imports no edge, route, evidence-projecti
       assert.ok(["canonical.ts", "payload_provenance.ts"].includes(path.basename(file)), file);
     }
     if (source.includes("@revitoperator/assignment-kernel-v2-contracts")) {
-      assert.ok(["operation.ts", "provider_call.ts", "execution_failure.ts", "provider_usage_hold.ts", "reducer.ts", "semantic_admissibility.ts", "snapshot.ts", "family_capacity_retry.ts", "template_reassignment.ts", "native_inventory_workload.ts", "schedule_filter_restoration.ts", "committed_read_refresh.ts", "native_work_progress.ts", "verified_saved_partial.ts"].includes(path.basename(file)), file);
+      assert.ok(["operation.ts", "provider_call.ts", "execution_failure.ts", "provider_usage_hold.ts", "reducer.ts", "semantic_admissibility.ts", "snapshot.ts", "family_capacity_retry.ts", "template_reassignment.ts", "native_inventory_workload.ts", "schedule_filter_restoration.ts", "committed_read_refresh.ts", "native_work_progress.ts", "verified_saved_partial.ts", "work_plan_location.ts"].includes(path.basename(file)), file);
+      if (path.basename(file) === "work_plan_location.ts") {
+        assert.match(source, /import\s*\{\s*nativeDocumentCheckpointRequestMatchesV2\s*\}\s*from ['"]@revitoperator\/assignment-kernel-v2-contracts['"]/);
+        assert.doesNotMatch(source, /\/revit\//i, "Location checkpoint decoding stays in the shared pure contract");
+      }
       if (["committed_read_refresh.ts", "native_work_progress.ts", "verified_saved_partial.ts"].includes(path.basename(file))) {
         assert.doesNotMatch(source, /\/revit\//i, "Native checkpoint wire decoding stays in the shared contract");
         assert.doesNotMatch(source, /from ['"]node:/, "Kernel checkpoint accounting remains free of platform imports");
@@ -210,8 +214,10 @@ test("the transport-independent domain imports no edge, route, evidence-projecti
     }
     for (const match of source.matchAll(/^\s*(?:import|export)\b[^\r\n]*?from\s+["']([^"']+)["']/gm)) {
       const specifier = match[1]!;
+      const pureComparison = path.relative(root, file) === "reducer.ts" && specifier === "node:util"
+        && /^\s*import\s*\{\s*isDeepStrictEqual\s*\}\s*from\s*["']node:util["']$/.test(match[0]);
       assert.ok(specifier.startsWith("./") || specifier.startsWith("../")
-        || specifier === "@revitoperator/payload-digest-v2" || specifier === "@revitoperator/assignment-kernel-v2-contracts",
+        || pureComparison || specifier === "@revitoperator/payload-digest-v2" || specifier === "@revitoperator/assignment-kernel-v2-contracts",
         `${file}: non-domain import ${specifier}`);
     }
     const withoutSharedContracts = source
