@@ -13,6 +13,38 @@ function fixture(){
   results:[{id:10,ok:true,connectorScanTruncated:false,connectorCount:1,returnedConnectorCount:1,connectors:[port(1,[1,2,3],peer(20,2))]},
    {id:20,ok:true,connectorScanTruncated:false,connectorCount:1,returnedConnectorCount:1,connectors:[port(2,[4,5,6],peer(10,1))]}]};
 }
+
+test('element placement reaches the actor alongside ports without confusing their distinct origins',t=>{isolated(t);const raw:any=fixture();
+ raw.results[0].elementLocation={status:'observed',kind:'point',coordinateSpace:'document_internal',lengthUnits:'feet',point:[0.5,2,3],rotationRadians:Math.PI};
+ raw.results[1].elementLocation={status:'observed',kind:'line',coordinateSpace:'document_internal',lengthUnits:'feet',start:[4,5,6],end:[7,8,9],isBound:true};
+ const stored=storeEvidence({scope,source:'native:placement',trust_level:'authoritative_native',raw});
+ const locations=(stored.projection.connector_graph as any)?.element_locations;assert(locations,'Placement facts must survive the normal bounded projection');
+ assert.deepEqual(locations.rows[0].point,[0.5,2,3]);assert.equal(locations.rows[0].rotationRadians,Math.PI);assert.equal(locations.rows[0].owner,10);
+ assert.deepEqual(locations.rows[1].end,[7,8,9]);assert.equal(locations.rows[1].source_row,1);assert.match(locations.notice,/not connector origins/);
+ const context=assembleBoundedEvidenceContext({...scope,projections:[stored.projection],budget:{item_bytes:8192,request_bytes:32768}});
+ const response=adaptMcpToolCallResultToDynamicResponse({content:[{type:'text',text:JSON.stringify(raw)}]},{tool:'revit_call_tool',projections:context.projections,omitted:context.omitted});
+ const text=(response.contentItems[0] as any).text;assertBoundedModelEvidencePayload({type:'function_call_output',output:text});
+ assert.deepEqual(JSON.parse(text).evidence_projections[0].connector_graph.element_locations,locations);
+});
+
+test('partial and older location reads cannot become invented coordinates or placement proofs',t=>{isolated(t);const raw:any=fixture();
+ raw.results[0].elementLocation={status:'partial',kind:'point',coordinateSpace:'document_internal',lengthUnits:'feet',point:[1,2,3],rotationStatus:'unavailable'};
+ let locations=(storeEvidence({scope,source:'native:partial_placement',trust_level:'authoritative_native',raw}).projection.connector_graph as any).element_locations;
+ assert.equal(locations.rows[0].status,'partial');assert.equal(locations.rows[0].rotationStatus,'unavailable');assert.equal(locations.rows[0].rotationRadians,undefined);
+ assert.equal(locations.rows[1].status,'not_reported');
+ raw.results[0].elementLocation.point=[1,null,3];raw.results[0].elementLocation.rotationRadians=Infinity;
+ locations=(storeEvidence({scope,source:'native:invalid_placement',trust_level:'authoritative_native',raw}).projection.connector_graph as any).element_locations;
+ assert.equal(locations.rows[0].status,'unavailable');assert.equal(locations.rows[0].point,undefined);
+});
+
+test('location table is optional and never displaces existing graph data or trusts foreign envelopes',t=>{isolated(t);const raw:any=fixture();
+ raw.results.forEach((r:any)=>r.elementLocation={status:'unavailable',reason:'no_supported_location'});
+ const normal:any=storeEvidence({scope,source:'native:location_normal',trust_level:'authoritative_native',raw},8192).projection;
+ const tiny:any=storeEvidence({scope,source:'native:location_small',trust_level:'authoritative_native',raw},4096).projection;
+ assert(normal.connector_graph.element_locations);assert(tiny.projected_bytes<=4096);assert.deepEqual(tiny.connector_graph.lists.reciprocal_edges,normal.connector_graph.lists.reciprocal_edges);
+ assert.equal(storeEvidence({scope,source:'untrusted:location',trust_level:'host_observed',raw}).projection.connector_graph,undefined);
+ const legacy:any=fixture();assert.equal((storeEvidence({scope,source:'native:legacy_location',trust_level:'authoritative_native',raw:legacy}).projection.connector_graph as any).element_locations,undefined);
+});
 test('connected port geometry reaches the normal bounded model consumer with exact owner/connector/source indices',t=>{isolated(t);const raw=fixture(),before=JSON.stringify(raw);
  const stored=storeEvidence({scope,source:'native:connector_geometry',trust_level:'authoritative_native',raw});
  const g:any=stored.projection.connector_graph;assert(g?.connector_geometry,'Connected endpoint geometry must not require another retained-evidence read');

@@ -15,6 +15,9 @@ test('active C# discovery exposes guarded connector reads and distinguishes unsu
  assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/Width\/Height only for Rectangular or Oval/);
  assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/unavailable, not zero/);
  assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/per-connector read errors/);
+ assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/elementLocation/);
+ assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/distinct from connector origins/);
+ assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,/Older or partial location fields remain unknown/);
 });
 test('native code discovery and multi-terminal readback expose bounded native attachment batches',()=>{
  const p={...payload(),results:[row(42),row(43)]},request={elementIds:[42,43]};
