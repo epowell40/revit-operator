@@ -111,7 +111,7 @@ export function retainedDraftingProgressContinuation(assignment, retained, track
     'You have used '+calls+' model calls since new construction or native checked-target progress. '+
     'Choose one concrete remaining discrepancy now. Finish a supported annotation/property pass or another ready branch when a connection is blocked. '+
     'Record the specific blocked pass and continue independent work. Reuse the paired reference/model area and current readbacks. '+
-    'Further inspection must answer a named missing fact needed for that action. Repeated successful inspections, reviews and saves do not reset this progress clock. '+
+    'If the next discrepancy is unclear after a construction pass, use area_backcheck with the current paired area before broader discovery; reuse an existing current review rather than requesting it again. Further inspection must answer a named missing fact needed for a specific repair. After a useful repair, check and save it before a separate uncertain investigation. Repeated successful inspections, reviews and saves do not reset this progress clock. '+
     (stage>=2?'If the bounded alternative cannot make progress, preserve an authorized useful milestone and report the checked partial with the exact blocker. ':'')+
     'This changes no budget, native admission, Pause or unknown-effect requirement.'}]};
 }

@@ -40,12 +40,33 @@ test('matched review feedback reaches the actor with bounded reuse guidance and 
   const feedback=JSON.parse(modelText(output.output)).evidence_projections[0].visual_work_review;
   assert.equal(feedback.state,state);assert.equal(feedback.native_postcondition_verified,false);assert.equal(feedback.whole_task_verified,false);
   assert.equal(f.calls.providers.length,1);assert.equal(feedback.coverage.complete,true);
+  assert.deepEqual(feedback.repair_focus[state==='matched'?'reuse_unchanged_check_ids':state==='mismatch'?'repair_check_ids':'clarify_check_ids'],r.checks.filter(c=>c.status===state).map(c=>c.id));
+  assert.match(feedback.repair_focus.scope,/not native elements/);
+  assert.equal(output.output.filter(x=>x.type==='input_image').length,1);
   if(state==='matched') {
    assert.match(feedback.guidance,/Reuse this review for these unchanged checks/);
    assert.match(feedback.guidance,/stale evidence or an uncovered UI requirement/);
    assert.match(feedback.guidance,/required code\/save\/file checks/);
   } else assert.doesNotMatch(feedback.guidance,/proceed to the existing final report/);
  }
+});
+
+test('review repair navigation separates actionable findings from uncertainty without changing verdicts',async()=>{
+ const f=host(),original=f.h.requestResponse;
+ f.h.requestResponse=async body=>{
+  const r=await original(body),parsed=JSON.parse(r.output_text);
+  parsed.checks[0]={...parsed.checks[0],status:'mismatch',correction:'Move the existing label clear of the marker.'};
+  parsed.checks[1]={...parsed.checks[1],status:'uncertain',correction:'The symbol is not readable.'};
+  return {...r,output_text:JSON.stringify(parsed)};
+ };
+ const r=await reviewCurrentWork(request,f.h),before=JSON.stringify(r);
+ const envelope={output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{evidence_id:'ev1_review'}]})};
+ const projected=visualWorkReviewModelOutput(envelope,r,'ev1_review');
+ const v=JSON.parse(modelText(projected.output)).evidence_projections[0].visual_work_review;
+ assert.deepEqual(v.repair_focus.repair_check_ids,['gap']);assert.deepEqual(v.repair_focus.clarify_check_ids,['border']);
+ assert.deepEqual(v.repair_focus.reuse_unchanged_check_ids,[]);assert.deepEqual(v.checks,r.checks);
+ assert.match(v.repair_focus.next_action,/save the useful repair/);assert.match(v.repair_focus.next_action,/named fact/);
+ assert.equal(JSON.stringify(r),before);assert.equal(v.whole_task_verified,false);assert.equal(f.calls.providers.length,1);
 });
 test('PDF source review reuses a selected delivered attachment image instead of requiring a new PNG attachment',async()=>{
  const selected={call_id:'call_source',page:1};

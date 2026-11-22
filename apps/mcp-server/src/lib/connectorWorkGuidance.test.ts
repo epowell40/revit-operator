@@ -2,6 +2,9 @@ import test from 'node:test';import assert from 'node:assert/strict';
 import {projectConnectorWorkGuidance,AIR_TERMINAL_CONNECTION_GUIDANCE}from'./connectorWorkGuidance.js';
 import{nativeReadEvidence}from'./nativeReadEvidence.js';
 import {DYNAMIC_REVIT_NATIVE_GUIDE} from './dynamicRevitSdkGuide.js';
+test('active native code contract exposes scoped room-space-link discovery and guarded HVAC properties',()=>{
+ for(const expected of [/host Rooms and MEP Spaces together/,/No matching host Room does not mean/,/all eight bounding-box corners/,/Origin alone is not the transform/,/DuctSystemType applies only to DomainHvac/])assert.match(DYNAMIC_REVIT_NATIVE_GUIDE,expected);
+});
 const row=(id=42)=>({id,ok:true,category:'OST_DuctTerminal',connectorCount:1,returnedConnectorCount:1,connectorScanTruncated:false,
  connectors:[{domain:'DomainHvac',connectorType:'End',shape:'Rectangular',physicalConnectionState:'open',referenceScanComplete:true,referenceReadErrorCount:0,physicalConnectedTo:[]}]});
 const payload=()=>({status:'Ok',results:[row()],canonical_attempt_settlement:{method:'POST',path:'/revit/get-connectors',requested_effect:'read',effect_state:'none'}});

@@ -1,6 +1,7 @@
 import {nativeChangeObservationFromContext} from './native_change_observations.mjs';
 import {nativeViewActivationRequest} from './native_view_activation.mjs';
 import {createHash} from 'node:crypto';
+import {reviewRepairFocus} from './review_repair_focus.mjs';
 import {normalizeCodeEvidenceIds,parseNativeCodeReview,NATIVE_CODE_REVIEW_INSTRUCTIONS,NATIVE_CODE_REVIEW_SCOPE,nativeCodeReviewSessionDiagnostic,NATIVE_CODE_SESSION_RECOVERY} from './native_code_review.mjs';
 import {nativeSheetArtifactState,nativeSheetRenderState,sameNativeSheetRendering} from './native_sheet_render_state.mjs';
 import {buildDraftingCorrectionIndex} from './drafting_correction_index.mjs';
@@ -891,6 +892,7 @@ export function visualWorkReviewModelOutput(modelOutput,result,evidenceId,inspec
     reason_summary:typeof result.reason==='string'?result.reason.slice(0,500):null,
     reason_complete:typeof result.reason!=='string'||result.reason.length<=500,
     checks:[],coverage:{total:checks.length,returned:0,complete:checks.length===0,next_start:checks.length?0:null},
+    ...(reviewRepairFocus(result)?{repair_focus:reviewRepairFocus(result)}:{}),
     retrieval:{evidence_id:evidenceId,checks_path:'checks',reason_path:'reason',full_context_path:'location',
       ...(object(result.changed_capture?.frame)&&Object.hasOwn(result.changed_capture.frame,'sheet_render_state')?{changed_capture_frame_path:'changed_capture.frame'}:{})},
     guidance:'Read coverage and retrieve any unshown whole check entries before relying on the full review. '+result.guidance};
