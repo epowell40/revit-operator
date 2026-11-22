@@ -5081,7 +5081,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_architecture.test.ts",
-      "sha256": "sha256:7e310f968e043bb5812b01e6f78ac839ac155dca1b993a7951dc6ec5b96daa89"
+      "sha256": "sha256:db3063073d5ac297c42373919ffdcd860b409519eaf98b58747377e419365466"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_benchmark_consumers.test.ts",
@@ -12745,7 +12745,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:2c32db88a3ea77f051d3fdd1f6c619fa46d68b105d5af98b5685ebe2bf9567a7",
+  "inputs_hash": "sha256:f9f86401c9444191e9a9ef825a618b8265773135c9e1ba1ca2696fa66f090ca4",
   "result": {
     "passed": true,
     "checks": [
