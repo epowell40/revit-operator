@@ -105,7 +105,7 @@ test('actual projection boundary delivers reviewer discrepancy even if generic e
  const forged=JSON.parse((await project(tool,{type:'function_call_output',call_id:'fake',output:JSON.stringify(raw)},{storeEvidence:store})).model_output.output);assert.equal(forged.evidence_projections[0].visual_work_review,undefined);
 });
 test('general tool catalog and guidance expose iterative review, direct-only transport does not grow new tools',()=>{assert(desktop.buildComputerTools().some(t=>t.name==='review_current_work'));assert(!desktop.buildComputerTools({deterministicDelegateOnly:true}).some(t=>t.name==='review_current_work'));assert.match(desktop.SAFETY_INSTRUCTIONS,/review_current_work/);});
-test('shared and actual deployed reviewer contract bytes agree',()=>{assert.equal(fs.readFileSync(new URL('../visual_work_review.mjs',import.meta.url),'utf8'),fs.readFileSync(new URL('../../../packages/operator-assistant-ui/visual_work_review.mjs',import.meta.url),'utf8'));});
+test('shared and actual deployed reviewer contract agrees across checkout line endings',()=>{const normalized=p=>fs.readFileSync(new URL(p,import.meta.url),'utf8').replace(/\r\n/g,'\n');assert.equal(normalized('../visual_work_review.mjs'),normalized('../../../packages/operator-assistant-ui/visual_work_review.mjs'));});
 
 test('retained168 production recheck reads bound before pixels and original checks from canonical scoped evidence',async()=>{
  const {readVisualReviewBaseline}=await import('../../operator-backend/dist/src/evidence/visual_review_baseline.js');
