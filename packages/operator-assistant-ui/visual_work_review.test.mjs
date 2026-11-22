@@ -10,6 +10,22 @@ const binding={assignment_id:'assignment',session_id:'session',run_id:'run',gene
 const request={view_id:41,checks:[{id:'gap',expected:'No extra blank row below the headings.'},{id:'border',expected:'Medium grid lines are selected.'}]};
 const now=Date.parse('2026-10-17T12:00:00Z');
 
+test('materiality guidance reaches the real reviewer without suppressing returned defects or uncertainty',async()=>{
+ for(const status of ['matched','mismatch','uncertain']){
+  const f=host();let calls=0;
+  f.h.requestResponse=async body=>{
+   calls++;assert.match(body.instructions,/material consequence/);assert.match(body.instructions,/ALL supplied checks/);
+   assert.match(body.instructions,/does not excuse wrong values/);assert.match(body.instructions,/Unshown or ambiguous conditions remain uncertain/);
+   assert(body.input[0].content.some(c=>c.type==='input_image'));
+   return {id:'materiality',status:'completed',output:[],output_text:JSON.stringify({checks:request.checks.map(c=>({id:c.id,status,observed:'Left annotation hides a duct; right annotation has a wrong value.',correction:status==='mismatch'?'Left: move text clear of duct. Right: correct the displayed value.':''}))})};
+  };
+  const r=await reviewCurrentWork(request,f.h);assert.equal(calls,1);assert.equal(r.state,status);assert.equal(r.whole_task_verified,false);
+  const out=visualWorkReviewModelOutput({output:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{evidence_id:'ev1_materiality'}]})},r,'ev1_materiality');
+  const visible=JSON.parse(modelText(out.output)).evidence_projections[0].visual_work_review;
+  assert.deepEqual(visible.checks,r.checks);assert.equal(visible.native_postcondition_verified,false);
+ }
+});
+
 test('review readiness reaches actor with the same images and unchanged visual verdict',async()=>{
  const f=host();
  f.h.requestResponse=async()=>({id:'review_readiness',status:'completed',output:[],output_text:JSON.stringify({checks:[
