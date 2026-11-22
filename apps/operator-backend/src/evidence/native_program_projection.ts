@@ -5,6 +5,46 @@ import { selectNativeExecutionAudit } from './native_execution_audit.js';
 type Row = Record<string, unknown>;
 const record = (value: unknown): Row | null => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Row : null;
 
+/** Historical native identity, not a prediction of collateral safety. Missing
+ * types remain unknown even when the type-only baseline was exhaustive. */
+function deletedTypeContext(ref: EvidenceRefV1, payload: unknown) {
+  const audit = selectNativeExecutionAudit(ref, payload), tx = record(audit?.transaction), context = record(audit?.deleted_type_context);
+  if (audit?.success !== true || audit.verified !== false || audit.read_only === true
+      || tx?.status !== 'committed' || tx.committed !== true || !context
+      || context.schema !== 'operator.deleted-type-context.v1' || context.purpose !== 'diagnostic_only'
+      || context.deletion_safety_verified !== false
+      || !['complete', 'count_limited', 'time_limited', 'read_errors'].includes(String(context.baseline_coverage))
+      || !Array.isArray(tx.deleted_element_ids) || tx.deleted_element_ids.length < 1 || tx.deleted_element_ids.length > 4096
+      || tx.deleted_element_ids.some(id => !Number.isSafeInteger(id) || id < 1)
+      || new Set(tx.deleted_element_ids).size !== tx.deleted_element_ids.length
+      || context.deleted_count !== tx.deleted_element_ids.length
+      || !Array.isArray(context.rows) || context.rows.length > 16 || context.rows.length < 1
+      || context.returned_count !== context.rows.length
+      || !Number.isInteger(context.examined_types) || Number(context.examined_types) < 0 || Number(context.examined_types) > 4096
+      || !Number.isInteger(context.captured_types) || Number(context.captured_types) < 0 || Number(context.captured_types) > Number(context.examined_types)
+      || !Number.isInteger(context.read_errors) || Number(context.read_errors) < 0 || Number(context.read_errors) > 4097
+      || !Number.isSafeInteger(context.elapsed_milliseconds) || Number(context.elapsed_milliseconds) < 0) return null;
+  const seen = new Set<number>(), rows: Row[] = [];
+  for (const value of context.rows) {
+    const row = record(value), id = row?.element_id;
+    if (!Number.isSafeInteger(id) || !tx.deleted_element_ids.includes(id) || seen.has(id as number)) return null;
+    seen.add(id as number);
+    if (row?.state === 'not_observed_as_type') rows.push({element_id:id,state:row.state});
+    else if (row?.state === 'observed_type_before_execution'
+        && ['unique_id', 'class_name', 'name', 'family_name'].every(key => typeof row[key] === 'string'
+          && String(row[key]).length <= (['unique_id','class_name'].includes(key) ? 128 : 512))
+        && row.unique_id && row.class_name) rows.push({element_id:id,state:row.state,
+          unique_id:row.unique_id,class_name:row.class_name,name:row.name,family_name:row.family_name});
+    else return null;
+  }
+  if (rows.filter(row => row.state === 'observed_type_before_execution').length > Number(context.captured_types)) return null;
+  return {schema:context.schema,purpose:context.purpose,baseline_coverage:context.baseline_coverage,
+    examined_types:context.examined_types,captured_types:context.captured_types,read_errors:context.read_errors,
+    elapsed_milliseconds:context.elapsed_milliseconds,deleted_count:context.deleted_count,deletion_safety_verified:false,
+    rows:rows.slice(0,4), returned_count:Math.min(rows.length,4),
+    guidance:'These are type identities observed before this execution, not current elements or proof that deletion was safe, unused, or intended. Use them to assess the executed code and requested change without reopening the original model solely to recover names. Unobserved IDs remain unknown. Full retained rows: projection.native_execution_audit.deleted_type_context. This grants no verification or retry.'};
+}
+
 /** Point to an existing exact-field reader instead of paging through a JSON-
  * encoded receipt. These are historical changed IDs, not current model proof.
  * Keep the potentially large list outside automatic/cached tool presentation. */
@@ -68,6 +108,9 @@ export function projectNativeProgram(ref: EvidenceRefV1, payload: unknown, maxBy
     guidance: "Program return text is not task verification or collection-completeness proof. Native outcome is separate. Use these exact returned values without rereading solely to recover omitted compiler metadata. Full evidence remains retrievable. For confirmed rollback, inspect and justify any corrected scope before a fresh admitted request; reported IDs are not automatic permission. Unknown effects require reconciliation."
   };
   const size = (value: unknown) => Buffer.byteLength(JSON.stringify(value), "utf8");
+  const deletion = row.requested_mode === 'apply' && row.execution_ok === true && outcome.native_transaction_state === 'committed'
+    ? deletedTypeContext(ref, payload) : null;
+  if (deletion && size({...projected,deleted_type_context:deletion}) <= maxBytes) projected.deleted_type_context = deletion;
   if (size(projected) <= maxBytes) {
  const lookup=row.requested_mode==='apply'&&row.execution_ok===true&&outcome.native_transaction_state==='committed'?affectedTargetLookup(ref,payload):null;
  const withLookup=lookup?{...projected,affected_target_lookup:lookup}:null;

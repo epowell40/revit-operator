@@ -18,6 +18,6 @@ export function selectNativeExecutionAudit(ref: EvidenceRefV1, payload: unknown)
   const receipt = record(parseBoundedStructuredJson(evidence.nativeExecutionReceipt));
   if (receipt?.schema !== 'dynamic-revit-native-execution-receipt/v1') return null;
   const fields = ['schema', 'source_hash', 'document_fingerprint', 'document_session_id', 'document_revision_before',
-    'verified', 'retry_permitted', 'read_only', 'success', 'transaction', 'program_result', 'error'];
+    'verified', 'retry_permitted', 'read_only', 'success', 'transaction', 'program_result', 'error', 'deleted_type_context'];
   return Object.fromEntries(fields.filter(key => Object.hasOwn(receipt, key)).map(key => [key, receipt[key]]));
 }

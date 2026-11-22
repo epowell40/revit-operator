@@ -140,3 +140,59 @@ test("paging preserves unknown and failed effects, and never clips an error to f
   raw.native_outcome.program_result = "\ud800".repeat(8000);
   assert.equal(projectNativeProgram(saved.ref, raw, 8192), null);
 }));
+
+function deletionFixture(): any {
+  const raw = payload('apply','committed','applied');
+  raw.evidence = {...raw.evidence,nativeExecutionReceipt:JSON.stringify({schema:'dynamic-revit-native-execution-receipt/v1',
+    success:true,verified:false,read_only:false,retry_permitted:false,
+    transaction:{status:'committed',committed:true,affected_element_ids:[7,8,9],added_element_ids:[9],modified_element_ids:[],deleted_element_ids:[7,8]},
+    deleted_type_context:{schema:'operator.deleted-type-context.v1',purpose:'diagnostic_only',baseline_coverage:'complete',
+      examined_types:25,captured_types:25,read_errors:0,elapsed_milliseconds:3,deleted_count:2,returned_count:2,deletion_safety_verified:false,
+      rows:[{element_id:7,state:'observed_type_before_execution',unique_id:'native-7',class_name:'FamilySymbol',name:'Elbow',family_name:'Round Elbow'},
+        {element_id:8,state:'not_observed_as_type'}]}})};
+  return raw;
+}
+
+test('deleted native type identity reaches model input without classifying unknown deletion or verifying safety',()=>isolated(()=>{
+  const raw=deletionFixture(),saved=save(raw),inline:any=saved.projection.inline_payload;
+  assert.equal(inline.deleted_type_context.rows[0].class_name,'FamilySymbol');
+  assert.equal(inline.deleted_type_context.rows[1].state,'not_observed_as_type');
+  assert.equal(inline.deleted_type_context.deletion_safety_verified,false);
+  assert.equal(inline.native_outcome.task_verified,false);assert.equal(inline.retry_authorized,false);
+  const context=assembleBoundedEvidenceContext({projections:[saved.projection],...scope});
+  const envelope=modelEvidenceEnvelope(context.projections,context.omitted);
+  assert.deepEqual((envelope.evidence_projections[0]!.inline_payload as any).deleted_type_context,inline.deleted_type_context);
+  assertBoundedModelEvidencePayload([{type:'function_call_output',output:JSON.stringify(envelope)}]);
+  assert.deepEqual(JSON.parse(readAuthoritativeEvidence(saved.ref,scope).toString()),raw);
+  const selected:any=retrieveEvidence({scope,evidence_id:saved.ref.evidence_id,purpose:'Inspect historical deleted type identities',
+    fields:['projection.native_execution_audit.deleted_type_context'],max_bytes:4096});
+  assert.equal(selected.selection['projection.native_execution_audit.deleted_type_context'].rows.length,2);
+}));
+
+test('legacy absent, wrong scope, foreign, inconsistent and malformed deletion context never gains diagnosis',()=>isolated(()=>{
+  const mutations=[
+    (r:any)=>{delete r.deleted_type_context;},(r:any)=>{r.success=false;},(r:any)=>{r.read_only=true;},(r:any)=>{r.verified=true;},
+    (r:any)=>{r.transaction.status='unknown';},(r:any)=>{r.transaction.deleted_element_ids=[99];},
+    (r:any)=>{r.deleted_type_context.deletion_safety_verified=true;},(r:any)=>{r.deleted_type_context.rows[0].element_id=99;},
+    (r:any)=>{r.deleted_type_context.rows[0].unique_id='';},(r:any)=>{r.deleted_type_context.rows[1]=r.deleted_type_context.rows[0];},
+    (r:any)=>{r.deleted_type_context.rows[0].state='safe_deletion';},(r:any)=>{r.deleted_type_context.captured_types=0;},
+    (r:any)=>{r.deleted_type_context.examined_types=9000;},(r:any)=>{r.deleted_type_context.elapsed_milliseconds=-1;}
+  ];
+  for(const mutate of mutations){const raw=deletionFixture(),r=JSON.parse(raw.evidence.nativeExecutionReceipt);mutate(r);
+    raw.evidence.nativeExecutionReceipt=JSON.stringify(r);assert.equal((save(raw).projection.inline_payload as any).deleted_type_context,undefined);}
+  for(const patch of [{trust_level:'untrusted_caller'},{source:'foreign'}])assert.equal(save(deletionFixture(),patch).projection.inline_payload,undefined);
+  const raw=deletionFixture();raw.requested_mode='read';raw.native_outcome.native_transaction_state='not_started';raw.native_outcome.persistent_effect='none';
+  assert.equal((save(raw).projection.inline_payload as any).deleted_type_context,undefined);
+}));
+
+test('partial type baseline and bounded returned rows preserve uncertainty and full retained retrieval',()=>isolated(()=>{
+  for(const status of ['count_limited','time_limited','read_errors']){
+    const raw=deletionFixture(),r=JSON.parse(raw.evidence.nativeExecutionReceipt);r.deleted_type_context.baseline_coverage=status;
+    r.deleted_type_context.read_errors=status==='read_errors'?1:0;r.deleted_type_context.rows=Array.from({length:8},(_,i)=>({element_id:i+1,state:'not_observed_as_type'}));
+    r.deleted_type_context.deleted_count=8;r.deleted_type_context.returned_count=8;r.transaction.deleted_element_ids=Array.from({length:8},(_,i)=>i+1);
+    r.transaction.affected_element_ids=[...r.transaction.deleted_element_ids,9];raw.evidence.nativeExecutionReceipt=JSON.stringify(r);
+    const saved=save(raw),d:any=(saved.projection.inline_payload as any).deleted_type_context;
+    assert.equal(d.baseline_coverage,status);assert.equal(d.deleted_count,8);assert.equal(d.returned_count,4);assert.equal(d.rows.length,4);
+    assert(d.rows.every((v:any)=>v.state==='not_observed_as_type'));assert.equal(d.deletion_safety_verified,false);
+  }
+}));
