@@ -174,24 +174,25 @@ async function readyWorkFixture(fn:Parameters<typeof fixture>[1]) {
  try{await fixture('installation',fn);}finally{if(previous===undefined)delete process.env.OPERATOR_LOCAL_READY_WORK_HANDOFF;else process.env.OPERATOR_LOCAL_READY_WORK_HANDOFF=previous;}
 }
 
-test('unfinished untracked drafting cannot bypass persistent-task handoff through an omitted checklist',()=>readyWorkFixture(async f=>{
+test('optional checklist absence cannot reject an explicitly unverified partial report',()=>readyWorkFixture(async f=>{
  assert.equal(f.state().work_plan?.items.length??0,0);
  const before=structuredClone(f.state());
- assert.throws(()=>manageAssignmentWorkPlan({binding:f.binding,action:'propose_completion',completion_proposal:proposal}),/ready_work_remaining.*one useful next work item/i);
  const uiRoot=['../packages/operator-assistant-ui','../../packages/operator-assistant-ui','../operator-desktop'].map(p=>path.resolve(p)).find(p=>fs.existsSync(path.join(p,'work_report.mjs')))!;
  const ui=await import(pathToFileURL(path.join(uiRoot,'work_report.mjs')).href);
- assert.match(ui.WORK_REPORT_TOOL.description,/one useful next work item.*no exhaustive upfront inventory/i);
  const owner={kernel_version:2,session_id:f.binding.session_id,goal_id:f.binding.assignment_id,run_id:f.binding.run_id,generation:f.binding.generation};
- await assert.rejects(ui.submitWorkReportForReview(owner,proposal,async(_route:string,options:any)=>{
+ const report={claimed_completed:['Moved and saved the two existing equipment labels.'],remaining_work:['Two diffuser connections and their size callouts remain unresolved.'],uncertainties:['The reference does not establish the transition or concealed route.']};
+ const response=await ui.submitWorkReportForReview(owner,report,async(_route:string,options:any)=>{
   const body=JSON.parse(options.body);return manageAssignmentWorkPlan({binding:f.binding,action:body.action,completion_proposal:body.completion_proposal});
- }),/ready_work_remaining/);
- assert.deepEqual(f.state(),before,'refusal cannot create scope, certify claims or settle the task');
- manageAssignmentWorkPlan({binding:f.binding,action:'declare',declaration:{items:[{item_id:'next-area',description:'Resolve the next observed drawing discrepancy',source_basis:'Reference and current view'}],assumptions:[]}});
- assert.throws(()=>manageAssignmentWorkPlan({binding:f.binding,action:'propose_completion',completion_proposal:proposal}),/ready_work_remaining/);
- manageAssignmentWorkPlan({binding:f.binding,action:'defer',item_id:'next-area',reason:'The user explicitly requires review before continuing this area.'});
- manageAssignmentWorkPlan({binding:f.binding,action:'propose_completion',completion_proposal:proposal});
- assert.equal(f.state().outcome,'awaiting_user_review');
+ });
+ assert.equal(response.outcome,'awaiting_user_review');assert.equal(f.state().terminal,false);
  assert.equal(f.state().completion_proposal?.verified,false);
+ assert.deepEqual(f.state().completion_proposal?.remaining_work,report.remaining_work);
+ assert.deepEqual(f.state().completion_proposal?.uncertainties,report.uncertainties);
+ assert.deepEqual(f.state().operations,before.operations);assert.deepEqual(f.state().criteria,before.criteria);
+ assert.deepEqual(f.state().provider_calls,before.provider_calls);assert.deepEqual(f.state().work_plan,before.work_plan);
+ assert.equal(f.state().advisory_followups?.filter(x=>x.state==='open').length,2);
+ assert.match(ui.retainedWorkReportMessage({name:'report_work_for_review'},{output:JSON.stringify(response)}),/not independently verified/);
+ __testOnlyResetGoalListCache();assert.equal(f.state().outcome,'awaiting_user_review');
 }));
 
 test('an untracked advisory report without remaining work retains ordinary unverified review',()=>readyWorkFixture(f=>{

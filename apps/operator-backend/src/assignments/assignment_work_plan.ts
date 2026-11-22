@@ -112,15 +112,15 @@ export function manageAssignmentWorkPlan(input: { binding: AssignmentKernelBindi
       // This only rejects an early handoff. It does not execute another turn,
       // change a lease/budget, resolve a question, or certify checklist claims.
       // The existing owner may continue only while all normal controls admit it.
-      const untrackedRemainingWork = !snapshot.work_plan?.items.length && input.completion_proposal.remaining_work.length > 0;
-      if ((ready?.total || untrackedRemainingWork) && !budget.checkpoint_recommended && snapshot.outcome === 'active'
+      // Missing optional bookkeeping is not evidence of executable ready work.
+      // An advisory partial report retains its remaining work for review; it
+      // does not certify completion or discard native effects/unknowns.
+      if (ready?.total && !budget.checkpoint_recommended && snapshot.outcome === 'active'
           && !snapshot.provider_usage_hold && !snapshot.progress_blocker
           && !snapshot.unresolved_unknown_operation_ids.length
           && !snapshot.pending_input_variable_ids.length && !snapshot.pending_review_ids.length) {
         throw new Error('ready_work_remaining: The final handoff was not accepted. '
-          + (untrackedRemainingWork
-            ? 'Unfinished work is reported without retained next-work scope. Record one useful next work item from the current reference/model discrepancy, or its specific supported blocker; an exhaustive inventory is not required.'
-            : 'Ready checklist items remain: ' + ready!.items.join(', ') + (ready!.total > ready!.items.length ? ' (more in status)' : ''))
+          + 'Ready checklist items remain: ' + ready.items.join(', ') + (ready.total > ready.items.length ? ' (more in status)' : '')
           + '. Continue a useful bounded batch, verify it, and recheck current host budget. Defer an actual missing-input, tool or user-required review blocker with a specific reason; do not defer merely unattempted work. '
           + 'If you need a context checkpoint, retain checklist updates and finish this provider turn with a brief progress handoff without propose_completion; the existing host loop may continue the same active task. Never repeat uncertain or completed edits.');
       }
