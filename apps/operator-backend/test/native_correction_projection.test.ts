@@ -41,15 +41,32 @@ test('native readback gives the owner usable identities and geometry with exact 
   assert.equal(inline.rows[0].values.uniqueId,payload.result[0]!.uniqueId);assert.deepEqual(inline.rows[0].values.location,payload.result[0]!.location);
   assert.equal(inline.rows[0].row_index,0);assert.equal(inline.retrieval.path,'result');assert.equal(inline.coverage.source_rows,80);
   assert.equal(inline.coverage.complete,false);assert.equal(inline.task_verified,false);assert.equal(saved.projection.truncated,true);
+  assert.deepEqual(inline.spatial_extent,{scope:'navigation_only',source_rows:80,min:[0,0,0],max:[80,1,0]});
+  assert.deepEqual(reduceNativeCorrectionPage(saved.projection)?.inline_payload.spatial_extent,inline.spatial_extent);
   const response=adaptMcpToolCallResultToDynamicResponse({content:[{type:'text',text:'retained native result'}]},
    {tool:'revit_call_tool',arguments:{path:'/revit/get-element-summary'},projections:[saved.projection],omitted:0});
   const delivered=boundDesktopNativeOutput(response,scope,'current-read');
   const wire=JSON.stringify(delivered.contentItems);assert(wire.includes('native-uid-0'));assert(wire.includes('requested_element_ids_only'));
+  assert(wire.includes('spatial_extent'),'complete navigation bounds survive the model-visible output adapter');
   const next=retrieveEvidence({scope,evidence_id:saved.ref.evidence_id,purpose:'Inspect next correction targets',max_bytes:6000,
    item_range:{path:inline.retrieval.path,start:inline.retrieval.next_start,count:2,fields:inline.retrieval.fields}});
   assert.equal(next.complete,false);assert.equal(next.pagination?.returned_count,2);
   assert.deepEqual((next.selection as any[])[0].values.location,payload.result[inline.retrieval.next_start]!.location);
   assert.equal(JSON.stringify(payload),before);assert.equal(saved.projection.content_hash,saved.ref.content_hash);
+ }finally{if(old===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=old;fs.rmSync(root,{recursive:true,force:true});}
+});
+
+test('navigation extent abstains on any unresolved target and reducer rejects malformed extents',()=>{
+ const old=process.env.OPERATOR_WORKSPACE_ROOT,root=fs.mkdtempSync(path.join(os.tmpdir(),'correction-extent-'));process.env.OPERATOR_WORKSPACE_ROOT=root;
+ try{
+  const payload=fixture(),saved=storeEvidence({scope,source:'assignment_kernel_v2:revit_call_tool',trust_level:'authoritative_native',raw:payload},8192);
+  for(const patch of [{found:false},{uniqueId:''},{boundingBox:null,location:null},{boundingBox:{min:{x:3,y:0,z:0},max:{x:2,y:1,z:0}}},{boundingBox:{min:{x:NaN,y:0,z:0},max:{x:2,y:1,z:0}}}]){
+   const changed=fixture();Object.assign(changed.result[79]!,patch);
+   assert.equal((projectNativeCorrectionTargets(saved.ref,changed,8192) as any)?.spatial_extent,undefined);
+  }
+  const v:any=saved.projection.inline_payload;
+  for(const patch of [{source_rows:79},{scope:'verified'},{min:[1,2]},{max:[-1,0,0]},{min:[NaN,0,0]},{extra:true}])
+   assert.equal(reduceNativeCorrectionPage({...saved.projection,inline_payload:{...v,spatial_extent:{...v.spatial_extent,...patch}}}),null);
  }finally{if(old===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=old;fs.rmSync(root,{recursive:true,force:true});}
 });
 

@@ -313,6 +313,26 @@ test('area backcheck supplies three distinct coverage checks to one existing ind
    assert.throws(()=>shared.normalizeVisualReviewRequest({...area,...change}));
 });
 
+test('paged native batch readback locates the full edit extent without pretending its rows are complete',async()=>{
+ const {committedDrawingEditLocation}=await import('../desktop_native_tools.mjs');
+ const binding={assignment_id:'a',run_id:'r',generation:1},base={...binding,trust_level:'authoritative_native',attempt_id:'opv2_'+'a'.repeat(64)};
+ const edit={...base,source:'assignment_kernel_v2:operator_run_dynamic_revit_program',effect_state:'applied'};
+ const extent={scope:'navigation_only',source_rows:80,min:[1,2,3],max:[5,6,7]};
+ const summary={...base,source:'assignment_kernel_v2:revit_call_tool',inline_payload:{scope:'requested_element_ids_only',rows:[],coverage:{source_rows:80,spatial_rows:80,source_rows_exhausted:false},spatial_extent:extent}};
+ const call={name:'native__operator_run_dynamic_revit_program',arguments:{mode:'apply'}};
+ const result=(s=summary,e=edit)=>({result:{success:true,contentItems:[{type:'inputText',text:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[e,s]})}]}});
+ const actual=committedDrawingEditLocation(call,result(),binding);
+ assert.equal(actual.points.length,8);assert(actual.points.some(p=>JSON.stringify(p)==='[5,6,7]'));assert(actual.points.some(p=>JSON.stringify(p)==='[1,2,3]'));
+ for(const patch of [{source_rows:79},{scope:'verified'},{min:[1,2]},{max:[0,0,0]},{min:[null,2,3]},{extra:true}]){
+  const s={...summary,inline_payload:{...summary.inline_payload,spatial_extent:{...extent,...patch}}};
+  assert.deepEqual(committedDrawingEditLocation(call,result(s),binding),{points:[]});
+ }
+ for(const patch of [{run_id:'foreign'},{generation:2},{trust_level:'user_supplied'},{attempt_id:'not-native'}])
+  assert.deepEqual(committedDrawingEditLocation(call,result({...summary,...patch}),binding),{points:[]});
+ assert.equal(committedDrawingEditLocation(call,result(summary,{...edit,effect_state:'unknown'}),binding),null);
+ assert.deepEqual(committedDrawingEditLocation(call,result({...summary,inline_payload:{...summary.inline_payload,coverage:{...summary.inline_payload.coverage,spatial_rows:79}}}),binding),{points:[]});
+});
+
 test('post-edit reference follows native edit locations across room switches and abstains on ambiguous batches',()=>{
  const loc={process_id:7,document_session_id:'s',epoch:'e',view_id:41,view_unique_id:'u'};
  const region=(x,ref)=>({owner,location:loc,referenceHash:ref,radius:6,bounds:[{min:[x,0,10],max:[x+2,2,12]}]});
