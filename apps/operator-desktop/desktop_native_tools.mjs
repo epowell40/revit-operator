@@ -221,3 +221,53 @@ export function committedDrawingEditLocation(call, result, binding) {
   }
   return {points:[]};
 }
+
+/** On-demand inspection of the current actor's retained function receipts. */
+export const EXECUTION_INSPECTION_TOOL = {
+  type:'function', name:'inspect_execution', strict:false,
+  description:'Inspect your own recent tool execution when work stalls or evidence is confusing. Lists exact call IDs, errors, native outcomes and retained evidence links. Use call_id for a focused result including capture/reference identities and review findings. This reads the current run only and performs no model action. Use operator_retrieve_evidence for full retained values, read_executed_code for actual C# source, review_current_work observe for fresh images, or the computer tool to inspect a UI problem. Diagnose a specific question, correct the request or choose a different supported approach, and continue useful work. Repeated reads of this history cannot verify a task.',
+  parameters:{type:'object',additionalProperties:false,properties:{
+    call_id:{type:'string',minLength:1,maxLength:240},
+    before_call_id:{type:'string',minLength:1,maxLength:240}
+  }}
+};
+export function inspectExecution(assignment, receipts, args={}) {
+  const binding=desktopNativeBinding(assignment);
+  if(!args||typeof args!=='object'||Array.isArray(args)||Object.keys(args).some(k=>!['call_id','before_call_id'].includes(k))
+    ||args.call_id&&args.before_call_id||Object.values(args).some(v=>typeof v!=='string'||!v.length||v.length>240))throw Error('execution_inspection_request_invalid');
+  const own=receipts.filter(r=>r.tool_name!=='inspect_execution'&&Object.entries(binding).every(([k,v])=>r.execution_binding?.[k]===v));
+  const at=args.before_call_id?own.findIndex(r=>r.call_id===args.before_call_id):own.length;
+  if(at<0)throw Error('execution_inspection_call_unavailable');
+  const selected=args.call_id?own.filter(r=>r.call_id===args.call_id):own.slice(Math.max(0,at-8),at);
+  if(args.call_id&&selected.length!==1)throw Error('execution_inspection_call_unavailable');
+  const text=(v,n)=>typeof v==='string'?{text:v.slice(0,n),complete:v.length<=n}:null;
+  const rows=selected.map(r=>{
+    const v=r.result??{},projections=[];
+    for(const block of v.content??[]) {
+      if(block?.type!=='inputText'||typeof block.text!=='string'||block.text.length>32768)continue;
+      try{const envelope=JSON.parse(block.text);
+        if(envelope.schema==='revit-operator.model-evidence-envelope.v1')projections.push(...(envelope.evidence_projections??[]).filter(p=>
+          ['assignment_id','run_id','generation'].every(k=>p[k]===binding[k])));}catch{}
+    }
+    const row={call_id:r.call_id,tool:r.tool_name,recorded_at:r.recorded_at,
+      transport_status:r.status,requested_effect:r.request_effect,request_dispatched:r.request_dispatched,
+      evidence_id:r.evidence_ref?.evidence_id??null,error:text(v.error??v.reason,600),native_stop_reason:v.native_stop_reason??null,
+      native_outcomes:projections.slice(0,4).map(p=>({evidence_id:p.evidence_id,source:p.source,
+        trust_level:p.trust_level,effect_state:p.effect_state,transaction:p.key_facts?.['transaction.status']??null,
+        execution_error:text(p.inline_payload?.native_outcome?.error,600)}))};
+    if(args.call_id)Object.assign(row,{
+      route:r.arguments?.path??null,mode:r.arguments?.mode??r.arguments?.review_mode??null,
+      review_state:v.state??null,location:v.location??null,capture:v.capture??null,reference:v.reference??null,
+      checks:(v.checks??[]).slice(0,8).map(c=>({id:c.id,status:c.status,observed:text(c.observed,700),correction:text(c.correction,700)})),
+      guidance:text(v.guidance,1200)
+    });
+    return row;
+  });
+  const result={schema:'operator.execution-inspection.v1',ok:true,read_only:true,scope:binding,
+    coverage:{scope:'retained_current_run_function_calls',complete_history:false,retained:own.length,returned:rows.length,
+      older_before_call_id:!args.call_id&&at>rows.length?selected[0].call_id:null},
+    calls:rows,native_postcondition_verified:false,whole_task_verified:false,
+    guidance:'Transport success does not establish model correctness. Reconcile unknown writes before retrying. Capture references are historical until refreshed; image metadata alone does not mean pixels were delivered. Unavailable history remains unavailable. Reuse established checks and report a specific user decision when it is the only remainder.'};
+  if(Buffer.byteLength(JSON.stringify(result),'utf8')>16000)throw Error('execution_inspection_use_call_id');
+  return result;
+}

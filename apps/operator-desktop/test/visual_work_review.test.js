@@ -335,3 +335,33 @@ test('confirmed contextual plan framing uses the branch extent even when focused
  assert.equal(shared.selectEditedDrawingRegion([r],r,[{points:[[9.72,31.99,42.8],[30.38,31.99,42.8]]}]),r);
  assert.equal(shared.selectEditedDrawingRegion([r],r,[{points:[[54,70,42.8]]}]),null);
 });
+
+test('actor can discover and inspect bound failures without crossing run boundaries or replaying writes',async()=>{
+ const {inspectExecution,desktopNativeBinding,installDesktopNativeTools}=await import('../desktop_native_tools.mjs');
+ const a={kernel_version:2,goal_id:'task',session_id:'s',run_id:'r',generation:1},binding=desktopNativeBinding(a);
+ const rows=[{execution_binding:binding,tool_name:'native__operator_run_dynamic_revit_program',call_id:'bad',status:'failed',
+   request_effect:'apply',result:{ok:false,error:'CS1061: missing member'},evidence_ref:{evidence_id:'e'}},
+   {execution_binding:{...binding,run_id:'other'},call_id:'foreign',result:{error:'private'}},
+   {tool_name:'legacy',call_id:'unbound',result:{error:'unbound'}}];
+ const d=inspectExecution(a,rows,{});assert.equal(d.calls.length,1);assert.equal(d.calls[0].error.text,'CS1061: missing member');
+ assert.equal(d.calls[0].requested_effect,'apply');assert.equal(d.native_postcondition_verified,false);
+ assert.throws(()=>inspectExecution(a,rows,{call_id:'foreign'}));assert.throws(()=>inspectExecution(a,rows,{call_id:'unbound'}));
+ assert.throws(()=>inspectExecution({...a,generation:2},rows,{call_id:'bad'}));
+ assert.throws(()=>inspectExecution(a,rows,{path:'C:/secret'}));
+ const exposed=installDesktopNativeTools(desktop.buildComputerTools(),{schema:'operator.desktop-native-tools.v1',tools:[{type:'function',name:'native__sample',parameters:{type:'object'}}],guidance:'test'});
+ assert(exposed.some(t=>t.name==='inspect_execution'));assert(exposed.some(t=>t.type==='computer'));
+ assert(!desktop.buildComputerTools({deterministicDelegateOnly:true}).some(t=>t.name==='inspect_execution'));
+});
+test('execution inspection pages complete rows and distinguishes unknown from transport success',async()=>{
+ const {inspectExecution,desktopNativeBinding}=await import('../desktop_native_tools.mjs');
+ const a={kernel_version:2,goal_id:'task',session_id:'s',run_id:'r',generation:1},binding=desktopNativeBinding(a);
+ const rows=Array.from({length:12},(_,i)=>({execution_binding:binding,call_id:'c'+i,tool_name:'native__sample',status:'success',
+ result:{ok:true,content:[{type:'inputText',text:JSON.stringify({schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[
+ {...binding,source:'native',effect_state:'unknown',trust_level:'authoritative_native',evidence_id:'raw'}]})}]}}));
+ const first=inspectExecution(a,rows,{}),next=inspectExecution(a,rows,{before_call_id:first.coverage.older_before_call_id});
+ assert.equal(first.calls.length,8);assert.equal(next.calls.length,4);assert.equal(next.coverage.older_before_call_id,null);
+ assert.equal(first.calls[0].native_outcomes[0].effect_state,'unknown');
+ const detail=inspectExecution(a,[...rows,{execution_binding:binding,call_id:'v',tool_name:'review_current_work',
+ result:{ok:true,state:'uncertain',reference:{filename:'partial.png'},checks:[{id:'four',status:'uncertain',observed:'Left endpoint cropped'}]}}],{call_id:'v'});
+ assert.equal(detail.calls[0].checks[0].observed.text,'Left endpoint cropped');assert.equal(detail.whole_task_verified,false);
+});

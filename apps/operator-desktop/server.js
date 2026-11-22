@@ -1,3 +1,4 @@
+import { EXECUTION_INSPECTION_TOOL, inspectExecution } from './desktop_native_tools.mjs';
 import { affirmativeRevitLaunchIntent as sharedRevitLaunchIntent } from "./revit_launch_intent.mjs";
 import { namedObjectTopologyIdentity } from "./named_object_topology.mjs";
 import { immutableEvidenceRetryReason } from "./immutable_evidence_retry.mjs";
@@ -5338,6 +5339,7 @@ function recordComputerFunctionToolReceipt(toolCall, functionOutput, step) {
   const requestEffect = computerFunctionToolRequestEffect(toolName, result, args);
   const receipt = {
     schema: "revit-operator.sidecar-function-tool-receipt/v1",
+    execution_binding:computerState.sidecarAssignment?.kernel_version===2?desktopNativeBinding(computerState.sidecarAssignment):null,
     recorded_at: new Date().toISOString(),
     step,
     call_id: `${toolCall?.call_id || ""}`,
@@ -12520,7 +12522,7 @@ function buildComputerTools(options = {}) {
     }
   });
   if (deterministicDelegateOnly) return tools;
-  tools.push(FOCUSED_EVIDENCE_TOOL_V1);
+  tools.push(FOCUSED_EVIDENCE_TOOL_V1, EXECUTION_INSPECTION_TOOL);
   tools.push({
     type: "function",
     name: "run_dynamic_revit_program",
@@ -12875,6 +12877,11 @@ async function executeFunctionToolCall(toolCall) {
     throw new Error(`${toolCall.name} arguments were not valid JSON.`);
   }
 
+  if(toolCall.name==='inspect_execution') {
+    await assertComputerActionControl();
+    const result=inspectExecution(computerState.sidecarAssignment,computerState.functionToolReceipts,args);
+    return {type:'function_call_output',call_id:toolCall.call_id,output:JSON.stringify(result)};
+  }
   if (toolCall.name === 'operator_retrieve_evidence') {
     const result = await retrieveFocusedEvidenceV1(() => computerState.sidecarAssignment,args,readBackendJson);
     const output = {type:'function_call_output',call_id:toolCall.call_id,output:JSON.stringify(result.model_output)};
@@ -13617,6 +13624,8 @@ async function executeComputerLoop(options = {}) {
     // delegate instructions to the single executor. Safety rules stay intact.
     instructions=singleExecutionInstructions(instructions,catalog.guidance,catalog.execution_mode);
     instructions+=workVisibilityInstructions(computerState.speedSettings);
+    instructions+='\nYou can inspect your own execution with inspect_execution when an error, repeated inspection or conflicting evidence prevents progress. Use its exact call IDs and retained evidence to identify the missing fact. read_executed_code exposes your actual prior C# source; correct that code through the normal native execution tools when the prior effect is known. The computer tool can inspect and operate the visible Revit UI when a supported API path is unsuitable. Current native results, historical images and uncertain effects have different meanings. If a visual review reports a clipped endpoint, inspect an available wider user reference before repeating model reads. Reuse checked connections unless affected by a subsequent edit. Return saved useful work and a specific question when the remaining issue is a user decision.';
+
     if(['single_actor_review_v1','local_advisory_v1'].includes(catalog.execution_mode)) {
       if(!tools.some(tool=>tool.name==='native__operator_manage_work_plan')) instructions+='\nThe planning tool is unavailable in this session. Skip checklist declarations, locations and status calls. Track scope in your own context and use the drawing, native evidence and direct handoff tools.';
       instructions+='\nAfter checking and saving actionable repairs, return the result immediately when the remainder needs a user decision. Use report_work_for_review with needs_input, or request_task_input with work_summary. Include the saved result and specific question. No plan entry, additional image of unchanged work, or guessed graphic replacement is required to ask. Continue independent actionable work first.';
