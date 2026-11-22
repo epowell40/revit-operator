@@ -5,6 +5,7 @@ import {adaptMcpToolCallResultToDynamicResponse} from '../src/brains/codex_dynam
 const scope={session_id:'ports-session',assignment_id:'ports-assignment',run_id:'ports-run',generation:1};
 function isolated(t:any){const previous=process.env.OPERATOR_WORKSPACE_ROOT;const dir=fs.mkdtempSync(path.join(os.tmpdir(),'connector-geometry-'));process.env.OPERATOR_WORKSPACE_ROOT=dir;
  t.after(()=>{if(previous===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=previous;assert(path.resolve(dir).startsWith(path.resolve(os.tmpdir())+path.sep));fs.rmSync(dir,{recursive:true,force:true});});}
+function locationRow(table:any,index:number):any{return Object.fromEntries(table.columns.map((key:string,i:number)=>[key,table.rows[index][i]]));}
 function fixture(){
  const peer=(ownerId:number,connectorId:number)=>({ownerId,connectorId,connectorIdBasis:'revit_native_connector_id',connectorType:'End',domain:'DomainHvac',isMepSystem:false,isPhysicalElement:true,isConnectedTo:true});
  const port=(id:number,origin:number[],other:any)=>({connectorId:id,connectorIdBasis:'revit_native_connector_id',connectorType:'End',domain:'DomainHvac',shape:'Round',origin,size:{kind:'round',diameterFt:2/3,radiusFt:1/3},systemClassification:'SupplyAir',
@@ -14,13 +15,39 @@ function fixture(){
    {id:20,ok:true,connectorScanTruncated:false,connectorCount:1,returnedConnectorCount:1,connectors:[port(2,[4,5,6],peer(10,1))]}]};
 }
 
+test('a branch of eighteen terminals delivers exact placement values through the bounded actor input',t=>{isolated(t);const raw:any=fixture();
+ raw.results=Array.from({length:18},(_,i)=>({...raw.results[0],id:1000000+i,
+  elementLocation:{status:'observed',kind:'point',coordinateSpace:'document_internal',lengthUnits:'feet',point:[18.689999999999998+i,-17.50000000000002,41.433333333625804],rotationRadians:2.094395102392891},
+  connectors:[{...raw.results[0].connectors[0],connectedTo:[{...raw.results[0].connectors[0].connectedTo[0],ownerId:2000000+i}],physicalConnectedTo:[{...raw.results[0].connectors[0].physicalConnectedTo[0],ownerId:2000000+i}]}]}));
+ raw.requestedCount=raw.scannedElementCount=raw.matchedElementCount=raw.totalScannedConnectorCount=raw.physicallyConnectedConnectorCount=18;
+ const before=JSON.stringify(raw),stored=storeEvidence({scope,source:'native:branch_locations',trust_level:'authoritative_native',raw});
+ const graph=stored.projection.connector_graph!,table=graph.element_locations!;assert(table);assert.equal(table.rows.length,18);
+ for(let i=0;i<18;i++){const row=locationRow(table,i);assert.equal(row.owner,1000000+i);assert.equal(row.source_row,i);assert.deepEqual(row.point,raw.results[i].elementLocation.point);assert.equal(row.rotationRadians,2.094395102392891);}
+ assert.equal(graph.totals.boundary_references,18);assert.equal(graph.lists.boundary_references.length,18);assert.equal(graph.lists_complete,true);assert.equal(graph.coverage.whole_model_complete,null);
+ const context=assembleBoundedEvidenceContext({...scope,projections:[stored.projection],budget:{item_bytes:8192,request_bytes:32768}});
+ const response=adaptMcpToolCallResultToDynamicResponse({content:[{type:'text',text:JSON.stringify(raw)}]},{tool:'revit_call_tool',projections:context.projections,omitted:context.omitted});
+ const text=(response.contentItems[0] as any).text;assertBoundedModelEvidencePayload({type:'function_call_output',output:text});
+ assert.deepEqual(JSON.parse(text).evidence_projections[0].connector_graph.element_locations,table);assert.equal(JSON.stringify(raw),before);assert(stored.projection.projected_bytes<=8192);
+});
+
+test('mixed partial point and curve columns preserve null uncertainty and omit ambiguous owners',t=>{isolated(t);const raw:any=fixture();
+ raw.results[0].elementLocation={status:'partial',kind:'point',coordinateSpace:'document_internal',lengthUnits:'feet',point:[0,0,0],rotationStatus:'unavailable'};
+ raw.results[1].elementLocation={status:'partial',kind:'curve',coordinateSpace:'document_internal',lengthUnits:'feet',isBound:false};
+ let table=storeEvidence({scope,source:'native:mixed_locations',trust_level:'authoritative_native',raw}).projection.connector_graph!.element_locations!;
+ assert.deepEqual(locationRow(table,0).point,[0,0,0]);assert.equal(locationRow(table,0).isBound,null);assert.equal(locationRow(table,1).point,null);
+ assert.equal(locationRow(table,1).endpointsStatus,'unavailable_unbounded');assert.equal(locationRow(table,1).scope,'endpoints_only_not_full_curve');assert.equal(locationRow(table,1).rotationStatus,null);
+ raw.results.push({...raw.results[0]});raw.requestedCount=raw.scannedElementCount=raw.matchedElementCount=3;raw.totalScannedConnectorCount=3;
+ table=storeEvidence({scope,source:'native:duplicate_locations',trust_level:'authoritative_native',raw}).projection.connector_graph!.element_locations!;
+ assert(!table.rows.some(row=>row[table.columns.indexOf('owner')]===10));
+});
+
 test('element placement reaches the actor alongside ports without confusing their distinct origins',t=>{isolated(t);const raw:any=fixture();
  raw.results[0].elementLocation={status:'observed',kind:'point',coordinateSpace:'document_internal',lengthUnits:'feet',point:[0.5,2,3],rotationRadians:Math.PI};
  raw.results[1].elementLocation={status:'observed',kind:'line',coordinateSpace:'document_internal',lengthUnits:'feet',start:[4,5,6],end:[7,8,9],isBound:true};
  const stored=storeEvidence({scope,source:'native:placement',trust_level:'authoritative_native',raw});
  const locations=(stored.projection.connector_graph as any)?.element_locations;assert(locations,'Placement facts must survive the normal bounded projection');
- assert.deepEqual(locations.rows[0].point,[0.5,2,3]);assert.equal(locations.rows[0].rotationRadians,Math.PI);assert.equal(locations.rows[0].owner,10);
- assert.deepEqual(locations.rows[1].end,[7,8,9]);assert.equal(locations.rows[1].source_row,1);assert.match(locations.notice,/not connector origins/);
+ assert.deepEqual(locationRow(locations,0).point,[0.5,2,3]);assert.equal(locationRow(locations,0).rotationRadians,Math.PI);assert.equal(locationRow(locations,0).owner,10);
+ assert.deepEqual(locationRow(locations,1).end,[7,8,9]);assert.equal(locationRow(locations,1).source_row,1);assert.match(locations.notice,/not connector origins/);
  const context=assembleBoundedEvidenceContext({...scope,projections:[stored.projection],budget:{item_bytes:8192,request_bytes:32768}});
  const response=adaptMcpToolCallResultToDynamicResponse({content:[{type:'text',text:JSON.stringify(raw)}]},{tool:'revit_call_tool',projections:context.projections,omitted:context.omitted});
  const text=(response.contentItems[0] as any).text;assertBoundedModelEvidencePayload({type:'function_call_output',output:text});
@@ -30,11 +57,11 @@ test('element placement reaches the actor alongside ports without confusing thei
 test('partial and older location reads cannot become invented coordinates or placement proofs',t=>{isolated(t);const raw:any=fixture();
  raw.results[0].elementLocation={status:'partial',kind:'point',coordinateSpace:'document_internal',lengthUnits:'feet',point:[1,2,3],rotationStatus:'unavailable'};
  let locations=(storeEvidence({scope,source:'native:partial_placement',trust_level:'authoritative_native',raw}).projection.connector_graph as any).element_locations;
- assert.equal(locations.rows[0].status,'partial');assert.equal(locations.rows[0].rotationStatus,'unavailable');assert.equal(locations.rows[0].rotationRadians,undefined);
- assert.equal(locations.rows[1].status,'not_reported');
+ assert.equal(locationRow(locations,0).status,'partial');assert.equal(locationRow(locations,0).rotationStatus,'unavailable');assert.equal(locationRow(locations,0).rotationRadians,undefined);
+ assert.equal(locationRow(locations,1).status,'not_reported');
  raw.results[0].elementLocation.point=[1,null,3];raw.results[0].elementLocation.rotationRadians=Infinity;
  locations=(storeEvidence({scope,source:'native:invalid_placement',trust_level:'authoritative_native',raw}).projection.connector_graph as any).element_locations;
- assert.equal(locations.rows[0].status,'unavailable');assert.equal(locations.rows[0].point,undefined);
+ assert.equal(locationRow(locations,0).status,'unavailable');assert.equal(locationRow(locations,0).point,undefined);
 });
 
 test('location table is optional and never displaces existing graph data or trusts foreign envelopes',t=>{isolated(t);const raw:any=fixture();

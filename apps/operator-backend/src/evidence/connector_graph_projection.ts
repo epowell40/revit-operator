@@ -47,7 +47,7 @@ export type ConnectorGraphProjection = {
   /** Optional complete presentation of the observed unambiguous physical ports.
    * Absent when it cannot fit; never displaces topology or proves model coverage. */
   connector_geometry?: ConnectorGeometry;
-  element_locations?: { units: 'internal_feet'; rotation_units: 'radians'; rows: Row[]; notice: string };
+  element_locations?: { units: 'internal_feet'; rotation_units: 'radians'; columns: string[]; rows: unknown[][]; notice: string };
 };
 
 const record = (v: unknown): Row | null => v !== null && typeof v === "object" && !Array.isArray(v) ? v as Row : null;
@@ -220,6 +220,24 @@ export function projectConnectorGraph(ref: EvidenceRefV1, raw: unknown, maxBytes
     if (largest === "owner_components") summary.totals.omitted_component_members += removed.reduce((sum, members) => sum + members.length, 0);
     bytes = Buffer.byteLength(JSON.stringify(summary), "utf8");
   }
+  // Keep the point/rotation used for copying and the host centerline in the
+  // same targeted read. Never evict connectivity or turn an absent old field
+  // into zero. Larger reads retain their exact raw rows for scoped retrieval.
+  if(owners.size<=64 && [...owners.values()].some(({row})=>row.elementLocation!==undefined)
+    && Buffer.byteLength(JSON.stringify(payload),'utf8')>maxBytes) {
+    const observed=[...owners].filter(([id,{row}])=>!duplicates.has(id)&&row.ok===true).map(([id,{row,index}])=>
+      ({owner:id,source_row:index,...projectElementLocation(row.elementLocation)} as Row));
+    // Columnar packing preserves exact numbers and every reported uncertainty
+    // without repeating field names for every owner. Omitted columns and null
+    // cells are unavailable facts, not zeros. Never trim this table into a
+    // misleading partial inventory or take space from the physical graph.
+    const columns=[...new Set(observed.flatMap(row=>Object.keys(row)))];
+    const locations:NonNullable<ConnectorGraphProjection['element_locations']>={units:'internal_feet',rotation_units:'radians',columns,
+      rows:observed.map(row=>columns.map(key=>row[key]??null)),
+      notice:'Document-internal element locations, not connector origins. Null/absent=unknown. Curve endpoints are not full curved geometry. No host-fit, attachment, source-fidelity or completion proof.'};
+    if(locations.rows.length && Buffer.byteLength(JSON.stringify({...summary,element_locations:locations}),'utf8')<=maxBytes)
+      summary.element_locations=locations;
+  }
   // Small targeted connector reads also support geometry/label decisions.
   // Previously only open ports carried coordinates, forcing another retained
   // read for every connected duct. Add this whole-table accelerator only in
@@ -247,18 +265,6 @@ export function projectConnectorGraph(ref: EvidenceRefV1, raw: unknown, maxBytes
       notice:'Observed ports only; nulls=unknown. No whole-model, fit, service, source-fidelity or completion proof. Native coverage limits above apply; raw rows retrievable.'};
     if(Buffer.byteLength(JSON.stringify({...summary,connector_geometry:geometry}),'utf8')<=maxBytes)
       summary.connector_geometry=geometry;
-  }
-  // Keep the point/rotation used for copying and the host centerline in the
-  // same targeted read. Never evict connectivity or turn an absent old field
-  // into zero. Larger reads retain their exact raw rows for scoped retrieval.
-  if(owners.size<=64 && [...owners.values()].some(({row})=>row.elementLocation!==undefined)
-    && Buffer.byteLength(JSON.stringify(payload),'utf8')>maxBytes) {
-    const locations:NonNullable<ConnectorGraphProjection['element_locations']>={units:'internal_feet',rotation_units:'radians',
-      rows:[...owners].filter(([id,{row}])=>!duplicates.has(id)&&row.ok===true).map(([id,{row,index}])=>
-        ({owner:id,source_row:index,...projectElementLocation(row.elementLocation)})),
-      notice:'Document-internal element locations, not connector origins. Curve endpoints are not full curved geometry. No host-fit, attachment, source-fidelity or completion proof; absent/partial data remains unknown.'};
-    if(locations.rows.length && Buffer.byteLength(JSON.stringify({...summary,element_locations:locations}),'utf8')<=maxBytes)
-      summary.element_locations=locations;
   }
   return summary;
 }
