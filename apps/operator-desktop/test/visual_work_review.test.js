@@ -382,3 +382,10 @@ test('execution diagnostic dispatch preserves bounded details through projection
  scope.run_id='foreign';const count=stores;await assert.rejects(project(call,out),/binding_changed/);assert.equal(stores,count);
  paused=true;await assert.rejects(dispatch(call),/paused/);assert.equal(reads,1);
 });
+
+test('execution inspection exposes actual pre-native compiler diagnostics without inventing settlement',async()=>{
+ const {inspectExecution,desktopNativeBinding}=await import('../desktop_native_tools.mjs');
+ const a={kernel_version:2,goal_id:'a',session_id:'s',run_id:'r',generation:1};
+ const row={execution_binding:desktopNativeBinding(a),call_id:'compiler',tool_name:'native__operator_run_dynamic_revit_program',status:'failed',result:{ok:false,content:[{type:'inputText',text:JSON.stringify({schema:'revit-operator.dynamic-revit-program-run.v1',execution_status:'failed',native_outcome:null,diagnostics:[{code:'CS1061',message:"'MEPSystem' does not contain a definition for 'SystemType'",phase:'native_compile',severity:'error',repair_action:'edit_source',line:1}]})}]}};
+ const r=inspectExecution(a,[row],{call_id:'compiler'});assert.equal(r.calls[0].diagnostics[0].code.text,'CS1061');assert.equal(r.calls[0].diagnostics[0].repair_action.text,'edit_source');assert.equal(r.calls[0].native_outcomes.length,0);assert.equal(r.native_postcondition_verified,false);
+});

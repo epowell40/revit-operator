@@ -242,19 +242,25 @@ export function inspectExecution(assignment, receipts, args={}) {
   if(args.call_id&&selected.length!==1)throw Error('execution_inspection_call_unavailable');
   const text=(v,n)=>typeof v==='string'?{text:v.slice(0,n),complete:v.length<=n}:null;
   const rows=selected.map(r=>{
-    const v=r.result??{},projections=[];
+    const v=r.result??{},projections=[],diagnostics=[];
     for(const block of v.content??[]) {
       if(block?.type!=='inputText'||typeof block.text!=='string'||block.text.length>32768)continue;
       try{const envelope=JSON.parse(block.text);
+        // Compiler failures can precede a native evidence projection. They are
+        // useful diagnostics, never an attestation about transaction effects.
+        if(envelope.schema==='revit-operator.dynamic-revit-program-run.v1'){
+          for(const d of (Array.isArray(envelope.diagnostics)?envelope.diagnostics:[]).slice(0,4))
+            diagnostics.push({code:text(d.code,80),message:text(d.message,700),phase:text(d.phase,80),severity:text(d.severity,40),repair_action:text(d.repair_action,80),line:Number.isInteger(d.line)?d.line:null});
+        }
         if(envelope.schema==='revit-operator.model-evidence-envelope.v1')projections.push(...(envelope.evidence_projections??[]).filter(p=>
           ['assignment_id','run_id','generation'].every(k=>p[k]===binding[k])));}catch{}
     }
     const row={call_id:r.call_id,tool:r.tool_name,recorded_at:r.recorded_at,
       transport_status:r.status,requested_effect:r.request_effect,request_dispatched:r.request_dispatched,
-      evidence_id:r.evidence_ref?.evidence_id??null,error:text(v.error??v.reason,600),native_stop_reason:v.native_stop_reason??null,
+      evidence_id:r.evidence_ref?.evidence_id??null,error:text(v.error??v.reason,600),diagnostics:diagnostics.slice(0,4),native_stop_reason:v.native_stop_reason??null,
       native_outcomes:projections.slice(0,4).map(p=>({evidence_id:p.evidence_id,source:p.source,
         trust_level:p.trust_level,effect_state:p.effect_state,transaction:p.key_facts?.['transaction.status']??null,
-        execution_error:text(p.inline_payload?.native_outcome?.error,600)}))};
+        execution_error:text(p.native_execution_audit?.error??p.inline_payload?.native_outcome?.error,600)}))};
     if(args.call_id)Object.assign(row,{
       route:r.arguments?.path??null,mode:r.arguments?.mode??r.arguments?.review_mode??null,
       review_state:v.state??null,location:v.location??null,capture:v.capture??null,reference:v.reference??null,
