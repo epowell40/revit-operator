@@ -2408,6 +2408,10 @@ async function retainAndProjectFunctionOutput(toolCall, functionOutput, options 
     const scope=currentSidecarEvidenceScope();
     if(!['session_id','assignment_id','run_id','generation'].every(k=>functionOutput.host_code_source_read.owner?.[k]===scope[k]))throw Error('native_code_source_binding_changed');
   }
+  if(toolCall.name==='inspect_execution'&&functionOutput.host_execution_inspection){
+    const scope=currentSidecarEvidenceScope();
+    if(!['session_id','assignment_id','run_id','generation'].every(k=>functionOutput.host_execution_inspection.scope?.[k]===scope[k]))throw Error('execution_inspection_binding_changed');
+  }
   const projected = await projectSidecarFunctionOutput({
     toolCall,
     functionOutput,
@@ -2415,6 +2419,14 @@ async function retainAndProjectFunctionOutput(toolCall, functionOutput, options 
     scope: currentSidecarEvidenceScope(),
     storeEvidence: options.storeEvidence || storeSidecarEvidenceOnBackend
   });
+  if(toolCall.name==='inspect_execution'&&functionOutput.host_execution_inspection){
+    // Retain the ordinary evidence, then deliver the bounded diagnostic verbatim.
+    // This host index describes historical results; it is not native verification.
+    const output=JSON.stringify({...functionOutput.host_execution_inspection,diagnostic_evidence_id:projected.evidence_ref.evidence_id});
+    if(Buffer.byteLength(output,'utf8')>16384)throw Error('execution_inspection_output_budget_exceeded');
+    projected.model_output={type:'function_call_output',call_id:functionOutput.call_id,output};
+    projected.telemetry.projected_bytes=Buffer.byteLength(output,'utf8');
+  }
   const focusedFailure=focusedEvidenceFailureOutputV1(toolCall,functionOutput);
   if(focusedFailure) {
     projected.model_output=focusedFailure;
@@ -12880,7 +12892,9 @@ async function executeFunctionToolCall(toolCall) {
   if(toolCall.name==='inspect_execution') {
     await assertComputerActionControl();
     const result=inspectExecution(computerState.sidecarAssignment,computerState.functionToolReceipts,args);
-    return {type:'function_call_output',call_id:toolCall.call_id,output:JSON.stringify(result)};
+    const out={type:'function_call_output',call_id:toolCall.call_id,output:JSON.stringify(result)};
+    Object.defineProperty(out,'host_execution_inspection',{value:result});
+    return out;
   }
   if (toolCall.name === 'operator_retrieve_evidence') {
     const result = await retrieveFocusedEvidenceV1(() => computerState.sidecarAssignment,args,readBackendJson);

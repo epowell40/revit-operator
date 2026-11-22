@@ -365,3 +365,20 @@ test('execution inspection pages complete rows and distinguishes unknown from tr
  result:{ok:true,state:'uncertain',reference:{filename:'partial.png'},checks:[{id:'four',status:'uncertain',observed:'Left endpoint cropped'}]}}],{call_id:'v'});
  assert.equal(detail.calls[0].checks[0].observed.text,'Left endpoint cropped');assert.equal(detail.whole_task_verified,false);
 });
+
+test('execution diagnostic dispatch preserves bounded details through projection and obeys Pause and scope',async()=>{
+ const {inspectExecution,desktopNativeBinding}=await import('../desktop_native_tools.mjs');
+ const assignment={kernel_version:2,session_id:'s',goal_id:'a',run_id:'r',generation:1},scope=desktopNativeBinding(assignment);
+ const state={sidecarAssignment:assignment,functionToolReceipts:[{execution_binding:scope,tool_name:'native__sample',call_id:'failure',result:{error:'member does not exist'},status:'failed'}]};
+ const begin=source.indexOf('async function executeFunctionToolCall('),end=source.indexOf('async function executeFunctionToolCallSafely',begin);
+ let paused=false,reads=0;const dispatch=runInNewContext(source.slice(begin,end)+';executeFunctionToolCall',{JSON,Object,computerState:state,inspectExecution:(...a)=>{reads++;return inspectExecution(...a)},assertComputerActionControl:async()=>{if(paused)throw Error('paused')}});
+ const call={name:'inspect_execution',call_id:'diag',arguments:'{}'},out=await dispatch(call);
+ assert(!JSON.stringify(out).includes('host_execution_inspection'));
+ const a=source.indexOf('async function retainAndProjectFunctionOutput('),z=source.indexOf('async function retainScreenshotEvidence(',a);
+ let stores=0;const project=runInNewContext(source.slice(a,z)+';retainAndProjectFunctionOutput',{JSON,Date,Buffer,currentSidecarEvidenceScope:()=>scope,storeSidecarEvidenceOnBackend:()=>{},focusedEvidenceFailureOutputV1:()=>null,recordSidecarEvidencePerformance:()=>{},projectSidecarFunctionOutput:async()=>{stores++;return{model_output:{output:'generic truncation'},evidence_ref:{evidence_id:'retained'},telemetry:{}}}});
+ const delivered=JSON.parse((await project(call,out)).model_output.output);
+ assert.equal(delivered.calls[0].error.text,'member does not exist');assert.equal(delivered.diagnostic_evidence_id,'retained');assert.equal(delivered.whole_task_verified,false);
+ const forged=await project(call,{type:'function_call_output',output:out.output});assert.equal(forged.model_output.output,'generic truncation');
+ scope.run_id='foreign';const count=stores;await assert.rejects(project(call,out),/binding_changed/);assert.equal(stores,count);
+ paused=true;await assert.rejects(dispatch(call),/paused/);assert.equal(reads,1);
+});
