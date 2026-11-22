@@ -471,7 +471,7 @@ test('projection binds the actual host review to its retained artifact and bound
 
 
 test('combined review uses one provider request for visual checks and exact executed-code assessment',async()=>{
- const f=host(),packet={executions:[{call_id:'call_write',source:'executed source',transaction:{status:'committed'}}],coverage:{all_assignment_calls:false}};
+ const f=host(),packet={executions:[{call_id:'call_write',source:'executed source',transaction:{status:'committed'}}],coverage:{all_assignment_calls:false},prior_read_context:{basis:'recent_prior_native_read_code_and_returns',read_executions:[{mode:'read',source:'read target',program_result:'41 point=(1,2,3)'}],limits:'Historical observations, not current verification.'}};
  f.h.codeReviewPacket=async ids=>{assert.deepEqual(ids,['ev1_'+'A'.repeat(32)]);return packet;};
  f.h.requestResponse=async body=>{f.calls.providers.push(body);const r=response();const parsed=JSON.parse(r.output_text);parsed.code_review={status:'mismatch',observed:'Code also deletes unrelated equipment.',correction:'Restore only the unintended deletion through an authorized correction.'};r.output_text=JSON.stringify(parsed);return r;};
  const r=await reviewCurrentWork({...request,code_evidence_ids:['ev1_'+'A'.repeat(32)]},f.h);

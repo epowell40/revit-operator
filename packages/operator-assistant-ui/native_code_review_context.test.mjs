@@ -1,0 +1,38 @@
+import test from 'node:test';import assert from 'node:assert/strict';import{createHash}from'node:crypto';
+const review=await import(process.env.NATIVE_REVIEW_TEST_MODULE||'./native_code_review.mjs');
+const hash=s=>'sha256:'+createHash('sha256').update(s).digest('hex');
+function fixture(){
+ const owner={assignment_id:'a',session_id:'s',run_id:'r',generation:1,principal_id:'local',document_fingerprint:'a'.repeat(64)};
+ const snapshot={schema:'revit-operator.assignment-snapshot/v2',current_binding:owner,operations:{},observations:{},unresolved_unknown_operation_ids:[],in_flight_operation_ids:[],input_invalidated_operation_ids:[],execution_control:{state:'running'}};
+ const artifacts=new Map(),calls=[];
+ const add=(key,mode,at)=>{const id='ev1_'+key.repeat(32),source=mode==='read'?'public class Read { /* actual read source */ }':'public class Edit { /* selected write */ }';
+  const sourceHash=hash(source),payloadHash=hash(key),op={operation_id:key,binding:{...owner},capability_id:'operator_run_dynamic_revit_program',input:{source,mode,native_program:{entry_type:mode==='read'?'Read':'Edit'}},opened_at:at,settlement_state:'settled',dispatch_state:'dispatched',persistent_effect:mode==='read'?'none':'applied',observation_ids:[key],result:{operation_id:key,binding:{...owner},authority:'native-host',status:'succeeded',dispatch_state:'dispatched',persistent_effect:mode==='read'?'none':'applied',completed_at:at,payload_provenance:{source:{algorithm:'sha256',representation:'utf8_json_bytes',digest:payloadHash.slice(7)}}}};
+  const observation={observation_id:key,operation_id:key,binding:{...owner},authority:'native-host',capability_id:op.capability_id,raw_payload_ref:'evidence:'+id,payload_provenance:structuredClone(op.result.payload_provenance)};
+  snapshot.operations[key]=op;snapshot.observations[key]=observation;
+  const native={schema:'dynamic-revit-native-execution-receipt/v1',source_hash:sourceHash,document_fingerprint:'sha256:'+owner.document_fingerprint,document_session_id:'doc',document_revision_before:3,verified:false,retry_permitted:false,read_only:mode==='read',success:true,transaction:{status:mode==='read'?'not_started':'committed',committed:mode!=='read',affected_element_ids:mode==='read'?[]:[41],added_element_ids:[],modified_element_ids:mode==='read'?[]:[41],deleted_element_ids:[]},program_result:mode==='read'?'41 point=(1,2,3) axis=(0,1,0)':'changed',error:null};
+  const selection={'payload.schema':'revit-operator.dynamic-revit-program-run.v1','payload.execution_lane':'native','payload.requested_mode':mode,'payload.execution_status':'completed','payload.iteration.source_sha256':sourceHash,'projection.native_execution_audit':native};
+  const ref={evidence_id:id,content_hash:payloadHash,source:'assignment_kernel_v2:operator_run_dynamic_revit_program',trust_level:'authoritative_native',secret_screening_status:'passed',...owner};artifacts.set(id,{native,selection,ref});return id;};
+ const read=add('R','read','2026-11-22T15:00:00Z'),write=add('W','apply','2026-11-22T15:01:00Z');
+ const host={owner:()=>owner,canonicalSnapshot:()=>snapshot,assertControl:async()=>{},receipts:()=>[],canonicalReceipts:(binding,ids)=>review.canonicalNativeCodeReviewReceipts(snapshot,binding,ids),request:async(route,options)=>{const body=JSON.parse(options.body);calls.push(body.evidence_id);const v=artifacts.get(body.evidence_id);return{ok:true,result:{schema:'revit-operator.evidence-retrieval.v1',evidence_ref:v.ref,selection:v.selection,missing_fields:[],returned_bytes:Buffer.byteLength(JSON.stringify(v.selection)),selection_origins:Object.fromEntries(Object.keys(v.selection).map(k=>[k,k==='projection.native_execution_audit'?'deterministic_projection':'payload']))}};}};
+ return {owner,snapshot,artifacts,read,write,host,calls,add};
+}
+test('write review receives bounded prior read source and observations without another provider or native call',async()=>{const f=fixture(),p=await review.buildNativeCodeReviewPacket([f.write],f.host);
+ assert.equal(p.executions.length,1);assert.equal(p.executions[0].mode,'apply');assert.equal(p.prior_read_context.read_executions.length,1);
+ assert.equal(p.prior_read_context.read_executions[0].program_result,'41 point=(1,2,3) axis=(0,1,0)');assert.equal(p.prior_read_context.read_executions[0].source,f.snapshot.operations.R.input.source);
+ assert.match(p.prior_read_context.limits,/Historical/);assert.equal(p.native_postcondition_verified,false);assert.deepEqual(f.calls,[f.write,f.read]);
+});
+test('stale, invalidated, failed, foreign, intervening-write and mixed-session reads cannot explain current targets',async()=>{
+ for(const fault of ['stale','invalidated','failed','foreign','intervening','session','revision','digest','unknown','oversized']){const f=fixture(),r=f.snapshot.operations.R,v=f.artifacts.get(f.read);
+  if(fault==='stale')r.result.completed_at='2026-11-22T14:50:00Z';if(fault==='invalidated')f.snapshot.input_invalidated_operation_ids.push('R');if(fault==='failed')r.result.status='failed';if(fault==='foreign')r.binding.run_id='foreign';
+  if(fault==='intervening')f.add('I','apply','2026-11-22T15:00:30Z');if(fault==='session')v.native.document_session_id='foreign-document';if(fault==='revision')v.native.document_revision_before=5;if(fault==='digest')v.native.source_hash=hash('wrong');if(fault==='unknown')f.snapshot.unresolved_unknown_operation_ids.push('unknown');if(fault==='oversized')v.native.program_result='x'.repeat(25000);
+  const p=await review.buildNativeCodeReviewPacket([f.write],f.host);assert.equal(p.prior_read_context?.read_executions.length??0,0,fault);assert.equal(p.executions.length,1);assert.equal(p.whole_task_verified,false);
+ }
+});
+test('two prior reads maximum and read-only review never recursively expands history',async()=>{const f=fixture();f.add('A','read','2026-11-22T15:00:10Z');f.add('B','read','2026-11-22T15:00:20Z');
+ const p=await review.buildNativeCodeReviewPacket([f.write],f.host);assert.equal(p.prior_read_context.read_executions.length,2);assert.deepEqual(p.prior_read_context.read_executions.map(e=>e.evidence_id),['ev1_'+'B'.repeat(32),'ev1_'+'A'.repeat(32)]);
+ const r=await review.buildNativeCodeReviewPacket([f.read],f.host);assert.equal(r.prior_read_context,undefined);
+});
+test('Pause and changed ownership during optional read custody cannot be swallowed',async()=>{for(const kind of ['pause','owner']){const f=fixture(),old=f.host.request;f.host.request=async(...args)=>{const r=await old(...args);if(f.calls.at(-1)===f.read){if(kind==='pause')f.host.assertControl=async()=>{throw Error('paused');};else f.owner.run_id='changed';}return r;};await assert.rejects(review.buildNativeCodeReviewPacket([f.write],f.host),/paused|owner_changed/);}});
+test('the production code-only consumer forwards prior context while retaining selected-call verdict scope',async()=>{const f=fixture();let delivered;const h={...f.host,codeReviewPacket:ids=>review.buildNativeCodeReviewPacket(ids,f.host),userRequest:()=> 'Correct this terminal',settings:()=>({model:'approved',reasoning_effort:'medium'}),requestResponse:async body=>{delivered=JSON.parse(body.input[0].content[0].text);return {id:'response',status:'completed',output:[],output_text:JSON.stringify({code_review:{status:'uncertain',observed:'Synthetic test; no live judgment.',correction:''}})};}};
+ const result=await review.reviewExecutedCode({review_mode:'code_execution',code_evidence_ids:[f.write]},h);assert(result.ok);assert.equal(delivered.executed_code.prior_read_context.read_executions[0].evidence_id,f.read);assert.equal(result.reviewed_calls.length,1);assert.equal(result.native_postcondition_verified,false);
+});
