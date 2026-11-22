@@ -47,6 +47,7 @@ test('separate responses, intervening actions, inspection closeout, duplicate ID
  const variants=[p=>[p[0],{type:'function_call',name:'native__write',call_id:'write',arguments:'{}'},p[1]],
   p=>[call('visual',{...JSON.parse(p[0].arguments),complete_inspection_item_id:'inspect'}),p[1]],
   p=>[call('visual',{...JSON.parse(p[0].arguments),review_mode:'observe'}),p[1]],
+  p=>[call('visual',{view_id:10,checks:[{id:'look',expected:'Observe the current drawing.'}]}),p[1]],
   p=>[p[0],{...p[1],call_id:p[0].call_id}],
   p=>[p[0],call('code',{review_mode:'code_execution',code_evidence_ids:[3,4,5,6,7,8,9].map(eid)})],
   p=>[p[0]]];

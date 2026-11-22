@@ -17,6 +17,7 @@ export function createCombinedReviewDispatcher(outputs,{execute,assertControl,ow
     try {
       const a=argsOf(visual),b=argsOf(code);
       if(!a||!b||!['independent',undefined].includes(a.review_mode)
+        ||(a.review_mode===undefined&&a.code_evidence_ids===undefined)
         ||a.recheck_evidence_id!==undefined||a.complete_inspection_item_id!==undefined
         ||b.review_mode!=='code_execution'||Object.keys(b).some(k=>!['review_mode','code_evidence_ids'].includes(k)))continue;
       normalizeVisualReviewRequest(a);
