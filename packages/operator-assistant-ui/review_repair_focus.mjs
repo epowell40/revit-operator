@@ -13,9 +13,9 @@ export function reviewRepairFocus(result) {
     repair_check_ids:groups.mismatch, clarify_check_ids:groups.uncertain,
     reuse_unchanged_check_ids:groups.matched,
     ...(result.code_review?{selected_code_status:result.code_review.status}:{}),
-    scope:'Selected review checks only; IDs refer to checks, not native elements. Unshown checks remain retrievable. No native absence, repair or whole-task completion is established.',
+    scope:'Review check IDs, not native elements. Selected scope only; unshown checks remain retrievable. No repair or task completion certified.',
     next_action:groups.mismatch.length
-      ?'Resolve a supported mismatch using the delivered image pair and existing locators. Check its requested properties/connections, then save the useful repair with the existing authorized save tool. Batch independent clear fixes. For a missing symbol or tag, establish its intended modeled target before adding it. Investigate only a named fact that changes the repair; do not restart neighboring-system or family discovery. If that fact remains unavailable, retain this exact gap and continue another actionable check, or return the checked partial with the gap.'
+      ?'Batch clear repairs from paired images and existing locators; confirm absence/host, read back and save the useful repair. Resolve only a named fact blocking repair; otherwise return checked work with exact gaps.'
       :groups.uncertain.length
       ?'Resolve uncertainty with one discriminating current read or reference crop when available; otherwise return the checked partial and specific missing fact. Do not invent a design choice or rebuild matching work.'
       :result.code_review && result.code_review.status!=='matched'

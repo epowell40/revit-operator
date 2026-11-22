@@ -895,7 +895,9 @@ export function visualWorkReviewModelOutput(modelOutput,result,evidenceId,inspec
     ...(reviewRepairFocus(result)?{repair_focus:reviewRepairFocus(result)}:{}),
     retrieval:{evidence_id:evidenceId,checks_path:'checks',reason_path:'reason',full_context_path:'location',
       ...(object(result.changed_capture?.frame)&&Object.hasOwn(result.changed_capture.frame,'sheet_render_state')?{changed_capture_frame_path:'changed_capture.frame'}:{})},
-    guidance:'Read coverage and retrieve any unshown whole check entries before relying on the full review. '+result.guidance};
+    guidance:reviewRepairFocus(result)&&['mismatch','uncertain'].includes(result.state)
+      ?'Retrieve omitted checks per coverage. Follow repair_focus.next_action. Never infer native absence or replay uncertain writes.'
+      :'Read coverage and retrieve any unshown whole check entries before relying on the full review. '+result.guidance};
   // Keep the existing recognized envelope and durable artifact identity. This
   // model-only presentation replaces duplicate generic facts with whole typed
   // findings; it does not rewrite stored evidence or grant native authority.
@@ -906,7 +908,7 @@ export function visualWorkReviewModelOutput(modelOutput,result,evidenceId,inspec
   // Duplicating the generic retrieval catalogue can hide the very discrepancy
   // the caller needs to repair. Full immutable evidence stays addressable.
   delete projection.retrieval;
-  if(['mismatch','uncertain'].includes(result.state)&&feedback.drafting_correction_index){
+  if(['mismatch','uncertain'].includes(result.state)){
     // Prior camera identity is already bound by the retained review. Keep the
     // binding and revision in the repair packet, not a second copy of viewport
     // names, hashes and frame identity. Full context remains explicitly linked.

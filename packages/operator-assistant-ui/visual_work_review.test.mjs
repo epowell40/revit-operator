@@ -68,6 +68,37 @@ test('review repair navigation separates actionable findings from uncertainty wi
  assert.match(v.repair_focus.next_action,/save the useful repair/);assert.match(v.repair_focus.next_action,/named fact/);
  assert.equal(JSON.stringify(r),before);assert.equal(v.whole_task_verified,false);assert.equal(f.calls.providers.length,1);
 });
+
+test('four detailed combined findings reach the actor together without repeating repair guidance',async()=>{
+ const f=host('mismatch'),checks=[
+  {id:'coverage',expected:'Compare all visible routes, symbols and annotations in this area.'},
+  {id:'routes',expected:'Follow each visible route between common architectural landmarks; distinguish a crossing from a known connection.'},
+  {id:'symbols',expected:'Count symbols on each side of each branch separately. Report the source and current counts, the local landmark, and any uncertainty.'},
+  {id:'labels',expected:'Compare sizes, labels, leaders and symbols at their hosts, excluding content outside the shared readable region.'}
+ ];
+ f.h.codeReviewPacket=async()=>({executions:[{source:'selected executed source'}]});
+ f.h.referenceAttachmentRead=async()=>({filename:'reference.pdf',image_url:'data:image/png;base64,'+image,
+  evidence_ref:{evidence_id:'ev1_reference',content_hash:'sha256:'+createHash('sha256').update(Buffer.from(image,'base64')).digest('hex')},
+  source_render:{source_read_call_id:'call_source',attachment_id:'reference',source_sha256:'b'.repeat(64),image_sha256:createHash('sha256').update(Buffer.from(image,'base64')).digest('hex'),page:1,visual_scope:'region',requested_region:{min_u:0.2,min_v:0.3,max_u:0.5,max_v:0.7},width_px:3000,height_px:2800,limitation:'Only this region is visible. Not model evidence or a placement transform.'}});
+ f.h.requestResponse=async body=>{f.calls.providers.push(body);return {id:'combined-detailed',status:'completed',output:[],output_text:JSON.stringify({
+  checks:checks.map(c=>({id:c.id,status:'mismatch',observed:`For ${c.id}, the reference shows a branch continuing beside the doorway with two repeated symbols and a size label. The current drawing stops before that doorway, so the expected downstream features cannot be seen. Neighboring geometry is visible but does not establish this branch's connections.`,correction:'Extend the existing branch to the reference landmark, add the missing supported features and label, and read back its physical connections. Preserve the adjacent system.'})),
+  code_review:{status:'uncertain',observed:'The selected transactions committed, but their output does not independently establish inherited dimensions or identify the dependent element removed by the fitting operation. Successful execution alone does not establish these requested properties or the scope of that collateral change.',correction:'Check the inherited dimensions and the removed dependent element identity. Do not repeat the write to obtain verification.'}
+ })};};
+ const r=await reviewCurrentWork({...request,checks,reference_attachment_read:{call_id:'call_source',page:1},code_evidence_ids:['ev1_'+'A'.repeat(32)]},f.h);
+ assert.equal(r.state,'mismatch',r.reason);
+ // Exercise the ordinary native-region and evidence-envelope metadata too;
+ // a tiny synthetic screen envelope concealed the production packing failure.
+ r.capture.frame.viewport={source:'UIDocument.ActiveView/UIView.GetZoomCorners',viewId:41,viewType:'FloorPlan',zoomCornersXyz:[[-40.123456789,-45.123456789,32.166666666],[85.123456789,18.123456789,32.166666666]],coordinateUnits:'feet',displayPlaneOnly:true,placementMappingAvailable:false};
+ r.baseline={evidence_id:'ev1_previous_review',capture:{evidence_id:'ev1_previous_capture',content_hash:'sha256:'+'e'.repeat(64)},location:{...r.location},frame:{...r.capture.frame},native_state:{...r.location,viewport:r.capture.frame.viewport},historical_context:true};
+ const retained=JSON.stringify(r);
+ const envelope={schema:'revit-operator.model-evidence-envelope.v1',evidence_projections:[{schema:'revit-operator.evidence-projection.v1',evidence_id:'ev1_review',content_hash:'sha256:'+'d'.repeat(64),byte_count:73000,media_type:'application/json',source:'operator_desktop.function.review_current_work',trust_level:'untrusted_caller',assignment_id:'00000000-0000-4000-8000-000000000001',run_id:'sidecar:00000000-0000-4000-8000-000000000002',attempt_id:null,generation:1,target_scope:['41','42','43','Floor Plan','00000000-0000-4000-8000-000000000003'],artifact_ref:'ev1_review',verification_relevance:'supporting',additional_evidence:true,projected_bytes:6600}],omitted:0,retrieval:'Retained evidence.'};
+ const output=visualWorkReviewModelOutput({output:JSON.stringify(envelope)},r,'ev1_review'),text=modelText(output.output),v=JSON.parse(text).evidence_projections[0].visual_work_review;
+ assert.deepEqual(v.checks,r.checks);assert.equal(v.coverage.complete,true);assert.equal(v.coverage.next_start,null);
+ assert.deepEqual(v.code_review,r.code_review);assert.equal(v.repair_focus.selected_code_status,'uncertain');
+ assert.equal(v.baseline.evidence_id,r.baseline.evidence_id);assert.equal(v.baseline.presentation_complete,false);assert.equal(v.retrieval.baseline_path,'baseline');
+ assert.equal(output.output.filter(x=>x.type==='input_image').length,2);assert(Buffer.byteLength(text)<=8192);
+ assert.equal(JSON.stringify(r),retained);assert.equal(v.native_postcondition_verified,false);assert.equal(v.whole_task_verified,false);
+});
 test('PDF source review reuses a selected delivered attachment image instead of requiring a new PNG attachment',async()=>{
  const selected={call_id:'call_source',page:1};
  const f=host();
