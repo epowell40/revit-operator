@@ -1,3 +1,8 @@
+import {after as restoreRequestBudget} from 'node:test';
+// These retained overflow fixtures deliberately exercise the supported tighter cap.
+const originalRequestBudget=process.env.OPERATOR_EVIDENCE_REQUEST_BUDGET_BYTES;
+process.env.OPERATOR_EVIDENCE_REQUEST_BUDGET_BYTES='32768';
+restoreRequestBudget(()=>{if(originalRequestBudget===undefined)delete process.env.OPERATOR_EVIDENCE_REQUEST_BUDGET_BYTES;else process.env.OPERATOR_EVIDENCE_REQUEST_BUDGET_BYTES=originalRequestBudget;});
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {retainedBatch} from './model_evidence_multi_output.fixtures.js';

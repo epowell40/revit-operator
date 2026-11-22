@@ -34,10 +34,11 @@ function envInt(name: string, fallback: number, min: number, max: number): numbe
 export function getEvidenceContextBudget(): EvidenceContextBudget {
   // A scoped native read should arrive whole when it fits the request. The old
   // 8 KiB projection ceiling split ordinary 15 KiB results into several actor
-  // retrieval turns. Leave room for controls/other results inside the unchanged
-  // request ceiling; genuinely large inventories retain explicit paging.
+  // retrieval turns. A committed result and its automatic readback must also
+  // fit together: reserve 64 KiB for that combined evidence instead of rejecting
+  // two valid 24 KiB items. Explicit limits still govern; large inventories page.
   const item_bytes = envInt("OPERATOR_EVIDENCE_ITEM_BUDGET_BYTES", 24_576, 1_024, 65_536);
-  const request_bytes = envInt("OPERATOR_EVIDENCE_REQUEST_BUDGET_BYTES", 32_768, item_bytes, 262_144);
+  const request_bytes = envInt("OPERATOR_EVIDENCE_REQUEST_BUDGET_BYTES", 65_536, item_bytes, 262_144);
   return { item_bytes, request_bytes };
 }
 

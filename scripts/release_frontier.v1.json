@@ -393,7 +393,9 @@
     "connector_geometry_projection.test.ts",
     "assignment_dispatch_control_http.test.ts",
     "provider_token_runway.test.ts",
-    "drafting_frontier.test.ts"
+    "drafting_frontier.test.ts",
+    "desktop_native_interactive_transport.test.ts",
+    "drafting_observation_transport.test.ts"
   ],
   "mcp_tests": [
     "lib/dynamicProgramPresentation.test.ts",
@@ -5710,6 +5712,14 @@
         "backend:provider_token_runway.test.ts",
         "desktop:test/execution_reserve_feedback.test.mjs",
         "backend:drafting_frontier.test.ts"
+      ]
+    },
+    {
+      "id": "committed_result_and_automatic_readback_combined_budget",
+      "coverage": [
+        "backend:desktop_native_interactive_transport.test.ts",
+        "backend:whole_native_result_delivery.test.ts",
+        "backend:drafting_observation_transport.test.ts"
       ]
     }
   ],

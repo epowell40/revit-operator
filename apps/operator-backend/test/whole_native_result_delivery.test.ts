@@ -50,14 +50,29 @@ test('whole failure details keep unknown effects and no verification or retry au
   assert.deepEqual(inline.native_outcome,saved.raw.native_outcome);
   assert.equal(inline.execution_ok,false); assert.equal(inline.retry_authorized,false);
 }));
+
+test('default combined budget delivers two whole native results and exact pending controls',()=>isolated(()=>{
+  const saved=[save('observed record\n'.repeat(1200)),save('partial observation\n'.repeat(900),true)];
+  const controls={type:'inputText' as const,text:JSON.stringify({pending_verification:['pending'],unknown_effects:['unknown'],pause_requested:true})};
+  const contentItems=[...saved.map(s=>({type:'inputText' as const,text:JSON.stringify(modelEvidenceEnvelope([s.projection]))})),controls];
+  const original=JSON.stringify(contentItems);
+  const result=boundDesktopNativeOutput({success:false,contentItems},scope,'paired-results');
+  assert.equal(result.success,false);assert.equal(JSON.stringify(result.contentItems),original);
+  const wire=[{type:'function_call_output',call_id:'paired-results',output:result.contentItems.map((v:any)=>({type:'input_text',text:v.text}))}];
+  const usage=assertBoundedModelEvidencePayload(wire);
+  assert(usage.projected_bytes>32768&&usage.projected_bytes<65536);
+  assert.equal(prepareBoundedModelEvidenceInput(wire),wire);
+  assert.throws(()=>assertBoundedModelEvidencePayload(wire,{item_bytes:24576,request_bytes:32768}),/32768-byte/);
+  for(const s of saved)assert.deepEqual(JSON.parse(readAuthoritativeEvidence(s.ref,scope).toString()),s.raw);
+}));
 test('large inventories still page truthfully and aggregate request budget stays bounded',()=>isolated(()=>{
-  assert.equal(getEvidenceContextBudget().request_bytes,32768);
+  assert.equal(getEvidenceContextBudget().request_bytes,65536);
   const saved=save('observed record\n'.repeat(10000)),{inline}=deliver(saved.projection);
   assert.equal(inline.coverage.program_result_complete,false);
   assert.equal(inline.program_result_page.complete,false);
   assert.equal(inline.program_result_page.text_pagination.has_more,true);
   const output=JSON.stringify(modelEvidenceEnvelope([saved.projection]));
-  assert.throws(()=>prepareBoundedModelEvidenceInput([{type:'function_call_output',output},{type:'function_call_output',output}]),/model-request budget/);
+  assert.throws(()=>prepareBoundedModelEvidenceInput(Array.from({length:5},()=>({type:'function_call_output',output}))),/model-request budget/);
   // Raising retained projection allowance must not admit arbitrary raw dumps.
   assert.throws(()=>assertBoundedModelEvidencePayload([{type:'function_call_output',output:'x'.repeat(8193)}]),/Raw function_call_output/);
 }));
@@ -68,7 +83,8 @@ test('explicit smaller evidence budgets still govern producer and consumer',()=>
   assert(saved.projection.projected_bytes<=8192);
 }));
 
-test('several medium reads share the request budget without failing delivery or altering retained evidence',()=>isolated(()=>{
+test('several medium reads share an explicitly tighter request budget without losing retained evidence',()=>isolated(()=>{
+  process.env.OPERATOR_EVIDENCE_REQUEST_BUDGET_BYTES='32768';
   const saved=save('observed record\n'.repeat(1200));
   const output=JSON.stringify(modelEvidenceEnvelope([saved.projection]));
   const wire=[{type:'function_call_output',call_id:'one',output},{type:'function_call_output',call_id:'two',output}];
@@ -86,5 +102,5 @@ test('several medium reads share the request budget without failing delivery or 
 test('request overflow cannot page failed or unknown program outcomes',()=>isolated(()=>{
   const saved=save('partial observation\n'.repeat(1000),true);
   const output=JSON.stringify(modelEvidenceEnvelope([saved.projection]));
-  assert.throws(()=>prepareBoundedModelEvidenceInput([{type:'function_call_output',output},{type:'function_call_output',output}]),/model-request budget/);
+  assert.throws(()=>prepareBoundedModelEvidenceInput(Array.from({length:5},()=>({type:'function_call_output',output}))),/model-request budget/);
 }));

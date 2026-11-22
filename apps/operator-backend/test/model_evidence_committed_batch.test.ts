@@ -1,3 +1,8 @@
+import {after as restoreRequestBudget} from 'node:test';
+// These retained overflow fixtures deliberately exercise the supported tighter cap.
+const originalRequestBudget=process.env.OPERATOR_EVIDENCE_REQUEST_BUDGET_BYTES;
+process.env.OPERATOR_EVIDENCE_REQUEST_BUDGET_BYTES='32768';
+restoreRequestBudget(()=>{if(originalRequestBudget===undefined)delete process.env.OPERATOR_EVIDENCE_REQUEST_BUDGET_BYTES;else process.env.OPERATOR_EVIDENCE_REQUEST_BUDGET_BYTES=originalRequestBudget;});
 import fs from 'node:fs';import path from 'node:path';import assert from 'node:assert/strict';import test from 'node:test';
 import{prepareBoundedModelEvidenceInput as prepare,assertBoundedModelEvidencePayload as validate}from'../src/evidence/model_context_budget.js';
 const fixture=()=>JSON.parse(fs.readFileSync(path.resolve('test/fixtures/committed-native-batch384.json'),'utf8'));
