@@ -29,10 +29,13 @@ test("runtime preflight consumes the real MCP advertised schema without dispatch
     spawnEnv: { ...process.env, REVIT_OPERATOR_MODE: "development", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" } });
   try {
     await assert.rejects(runtime.validateToolArguments("operator_run_dynamic_revit_program", {
-      mode: "apply", source: "public class Program {}", worker_deadline_ms: 120000, apply_deadline_ms: 120000
+      mode: "apply", source: "public class Program {}", native_program: { entry_type: "Program", deadline_ms: 120000 }
     }), /no tool was dispatched/);
-    await runtime.validateToolArguments("operator_run_dynamic_revit_program", {
+    await assert.rejects(runtime.validateToolArguments("operator_run_dynamic_revit_program", {
       mode: "apply", source: "public class Program {}", worker_deadline_ms: 30000, apply_deadline_ms: 5000
+    }), /native_program/);
+    await runtime.validateToolArguments("operator_run_dynamic_revit_program", {
+      mode: "apply", source: "public class Program {}", native_program: { entry_type: "Program", deadline_ms: 5000 }
     });
     assert.equal(fs.existsSync(path.join(root, "artifacts/dynamic-runtime-runs")), false);
   } finally { runtime.stop(); fs.rmSync(root, { recursive: true, force: true }); }

@@ -50,6 +50,17 @@ export const EAGER_OPERATOR_MCP_TOOLS = new Set([
   "operator_evaluate_assignment_criteria",
   "operator_manage_work_plan",
   "revit_get_context",
+  // Keep recovery and ordinary sheet navigation one call away. C# cannot
+  // open a document, and these small host contracts avoid discovery round trips.
+  "revit_open_model",
+  "revit_close_doc",
+  "revit_list_views",
+  "revit_list_sheets",
+  "revit_activate_view",
+  "revit_create_sheet",
+  "revit_create_drafting_view",
+  "revit_place_view",
+  "revit_export_pdf",
   "revit_capture_sheet_region",
   "revit_write_grant_status",
   "revit_search_tools",
@@ -297,7 +308,7 @@ export class CodexMcpToolRuntime {
     this.dynamicNamespace = {
       type: "namespace",
       name: "revit_operator",
-      description: "Use native Revit C# for custom reads and useful edit batches. Supported native API and MCP tools remain available for host operations and useful shortcuts; retrieve their exact contracts on demand. Inspect actual results and correct remaining discrepancies. No separate execution strategy declaration or task-specific planning program is required. Existing authorization, settlement, review and task-completion rules still apply.",
+      description: "Use native Revit C# for custom reads and useful edit batches. Basic document, navigation, sheet/view creation and PDF export tools remain directly available. For saving, printing and other supported native operations, use revit_tool_doc and revit_call_tool with the exact route, including POST /revit/save-as, /revit/print or /revit/create-view. Supported native API and MCP tools remain available; retrieve other exact contracts on demand. Inspect actual results and correct remaining discrepancies. No separate execution strategy declaration or task-specific planning program is required. Existing authorization, settlement, review and task-completion rules still apply.",
       tools: [READ_ATTACHMENT_TOOL, READ_OUTPUT_PDF_TOOL, ...listed.tools.filter(tool => tool.name !== READ_ATTACHMENT_TOOL.name && tool.name !== READ_OUTPUT_PDF_TOOL.name
         && !(assignmentKernelV2Enabled(this.opts.spawnEnv)
           && ["operator_submit_read_completion", "operator_submit_noop_completion"].includes(tool.name))).map(tool => ({

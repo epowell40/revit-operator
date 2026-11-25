@@ -359,11 +359,11 @@
     },
     {
       "path": "apps/mcp-server/src/lib/generalAgentCapabilityDiscovery.test.ts",
-      "sha256": "sha256:7e1f29dcd258b5bfac34ba0a99c663a87252cb2759bb79e8232460d2d53e46ee"
+      "sha256": "sha256:6f78d4e12daa64e6956b5dcff452233af85d69b93881054b6ff468ed820eb103"
     },
     {
       "path": "apps/mcp-server/src/lib/generalAgentCapabilityDiscovery.ts",
-      "sha256": "sha256:ca0d7e1864379d17435691d01e9106217aa8a0bda31f9ba0147f292ada15309e"
+      "sha256": "sha256:40def416b2462e80355c86e4b346546804ed812f0914260e7195c95f85dfa6ad"
     },
     {
       "path": "apps/mcp-server/src/lib/genericToolPreflight.test.ts",
@@ -399,7 +399,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/mcp_stdio_smoke.test.ts",
-      "sha256": "sha256:d99b262d02f680539e07b9134c0a893cf9e020fcd0a4c43dab24c5d15d1010ac"
+      "sha256": "sha256:eb79e2da3dd4eb24ac5ca90d83fc67c11c941922e99a5c06c59ea0c1e46a653a"
     },
     {
       "path": "apps/mcp-server/src/lib/mepDuctPreviewEvidence.fixtures.ts",
@@ -408,6 +408,14 @@
     {
       "path": "apps/mcp-server/src/lib/mepDuctPreviewEvidence.ts",
       "sha256": "sha256:41f912fe12c60f9bcc1661946bc90377573cac8017c645318ce77d38ace9840b"
+    },
+    {
+      "path": "apps/mcp-server/src/lib/nativeCsharpToolContract.test.ts",
+      "sha256": "sha256:3643e0b3ccaa164a5286e8ce9b2bc613017046edd8d65a9a8fcdeb5e3ba93fb7"
+    },
+    {
+      "path": "apps/mcp-server/src/lib/nativeCsharpToolContract.ts",
+      "sha256": "sha256:30d0f2d282b50e9aec09bf577c08b70be9196d9c4a750e76a96e599003ce61d6"
     },
     {
       "path": "apps/mcp-server/src/lib/nativeDocumentScope.test.ts",
@@ -555,7 +563,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/supportedToolInventory.ts",
-      "sha256": "sha256:e457a908f3f9020eef89319f770ca56b8dd23a71a30cf3a3cca23f3611138090"
+      "sha256": "sha256:7af7c1a2eb7258a290f5ceff65fbc8f8439123baf0b8a3b63690b042a9f6293c"
     },
     {
       "path": "apps/mcp-server/src/lib/textMatch.test.ts",
@@ -684,7 +692,7 @@
     },
     {
       "path": "apps/mcp-server/src/server.ts",
-      "sha256": "sha256:465288e84758b159a5a7eed0c9186a1977d96d1428e5bfa7da68b6b4aaf7f542"
+      "sha256": "sha256:b2b54ef0acf694fff490f89c4ba27a04ba411e2f0fa1f50e4b790ae20522b33d"
     },
     {
       "path": "apps/mcp-server/src/skills/alignCeilingDevices.ts",
@@ -892,7 +900,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_execution.ts",
-      "sha256": "sha256:ccf7dc6c3607e877b3c76422f48d6a89d31728dae926cafc8f92c99fff4461e3"
+      "sha256": "sha256:29e7b778aaf4db438bb7568f19212029191c00a92c859cbdd12ecd09fb48b3b5"
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_execution_failure.ts",
@@ -1940,7 +1948,7 @@
     },
     {
       "path": "apps/operator-backend/src/capabilities/supported_tool_inventory.ts",
-      "sha256": "sha256:e457a908f3f9020eef89319f770ca56b8dd23a71a30cf3a3cca23f3611138090"
+      "sha256": "sha256:7af7c1a2eb7258a290f5ceff65fbc8f8439123baf0b8a3b63690b042a9f6293c"
     },
     {
       "path": "apps/operator-backend/src/capabilities/tool_certification.ts",
@@ -2925,7 +2933,7 @@
     },
     {
       "path": "apps/operator-backend/src/codex/mcp_tool_runtime.ts",
-      "sha256": "sha256:08034a8cbe4e8d69ea324cb4a446da66685cfc356f7100961904106b852de2e9"
+      "sha256": "sha256:9531d54001c26680de2e29d2119b9e5ba8ceaef37c49ec4fe09f32c620c31235"
     },
     {
       "path": "apps/operator-backend/src/codex/operator_backend_auth_lease.ts",
@@ -5632,6 +5640,10 @@
       "sha256": "sha256:a45dff3489069f99c93c96e9462cdea2f0557af9cac2da475dfaa7462c338a26"
     },
     {
+      "path": "apps/operator-backend/test/csharp_first_native_access.test.ts",
+      "sha256": "sha256:f09e6c0047a43cdd48633bbabd07324fadbc660eed6c3a79cb7c7b03a902d16c"
+    },
+    {
       "path": "apps/operator-backend/test/current_work_packet_verification.test.ts",
       "sha256": "sha256:dbd787f418e05246469701bf87e437233e719c9cf7580829d5d95c86b016076b"
     },
@@ -6604,6 +6616,10 @@
       "sha256": "sha256:62b24b14b0df789cfef4984a605665fd82cdd0aee8c677ded3a9179d9af37e39"
     },
     {
+      "path": "apps/operator-backend/test/fixtures/csharp-first-native-access-baseline.json",
+      "sha256": "sha256:0adf390c27cac6e6422ec3b51dbf324d896a2ada035502e161c53f4267873e9c"
+    },
+    {
       "path": "apps/operator-backend/test/fixtures/deferred-work-plan-329.json",
       "sha256": "sha256:35bb67c0e3321b503f5238a1ac8cdf6799e5e9266b3a9101d92994f1da9ed587"
     },
@@ -7269,7 +7285,7 @@
     },
     {
       "path": "apps/operator-backend/test/mcp_input_validation.test.ts",
-      "sha256": "sha256:8a30d8f21d63acda2731d322f583d1bf3b49c0abc9c11c29b6a0eb0a7cb0b924"
+      "sha256": "sha256:7477cd97d41c97f698697d0654bca009ea481e3be18e912835d5455e33671c80"
     },
     {
       "path": "apps/operator-backend/test/mcp_inventory_handshake.test.ts",
@@ -8193,7 +8209,7 @@
     },
     {
       "path": "apps/operator-backend/test/supported_tool_inventory.test.ts",
-      "sha256": "sha256:611f5cbaff98151c6efce3d06eb4914e6f462e3792b119327a08db9c8d999ec7"
+      "sha256": "sha256:e240bc92ec551aa5833db8eb78e696ec2313d41089ae098da939273b175cb74d"
     },
     {
       "path": "apps/operator-backend/test/tag_property_readback_v2.test.ts",
@@ -8509,7 +8525,7 @@
     },
     {
       "path": "apps/operator-backend/test/workbook_export_intent.test.ts",
-      "sha256": "sha256:83137058509f12ae537c0233f3a76d21dbe2d7dbe963256d187ad7c3d0463bbc"
+      "sha256": "sha256:bc7fc6e74f9290361557c44d477dadab82200db451958a1379f7c96a40253b5c"
     },
     {
       "path": "apps/operator-backend/test/workspace_directory_cache.test.ts",
@@ -10610,7 +10626,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorSupportedToolInventory.cs",
-      "sha256": "sha256:c8be206f7ff579239d39e5993b99b9eea5c070d431c546ee8647aa4790d8645d"
+      "sha256": "sha256:ce744701bc0623f6c4a4ac88964eeca0308a60e57850ee2f1450e8ad3ccc8538"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorToolSearchRanking.cs",
@@ -12745,7 +12761,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:63c2cda845a03204f307ff10a68328796bdfee0436be863c460daefc45db039d",
+  "inputs_hash": "sha256:4515bb9208605e1ccfb2250b44dd78bb78b7aa3e19b3d5b4416424e391954465",
   "result": {
     "passed": true,
     "checks": [

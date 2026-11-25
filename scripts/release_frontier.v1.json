@@ -648,6 +648,20 @@
   ],
   "failure_families": [
     {
+      "id": "typed_pdf_export_loses_explicit_file_authority_at_kernel_admission",
+      "coverage": [
+        "backend:workbook_export_intent.test.ts",
+        "backend:teammate_loop_runtime.test.ts"
+      ]
+    },
+    {
+      "id": "cold_conversation_intake_caller_deadline_preempts_allowed_startup_and_inference",
+      "coverage": [
+        "desktop:test/server_smoke.test.js",
+        "backend:codex_conversation_turn.test.ts"
+      ]
+    },
+    {
       "id": "checked_project_copy_after_pause_or_replacement_20261118",
       "coverage": [
         "backend:completed_work_delivery.test.ts",

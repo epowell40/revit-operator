@@ -16,6 +16,61 @@ const prompt = "Prepare a room-by-room Excel workbook of the information we can 
 const context = { revit: { source: { live: true }, process_id: 42, document: { title: "Rooms", path: "C:/fixture/Rooms.rvt", projectIdentity: { fingerprint: "model" } } } };
 const exportArgs = { method: "POST", path: "/revit/export-elements-xlsx", body: { elementIds: [42], parameterNames: ["Area", "Number"], fileName: "rooms.xlsx", dryRun: false } };
 
+test("typed PDF export retains explicit file authority while the model stays unchanged", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-pdf-alias-admission-"));
+  const previous = [process.env.OPERATOR_WORKSPACE_ROOT, process.env.OPERATOR_ASSIGNMENT_KERNEL_V2];
+  process.env.OPERATOR_WORKSPACE_ROOT = root; process.env.OPERATOR_ASSIGNMENT_KERNEL_V2 = "1"; __testOnlyResetGoalListCache();
+  const text = "Export sheet M104 to a PDF named CSharp M104 Check November25.pdf in C:\\Users\\Eli\\Documents\\RevitOperator\\Exports. Leave the model unchanged and give me the PDF link.";
+  try {
+    const prepared = prepareAssignmentTurn({ sessionId: "pdf-alias", messageId: "message", userText: text,
+      toolResults: [], source: "chat", createdBy: "principal", requestContext: context })!;
+    const snapshot = getAssignmentKernelSnapshotV2(prepared.assignmentId)!;
+    const body = { viewIds: [42], outputFolder: "C:/fixture", fileName: "sheets.pdf", dryRun: false };
+    const owner = {}, lease = beginTeammateLoopOwner(owner, { user_text: text, context } as any);
+    try { assert.equal(guardTeammateMcpCall(owner, { tool: "revit_export_pdf", arguments: body }).allowed, true); }
+    finally { endTeammateLoopOwner(lease); }
+    for (const tool of ["revit_set_parameters", "operator_run_dynamic_revit_program"]) {
+      assert.throws(() => openAssignmentKernelOperationV2({ snapshot, controller_request_id: tool,
+        provider_turn_id: "turn", capability_id: tool, classified_effect: "apply",
+        arguments: { mode: "apply", apply: true, dryRun: false, elementIds: [42] } }), /user_no_model_write_limit/);
+    }
+    assert.throws(() => openAssignmentKernelOperationV2({ snapshot, controller_request_id: "spoofed-wrapper",
+      provider_turn_id: "turn", capability_id: "revit_set_parameters", classified_effect: "apply",
+      arguments: { apply: true, dryRun: false, path: "/revit/export-pdf", method: "POST", elementIds: [42] } }), /user_no_model_write_limit/);
+    assert(openAssignmentKernelOperationV2({ snapshot, controller_request_id: "pdf", provider_turn_id: "turn",
+      capability_id: "revit_export_pdf", classified_effect: "apply", arguments: body }));
+  } finally {
+    __closeForTests(); __testOnlyResetGoalListCache();
+    for (const [i, key] of ["OPERATOR_WORKSPACE_ROOT", "OPERATOR_ASSIGNMENT_KERNEL_V2"].entries()) {
+      if (previous[i] === undefined) delete process.env[key]; else process.env[key] = previous[i];
+    }
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("typed PDF export still refuses absent, deferred, and prohibited file authority", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-pdf-alias-negative-"));
+  const previous = [process.env.OPERATOR_WORKSPACE_ROOT, process.env.OPERATOR_ASSIGNMENT_KERNEL_V2];
+  process.env.OPERATOR_WORKSPACE_ROOT = root; process.env.OPERATOR_ASSIGNMENT_KERNEL_V2 = "1"; __testOnlyResetGoalListCache();
+  try {
+    for (const [index,text] of ["Inspect sheet M104. Do not change the model.",
+      "Export M104 to a PDF after I approve. Do not change the model.",
+      "Export M104 to a PDF. Do not create any files or change the model."].entries()) {
+      const prepared = prepareAssignmentTurn({ sessionId: "pdf-denied-"+index, messageId: "message", userText: text,
+        toolResults: [], source: "chat", createdBy: "principal", requestContext: context })!;
+      const snapshot = getAssignmentKernelSnapshotV2(prepared.assignmentId)!;
+      assert.throws(() => openAssignmentKernelOperationV2({ snapshot, controller_request_id: "pdf", provider_turn_id: "turn",
+        capability_id: "revit_export_pdf", classified_effect: "apply", arguments: { viewIds: [42], fileName: "sheets.pdf", dryRun: false } }), /user_no_model_write_limit/);
+    }
+  } finally {
+    __closeForTests(); __testOnlyResetGoalListCache();
+    for (const [i,key] of ["OPERATOR_WORKSPACE_ROOT", "OPERATOR_ASSIGNMENT_KERNEL_V2"].entries()) {
+      if (previous[i] === undefined) delete process.env[key]; else process.env[key] = previous[i];
+    }
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 const multilineCopy="Create a separate reviewed copy of the currently open Revit model at:\nC:\\fixture\\Vector Diagram Reviewed.rvt\n\nSave that copy first, without overwriting the original or changing any model/drawing content. Then inspect the existing diagram. Do not perform source extraction, redraw, import or style edits.";
 test('explicit copy destination on the next line remains a file effect with model preservation',()=>{
   assert.deepEqual(requestedArtifactExportPaths(multilineCopy),['/revit/save-as']);

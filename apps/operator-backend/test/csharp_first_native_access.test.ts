@@ -14,7 +14,7 @@ test('C# simplification preserves every pinned native route, MCP alias and inter
  for(const name of ['operator_run_dynamic_revit_program','operator_manage_work_plan','operator_request_assignment_input','read_excel','read_pdf_text','read_word'])assert(inventory.mcp_aliases.includes(name),name);
 });
 test('native shortcuts stay callable on demand without crowding the default actor toolset',()=>{
- assert.equal(EAGER_OPERATOR_MCP_TOOLS.size,12);
+ assert.equal(EAGER_OPERATOR_MCP_TOOLS.size,21);
  for(const name of retired)assert(!EAGER_OPERATOR_MCP_TOOLS.has(name));
  const tools=inventory.mcp_aliases.map((name:string)=>({name,description:'Bound current contract for '+name,inputSchema:{type:'object',properties:{}},deferLoading:!EAGER_OPERATOR_MCP_TOOLS.has(name)}));
  const direct=desktopNativeModelTools(tools);
@@ -26,4 +26,8 @@ test('native shortcuts stay callable on demand without crowding the default acto
  }
  assert(!direct.some(t=>t.name==='native__revit_set_parameters'));
  assert.equal(desktopNativeToolContract(tools,{tool:'revit_set_parameters'}).tool.name,'revit_set_parameters');
+ for(const name of ['revit_open_model','revit_close_doc','revit_list_views','revit_list_sheets','revit_activate_view','revit_create_sheet','revit_create_drafting_view','revit_place_view','revit_export_pdf'])
+  assert(direct.some(t=>t.name==='native__'+name),name+' must remain directly available');
+ for(const route of ['/revit/save-as','/revit/print','/revit/create-view'])
+  assert(inventory.native_routes.some((r:{method:string,path:string})=>r.method==='POST'&&r.path===route),route);
 });
