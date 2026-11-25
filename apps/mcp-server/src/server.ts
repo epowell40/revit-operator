@@ -99,7 +99,7 @@ import {
 import { runDynamicRevitProgram } from "./lib/dynamicRevitProgramRunner.js";
 import { presentDynamicProgramResult } from "./lib/dynamicProgramPresentation.js";
 import { projectConnectorWorkGuidance } from "./lib/connectorWorkGuidance.js";
-import { DYNAMIC_REVIT_SOURCE_GUIDE, DYNAMIC_REVIT_TOOL_GUIDE } from "./lib/dynamicRevitSdkGuide.js";
+import { NATIVE_CSHARP_TOOL_GUIDE, NATIVE_CSHARP_TOOL_SHAPE } from "./lib/nativeCsharpToolContract.js";
 import { createOperatorBackendClient } from "./lib/operatorBackendClient.js";
 import { runWithOperatorBackendAuth } from "./lib/operatorBackendAuth.js";
 import {
@@ -650,70 +650,7 @@ server.tool("operator_record_execution_strategy", "Record the model's bounded ex
   content: [{ type: "text", text: JSON.stringify(recordExecutionStrategyEvidence(args), null, 2) }]
 }));
 
-server.tool("operator_run_dynamic_revit_program", DYNAMIC_REVIT_TOOL_GUIDE, {
-  source: z.string().min(1).max(128_000).describe(DYNAMIC_REVIT_SOURCE_GUIDE),
-  mode: z.enum(["read", "preview", "apply"]).describe("read: nonmutating snapshot report or explicit native_program read; preview: snapshot/graph rollback only; apply: authorized edit with independent verification. Native compilation alone and native commit alone are not task verification."),
-  target_revit_year: z.enum(["2023", "2024", "2025", "2026", "2027"]).optional(),
-  category: z.string().regex(/^OST_[A-Za-z0-9_]{1,120}$/).optional(),
-  parameters: z.array(z.string().min(1).max(128)).max(16).optional(),
-  snapshot_limit: z.number().int().min(1).max(4096).optional().describe('Maximum native snapshot rows: read up to4096; preview/apply up to1000. Inspect c.Input.Coverage.HasMore before claiming complete enumeration.'),
-  operation_budget: z.number().int().min(1).max(256).optional(),
-  worker_deadline_ms: z.number().int().min(1000).max(30_000).optional(),
-  apply_deadline_ms: z.number().int().min(100).max(5000).optional(),
-  native_program: z.object({
-    entry_type: z.string().min(1).max(256),
-    effect_scope: z.enum(["listed_elements", "active_document"]).optional().describe("For general native-code writes use active_document: the admitted current document, actual change audit and requested-result verification; no predicted collateral IDs. Omit legacy target/create/count restrictions in this mode. Existing listed_elements callers retain strict declared targets."),
-    allowed_existing_unique_ids: z.array(z.string().min(1).max(512)).max(64).optional(),
-    allow_create: z.boolean().optional(),
-    max_affected_elements: z.number().int().min(0).max(64).optional(),
-    deadline_ms: z.number().int().min(250).max(10000).optional(),
-    parameter_checks: z.array(z.object({element_id:z.number().int().positive(),parameter_name:z.string().min(1).max(128),expected_value:z.string().max(32768)}).strict()).min(1).max(64).optional().describe("For an apply that updates known text parameters, declare requested target IDs, exact native parameter names and desired text. The host separately reads and compares them after the commit. These checks grant no write rights and do not verify unrelated fields or collateral targets."),
-    result_targets: z.object({element_ids:z.array(z.number().int().positive()).min(1).max(256).optional(),result_field:z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/).optional()}).strict().optional().describe("Requested result elements to check after apply, separate from Revit dependency notifications. Supply existing element_ids and/or result_field naming a top-level JSON array of actual element IDs returned by your program (useful for newly created elements). At most256 combined. Include intended deletions. Host validates against the committed footprint and independently reads these targets. Other notifications remain visible audit data, not verified preservation. Does not grant write authority or prove task correctness. Do not combine with parameter_checks.")
-  }).strict().optional().describe("First-class native C# on supported Revit2023–2027 workstations: public static string Execute(Autodesk.Revit.DB.Document). mode read or apply only. Reads need no effect targets. General writes may explicitly use effect_scope active_document without predicting dependent changes; listed_elements retains legacy restrictions. For known text parameter edits supply parameter_checks for separate native verification. No transaction, SaveAs, filesystem or network in source. Host manages the transaction; returned text is not verification. Review source against the task and verify the requested persisted result. Do not combine with snapshot, graph, resume or checkpoint options."),
-  resume: z.object({
-    prior_run_id: z.string().regex(/^dynamic-[a-f0-9]{32}$/),
-    prior_evidence_sha256: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-    mode: z.enum(["facts", "repair", "retry"])
-  }).strict().optional().describe("Bind this attempt to exact retained evidence from the prior run. facts preserves source and expands requested observations; repair changes retryable source; retry preserves source for a retryable transient failure."),
-  continue_from_checkpoint: z.object({
-    prior_run_id: z.string().regex(/^dynamic-[a-f0-9]{32}$/),
-    prior_evidence_sha256: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-    prior_checkpoint_sha256: z.string().regex(/^sha256:[a-f0-9]{64}$/)
-  }).strict().optional().describe("Start a new diagnostic loop from one exact committed_verified checkpoint. The same Revit document/session must still be active; restart reconciliation is explicit and never inferred."),
-  result_reference: z.object({
-    selector: z.object({
-      element_unique_ids: z.array(z.string().min(1).max(256)).max(256).optional(),
-      category_stable_ids: z.array(z.string().min(1).max(256)).max(32).optional(),
-      kinds: z.array(z.enum(["mep_curve", "equipment", "device", "accessory", "system", "text_note", "independent_tag"])).max(7).optional(),
-      parameter_names: z.array(z.string().min(1).max(256)).max(32).optional(),
-      include_type_parameters: z.boolean().optional(),
-      page_size: z.number().int().min(1).max(128).optional()
-    }).strict(),
-    target_unique_ids: z.array(z.string().min(1).max(256)).max(256).optional(),
-    effect_budget: z.object({
-      budget_id: z.string().min(1).max(160),
-      target_document_fingerprints: z.array(z.string().regex(/^sha256:[a-f0-9]{64}$/)).min(1).max(8),
-      allowed_categories: z.array(z.string().min(1).max(256)).max(256),
-      explicit_target_unique_ids: z.array(z.string().min(1).max(256)).max(256),
-      allowed_sdk_domains: z.array(z.string().min(1).max(128)).min(1).max(32),
-      allowed_external_effect_classes: z.array(z.string().min(1).max(128)).max(16).optional(),
-      view_scope_hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-      level_scope_hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-      workset_scope_hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-      phase_scope_hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-      maximum_operation_count: z.number().int().min(1).max(256),
-      maximum_affected_elements: z.number().int().min(1).max(50_000),
-      maximum_creates: z.number().int().min(0).max(256),
-      maximum_modifications: z.number().int().min(0).max(256),
-      maximum_deletes: z.number().int().min(0).max(256),
-      maximum_execution_milliseconds: z.number().int().min(100).max(600_000),
-      maximum_regenerations: z.number().int().min(0).max(1000),
-      maximum_output_count: z.number().int().min(0).max(10_000),
-      maximum_output_bytes: z.number().int().min(0).max(20 * 1024 * 1024 * 1024),
-      file_capability_set_hash: z.string().regex(/^sha256:[a-f0-9]{64}$/)
-    }).strict()
-  }).strict().optional()
-}, async (args) => {
+server.tool("operator_run_dynamic_revit_program", NATIVE_CSHARP_TOOL_GUIDE, NATIVE_CSHARP_TOOL_SHAPE, async (args) => {
   try {
     const result = await runDynamicRevitProgram(args);
     return { isError: result.execution_status === "failed", content: [{ type: "text", text: JSON.stringify(presentDynamicProgramResult(result), null, 2) }] };

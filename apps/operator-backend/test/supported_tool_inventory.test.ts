@@ -105,8 +105,9 @@ test("supported inventory rejects every excluded source route before transport d
   assert.equal(isSupportedToolRoute("POST", "/revit/existing-conditions-mep-draft-workflow"), true,
     "The source-registered stage executor must be transport-admitted.");
   assert.equal(isSupportedNativeTransport("POST", "/revit/linked-room-boundaries"), true);
-  assert.equal(SUPPORTED_MCP_ALIASES.length, 99);
-  assert.equal(SUPPORTED_MCP_ALIASES.includes("operator_plan_existing_conditions_duct_continuation"), true);
+  assert.equal(SUPPORTED_MCP_ALIASES.length, 93);
+  assert.equal(SUPPORTED_MCP_ALIASES.includes("operator_plan_existing_conditions_duct_continuation"), false,
+    "The bespoke continuation planner is retired; native routes and the general work ledger remain.");
   assert.equal(SUPPORTED_MCP_ALIASES.includes("operator_manage_work_plan"), true);
   assert.equal(SUPPORTED_MCP_ALIASES.includes("write_excel"), false, "The legacy writer has no admitted, verifiable assignment effect contract.");
   const excluded = implemented.filter(route => !isSupportedNativeTransport(route.method, route.path));

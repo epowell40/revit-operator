@@ -59,17 +59,17 @@ export const DYNAMIC_REVIT_PROGRAM_SUBSTRATE_V1 = {
   id: "dynamic_revit_program",
   kind: "dynamic_program",
   title: "Execute bounded task-specific C# reads or writes in Revit",
-  description: "For complex multi-step Revit work using loops, branching, custom algorithms, structured assertions, and bounded observe-revise-rerun feedback within explicit capability and effect limits.",
+  description: "Native Autodesk.Revit.DB C# for custom reads and useful edit batches. Use focused native readback and visual feedback to correct results. Native API/MCP tools remain available for host operations and shortcuts. No separate semantic planning graph is required.",
   semantics: {
     previewBeforeCommit: false,
     machineAccess: "restricted",
     externalFileEffects: "explicit_capability_required",
-    iterativeObservation: "bounded_needs_facts",
-    evidenceBoundIteration: "facts_repair_retry_max_5",
-    structuredDiagnostics: "phase_range_step_assertion_repair_action",
-    stepPlanning: "ordered_dependency_waves_and_counts",
-    semanticTrace: "exact_step_node_fact_binding",
-    deterministicReplay: true
+    iterativeObservation: "native_readback_and_visual_feedback",
+    evidenceBoundIteration: "reconcile_committed_or_unknown_effects_before_retry",
+    structuredDiagnostics: "native_compile_execution_effect_receipts",
+    stepPlanning: "actor_owned_bounded_batches",
+    semanticTrace: "source_receipt_and_native_result_binding",
+    deterministicReplay: false
   },
   admission: {
     required: true,
