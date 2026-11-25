@@ -5641,7 +5641,7 @@
     },
     {
       "path": "apps/operator-backend/test/csharp_first_native_access.test.ts",
-      "sha256": "sha256:f09e6c0047a43cdd48633bbabd07324fadbc660eed6c3a79cb7c7b03a902d16c"
+      "sha256": "sha256:4d1d1e87693dd267b659fd46cc40657a08f05e78b2262063dbed367ea070f2b2"
     },
     {
       "path": "apps/operator-backend/test/current_work_packet_verification.test.ts",
@@ -5721,7 +5721,7 @@
     },
     {
       "path": "apps/operator-backend/test/desktop_dynamic_contract.test.ts",
-      "sha256": "sha256:149fc5fc86483560550ce3f47dcf5ce5c936020efdba4a8ba8942fd91ad55bf6"
+      "sha256": "sha256:9bce528451e92a577fe6719842f04c924add4b3a6737a98131dd2fd9ab034a9b"
     },
     {
       "path": "apps/operator-backend/test/desktop_edit_scope_required.test.ts",
@@ -12797,7 +12797,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:598b9b62fe1f8cdcd8a6531b26ed004eac450ad3280a287d1a1ecaa3d9eed6e4",
+  "inputs_hash": "sha256:94d5ed80b535c9d62f90a5c1e30edf9ec4e7d9aae284b455801219f08907f9cf",
   "result": {
     "passed": true,
     "checks": [
