@@ -8,8 +8,9 @@ const fixture=[path.join(import.meta.dirname,'fixtures/csharp-first-native-acces
 const baseline=JSON.parse(fs.readFileSync(fixture,'utf8').replace(/^\uFEFF/,''));
 const retired=['operator_plan_existing_conditions_duct_continuation','operator_plan_semantic_mep_route','operator_record_execution_strategy','operator_register_existing_conditions_interpretation','operator_resume_existing_conditions_registration','operator_validate_existing_conditions_interpretation'];
 test('C# simplification preserves every pinned native route, MCP alias and internal execution boundary',()=>{
- for(const field of ['native_routes','internal_routes','standalone_routes'])assert.deepEqual(inventory[field],baseline[field],field);
- assert.deepEqual(inventory.mcp_aliases.filter((x:string)=>x.startsWith('revit_')),baseline.native_mcp_aliases);
+ assert.deepEqual(inventory.native_routes,[...baseline.native_routes,{method:'POST',path:'/revit/sync'},{method:'POST',path:'/revit/link-revit'}]);
+ for(const field of ['internal_routes','standalone_routes'])assert.deepEqual(inventory[field],baseline[field],field);
+ assert.deepEqual(inventory.mcp_aliases.filter((x:string)=>x.startsWith('revit_')),[...baseline.native_mcp_aliases,'revit_sync_model']);
  for(const name of retired)assert(!inventory.mcp_aliases.includes(name),name);
  for(const name of ['operator_run_dynamic_revit_program','operator_manage_work_plan','operator_request_assignment_input','read_excel','read_pdf_text','read_word'])assert(inventory.mcp_aliases.includes(name),name);
 });
