@@ -2,13 +2,18 @@
   "default_max_lines": 1200,
   "exceptions": [
     {
+      "path": "domain/assignment-kernel/reducer.ts",
+      "max_lines": 1208,
+      "reason": "November25 adds native lifecycle receipt-to-retained-payload and admitted-action equality checks at the existing operation result reduction boundary. Keep authoritative settlement checks together; lifecycle parsing stays in the shared contract. Exact measured size, no spare growth."
+    },
+    {
       "path": "brains/openai_brain.ts",
       "max_lines": 24028,
       "reason": "Legacy model orchestration monolith plus reviewed EPIC-0434 controls, persisted-run reconciliation, EPIC-0435 phrase-independent spatial-image transport, EPIC-0439 provider-neutral Dynamic Runtime strategy/dispatch evidence, and one reviewed MEP peer-precedent semantic-truth instruction; outcome-unknown and non-retryable receipt metadata remain coupled to result compaction so stale success-looking records cannot override uncertain Revit outcomes. Provider, redline, reconstruction, image-transport, and prompt-construction seams remain candidates for incremental extraction."
     },
     {
       "path": "brains/codex_brain.ts",
-      "max_lines": 1253,
+      "max_lines": 1264,
       "reason": "Reviewed bounded Dynamic Runtime adapter derives an explicit parameter-evidence budget from caller-supplied element IDs and names so a complete small Revit read survives transport compaction. The reviewed new-view preview-truth instruction and blocked-receipt reconciliation keep claims aligned with executable Revit evidence. The bounded lifecycle addition resumes persisted app-server threads and routes cancellation through turn/interrupt; protocol transport and generated types remain isolated under the codex seam. The latest bounded increase records an exact no-provider-start usage receipt even when connection initialization fails, preventing benchmark coverage from silently dropping that turn. Extract app-server result adaptation with the existing protocol seam in a follow-up without duplicating tool-argument or receipt parsing. Existing per-conversation turn serialization and queued-turn cancellation are wired around the extracted conversation_turn owner. Preserve the existing interrupt and canonical settlement path; this reviewed composition includes no second controller."
     },
     {
@@ -128,8 +133,8 @@
     },
     {
       "path": "assignments/assignment_kernel_v2_execution.ts",
-      "max_lines": 1253,
-      "reason": "The accumulated generic runtime adds explicit existing comparator dispatch for inline accessories, takeoffs, vector/detail reads, family sessions and native observed targets. Validation and effect settlement remain in their extracted contracts/comparators. This exact composition limit has no spare lines; historical two-boundary coverage remains required. The six reviewed lines carry a native-bound accessory branch observation through the existing commit envelope. Producer claims still cannot supply this fact. November22 adds five lines routing air_terminal_on_duct readbacks through the existing exact connection comparator at subject selection and reference-target admission; the comparator remains separately owned and no spare growth is allocated."
+      "max_lines": 1264,
+      "reason": "The accumulated generic runtime adds explicit existing comparator dispatch for inline accessories, takeoffs, vector/detail reads, family sessions and native observed targets. Validation and effect settlement remain in their extracted contracts/comparators. This exact composition limit has no spare lines; historical two-boundary coverage remains required. The six reviewed lines carry a native-bound accessory branch observation through the existing commit envelope. Producer claims still cannot supply this fact. November22 adds five lines routing air_terminal_on_duct readbacks through the existing exact connection comparator at subject selection and reference-target admission; the comparator remains separately owned and no spare growth is allocated. November25 adds eleven lines for reviewed alias admission and native lifecycle receipt binding in the existing execution boundary; lifecycle validation remains in the shared contract. Exact measured size, no spare growth."
     }
   ]
 }
