@@ -5,7 +5,7 @@ import type { CriterionEvaluationV2 } from "./criteria.js";
 import type { ObservationV2, SemanticFactV2 } from "./observation.js";
 import type { OperationPurposeV2, OperationV2 } from "./operation.js";
 import type { AssignmentSnapshotV2 } from "./snapshot.js";
-import { isAssignmentKernelControlCapabilityV2, nativeArtifactResultEffectV2 } from "@revitoperator/assignment-kernel-v2-contracts";
+import { isAssignmentKernelControlCapabilityV2, nativeArtifactResultEffectV2, nativeLifecycleResultEffectV2 } from "@revitoperator/assignment-kernel-v2-contracts";
 
 export const CRITERION_EVIDENCE_POLICY_V2_SCHEMA = "revit-operator.criterion-evidence-policy/v2" as const;
 export const SEMANTIC_EVIDENCE_CONTRACT_V2 = "revit-operator.semantic-evidence-contract/v2" as const;
@@ -166,7 +166,7 @@ export function observationAdmissibilityForCriterionV2(input: Readonly<{
     }
     if (!desiredStateRead && input.snapshot.spec.requested_effect === "apply"
         && (operation.persistent_effect !== "applied"
-          || (operation.result.native_transaction_state !== "committed" && nativeArtifactResultEffectV2(operation.result) !== "applied"))) {
+          || (operation.result.native_transaction_state !== "committed" && nativeArtifactResultEffectV2(operation.result) !== "applied" && nativeLifecycleResultEffectV2(operation.result) !== "applied"))) {
       return denied("apply_task_effect_not_committed", operation);
     }
     if (!desiredStateRead && input.snapshot.spec.requested_effect === "preview"

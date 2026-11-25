@@ -69,13 +69,27 @@ namespace RevitBridge.Common
                 case "/revit/move-elements": case "/revit/rotate-elements": case "/revit/delete":
                 case "/revit/set-parameter": case "/revit/create-text": case "/revit/place-families":
                 case "/revit/set-text-note-text": case "/revit/replace-text-note":
-                case "/revit/tag-elements": break;
+                case "/revit/tag-elements":
+                case "/revit/sync": case "/revit/link-revit": case "/revit/link-cad": break;
                 default: return false;
             }
             try
             {
                 using var body = JsonDocument.Parse(bodyJson);
                 if (body.RootElement.ValueKind != JsonValueKind.Object) return false;
+                if (path == "/revit/sync" || path == "/revit/link-revit" || path == "/revit/link-cad")
+                {
+                    // Active-document recovery covers both API-owned Revit lifecycle
+                    // calls and transaction-owned CAD reload. Mirror handler defaults.
+                    var name = path == "/revit/sync" ? "sync" : "link";
+                    if (body.RootElement.TryGetProperty("action", out var action) && action.ValueKind != JsonValueKind.Null)
+                    {
+                        if (action.ValueKind != JsonValueKind.String) return false;
+                        name = (action.GetString() ?? "").Trim().ToLowerInvariant();
+                    }
+                    if (!(OperatorNativeLifecycleReceipt.Supports(path, name)
+                        || path == "/revit/link-cad" && (name == "load" || name == "reload"))) return false;
+                }
                 // Only in-document tagging/repair is covered. Family import and
                 // family-editor inspection have separate lifecycles and remain excluded.
                 if (path == "/revit/tag-elements")

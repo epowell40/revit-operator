@@ -15275,9 +15275,9 @@ async function answerConversationIntake(body, signal, onHandoff, authorizedSessi
       const controller = new AbortController();
       const abort = () => controller.abort(deadlineSignal?.reason);
       deadlineSignal?.addEventListener("abort", abort, { once: true });
-      // The backend keeps one tool-free classification alive for at most 30s.
-      // Its former fast deadline must not become an unclassified task handoff.
-      const timer = setTimeout(() => controller.abort(), 35000);
+      // The backend bounds cold startup and inference separately at 30s each.
+      // Allow both windows plus transport slack; caller cancellation still wins.
+      const timer = setTimeout(() => controller.abort(), 65000);
       try { return await (hooks.routeConversationIntake || readBackendJson)("/chat/intake", { method: "POST", signal: controller.signal, body: JSON.stringify(request) }); }
       finally { clearTimeout(timer); deadlineSignal?.removeEventListener("abort", abort); }
     }

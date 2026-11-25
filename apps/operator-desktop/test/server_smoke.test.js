@@ -8,6 +8,17 @@ async function loadDelegatedDesktopModule(label) {
   try{return await import(`${pathToFileURL(path.join(appDir, "server.js")).href}?delegated-${label}-${Date.now()}`);}
   finally{if(previous===undefined)delete process.env.OPERATOR_DESKTOP_NO_LISTEN;else process.env.OPERATOR_DESKTOP_NO_LISTEN=previous;}
 }
+test('cold intake preserves startup plus inference deadline',async t=>{
+ const desktop=await loadDelegatedDesktopModule('cold-intake-deadline');let prematureAbort=false;
+ const route=async(p,options)=>{assert.equal(p,'/chat/intake');t.mock.timers.tick(45000);prematureAbort=options.signal.aborted;return{routing_status:'accepted',route:'answer',history_saved:true,assistant_message:'Checked answer after cold startup.'};};
+ desktop.configureOperatorDesktopTestHooks({computerRunTestHooks:{enableSidecarAssignment:true,enableConversationIntake:true,ensureComputerBackendSession:async()=>'cold-intake-session'},chatRunTestHooks:{readSimpleRevitContext:async()=>({ok:false}),routeConversationIntake:route}});
+ const server=desktop.app.listen(0,'127.0.0.1');await once(server,'listening');
+ t.after(async()=>{t.mock.timers.reset();desktop.configureOperatorDesktopTestHooks();await new Promise(resolve=>server.close(resolve));});
+ t.mock.timers.enable({apis:['setTimeout']});
+ const response=await fetch('http://127.0.0.1:'+server.address().port+'/api/computer/run',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({prompt:'Read this sheet only.',message_id:'cold-intake-message'})});
+ await response.text();assert.equal(prematureAbort,false,'Desktop must preserve the backend startup plus inference window');
+});
+
 test('fresh computer entry delivers checked conversation answers without opening a model task456',async t=>{
  const desktop=await loadDelegatedDesktopModule('fresh-conversation-answer456');let contextReads=0,goals=0;
  const route=async(p)=>{if(p==='/chat/intake')return{routing_status:'accepted',route:'answer',history_saved:true,assistant_message:'Synthetic checked answer; no model work.'};if(p==='/api/agent-goal'){goals++;throw Error('must not create a model task');}throw Error('Unexpected synthetic route '+p);};

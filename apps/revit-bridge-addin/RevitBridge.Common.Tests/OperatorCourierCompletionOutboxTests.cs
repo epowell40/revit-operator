@@ -117,6 +117,33 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public async Task LifecycleWarningCompletionSurvivesTimedOutWaiterWithoutReloadingOrLosingWarnings()
+        {
+            const string route = "/revit/link-revit";
+            const string input = "{\"action\":\"unload\",\"linkTypeId\":1362428,\"dryRun\":false}";
+            Assert.True(OperatorNativeCompletionStore.SupportsActiveDocument("POST", route, input));
+            using var f = new DirectCompletionFixture("apply", route, input);
+            var reservation = f.Reserve();
+            var started = new TaskCompletionSource<bool>(); var released = new TaskCompletionSource<bool>();
+            var waiter = new TaskCompletionSource<OperatorNativeCompletionReply>(); int calls = 0;
+            var callback = Task.Run(() => OperatorNativeCompletionCapture.Execute(f.Store, reservation, () => {
+                var result = OperatorNativeLifecycleReceipt.Execute(route, "unload", "11111111111111111111111111111111",
+                    () => { calls++; started.SetResult(true); released.Task.GetAwaiter().GetResult(); },
+                    () => new Dictionary<string,object?> { ["loaded"]=false, ["warningHandling"]=new { acknowledgedWarningCount=61 } });
+                return new OperatorNativeCompletionReply(200,JsonSerializer.Serialize(OperatorAttemptSuccessfulSettlement.Attach(result,"apply","POST",route)));
+            }, () => f.Document, "POST",route,f.Request.Request.RequestId,"apply"));
+            await started.Task; waiter.TrySetCanceled(); Assert.Equal(202,f.Lookup().StatusCode);
+            released.SetResult(true); var returned = await callback;
+            Assert.True(waiter.Task.IsCanceled); Assert.Equal(1,calls);
+            using var lookup=JsonDocument.Parse(f.Lookup().BodyJson);
+            using var record=JsonDocument.Parse(lookup.RootElement.GetProperty("record_json").GetString()!);
+            Assert.Equal(returned.BodyJson,record.RootElement.GetProperty("terminal").GetProperty("body_json").GetString());
+            using var body=JsonDocument.Parse(returned.BodyJson);
+            Assert.Equal(61,body.RootElement.GetProperty("warningHandling").GetProperty("acknowledgedWarningCount").GetInt32());
+            Assert.Equal("applied",OperatorAttemptSuccessfulSettlement.Classify(body.RootElement,"apply","POST",route).EffectState);
+        }
+
+        [Fact]
         public void DirectCompletionIsImmutableAndRejectsChangedSelectorsTamperingAndRestartEpoch()
         {
             using var f = new DirectCompletionFixture();
@@ -188,12 +215,12 @@ namespace RevitBridge.Common.Tests
             internal OperatorNativeCompletionStore Store;
             internal OperatorNativeTransportRequestContext Request;
             internal OperatorNativeTransportProtectedRequest? LastProtected;
-            internal DirectCompletionFixture(string requestedEffect = "apply", string route = "/revit/rotate-elements")
+            internal DirectCompletionFixture(string requestedEffect = "apply", string route = "/revit/rotate-elements", string? body = null)
             {
                 Store = new OperatorNativeCompletionStore(Token, Epoch, Root);
                 var now = DateTimeOffset.UtcNow;
                 var wire = OperatorNativeTransportCodec.ProtectRequest(Token, Epoch, "POST", route,
-                    JsonSerializer.Serialize(new { ids = new[] { 42 }, dryRun = requestedEffect == "preview" }), "", now);
+                    body ?? JsonSerializer.Serialize(new { ids = new[] { 42 }, dryRun = requestedEffect == "preview" }), "", now);
                 Request = OperatorNativeTransportCodec.OpenRequest(Token, Epoch, Encoding.UTF8.GetBytes(wire.EnvelopeJson), "POST",
                     OperatorNativeTransportProtocol.TransportPath, false, now, new OperatorNativeTransportReplayCache());
             }

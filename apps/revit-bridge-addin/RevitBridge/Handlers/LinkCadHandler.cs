@@ -16,6 +16,8 @@ namespace RevitBridge.Handlers
     {
         public sealed class Params
         {
+            public string? action { get; set; } // link (default)|load|reload
+            public long? linkTypeId { get; set; }
             public string? sourcePath { get; set; }
             public string? expectedSourceSha256 { get; set; }
             public string? sheetNumber { get; set; }
@@ -46,9 +48,48 @@ namespace RevitBridge.Handlers
         public Task<object> Handle(UIApplication app, string jsonData)
             => Task.FromResult(RevitBridge.Logic.Handlers.NativeMutationPreflightBoundary.Execute(enter => Execute(app, jsonData, enter)));
 
+        private static object ReloadLink(UIApplication app, Params p, string action, Action enter)
+        {
+            var doc = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("Open a project before managing links.");
+            if (doc.IsReadOnly || doc.IsModifiable || doc.IsLinked)
+                throw new InvalidOperationException("CAD reload requires an editable document with no open transaction.");
+            var id = p.linkTypeId ?? 0;
+            var link = id > 0 ? doc.GetElement(ElementIdCompat.Create(id)) as CADLinkType : null;
+            if (link == null || !link.IsExternalFileReference()) throw new ArgumentException("linkTypeId must identify an existing CAD link, not an import.");
+            var source = string.IsNullOrWhiteSpace(p.sourcePath) ? null : ResolveSourcePath(p.sourcePath!);
+            if (source != null)
+            {
+                CadLinkOptionPolicy.SourceFormat(source);
+                CadLinkOptionPolicy.RequireExpectedSourceHash(p.expectedSourceSha256, FileSha256(source));
+            }
+            else if (!string.IsNullOrWhiteSpace(p.expectedSourceSha256))
+                throw new ArgumentException("Provide sourcePath when requesting a source hash check.");
+            if (p.dryRun == true) return new { status = "Dry Run", dryRun = true, action, linkTypeId = id,
+                transaction = OperatorNativeTransactionReceipt.NotStarted() };
+            enter();
+            // Unlike RevitLinkType.Reload, CADLinkType requires an ordinary open
+            // transaction. Use the existing native commit/rollback receipt path.
+            return RevitBridge.Logic.Handlers.NativeSingleTransaction.Execute(app, doc, "Reload CAD link", _ => {
+                    var result = source == null ? link.Reload() : link.LoadFrom(source);
+                    var state = link.GetExternalFileReference().GetLinkedFileStatus().ToString();
+                    return new Dictionary<string, object?> {
+                        ["status"] = state == "Loaded" && result != null
+                            && (result.LoadResult == LinkLoadResultType.LinkLoaded || result.LoadResult == LinkLoadResultType.UsedExisting) ? "Success" : "Error", ["action"] = action,
+                        ["linkTypeId"] = id, ["name"] = link.Name, ["linkedFileStatus"] = state,
+                        ["loadResult"] = result?.LoadResult.ToString(), ["sourcePath"] = source,
+                        ["sourceFullPath"] = ModelPathUtils.ConvertModelPathToUserVisiblePath(link.GetExternalFileReference().GetAbsolutePath())
+                    };
+                });
+        }
+
         private static object Execute(UIApplication app, string jsonData, Action enterNativeScope)
         {
             var p = string.IsNullOrWhiteSpace(jsonData) ? new Params() : (JsonSerializer.Deserialize<Params>(jsonData) ?? new Params());
+
+            var action = (p.action ?? "link").Trim().ToLowerInvariant();
+            if (action == "load" || action == "reload") return ReloadLink(app, p, action, enterNativeScope);
+            if (action == "unload") throw new InvalidOperationException("Revit's public CADLinkType API has no unload operation. Use Manage Links > CAD Formats > Unload through computer use; do not delete the link or hide its category as a substitute.");
+            if (action != "link") throw new ArgumentException("link-cad.action must be link, load, or reload.");
 
             var dryRun = p.dryRun ?? false;
             var wantLink = p.link ?? true;

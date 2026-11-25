@@ -44,6 +44,7 @@ import { VERIFIED_DELIVERABLE_TARGETS_FACT_V2 } from "../domain/assignment-kerne
 import { workPlanPendingV2 } from "../domain/assignment-kernel/work_plan.js";
 import { createHash } from "node:crypto";
 import { authorizedArtifactExportPath } from "../artifact_export_intent.js";
+import { reviewedTeammateNativeAliasRequest } from "../teammate_native_aliases.js";
 import { isExplicitNoWriteRequest } from "../teammate_loop_runtime.js";
 import { completionRecoveryOrderV2 } from "./assignment_kernel_v2_recovery_order.js";
 import {
@@ -355,15 +356,20 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
     throw new Error("assignment_kernel_v2_operation_admission_after_terminal_outcome");
   }
   const suggestedEffect = operationEffect(input.classified_effect);
-  assertInterpretedModelEffect(snapshot,suggestedEffect,requestIdentity({capability_id:input.capability_id,arguments:input.arguments}).path);
+  // Resolve a reviewed wrapper's destination only for authority checks. Keep
+  // its persisted request identity unchanged: native children own dispatch
+  // identity and existing retry/reassignment evidence depends on that split.
+  const admissionPath = reviewedTeammateNativeAliasRequest(input.capability_id, canonicalInput(input.arguments))?.path
+    ?? requestIdentity({ capability_id: input.capability_id, arguments: input.arguments }).path;
+  assertInterpretedModelEffect(snapshot, suggestedEffect, admissionPath);
   if (suggestedEffect === "apply" && !advisoryVerificationV2(snapshot) && snapshot.spec.work_plan_required && !snapshot.work_plan)
     throw new Error("assignment_kernel_v2_declare_work_plan_before_apply");
-  if (suggestedEffect === "apply" && requestIdentity({ capability_id: input.capability_id, arguments: input.arguments }).path === "/revit/export-elements-xlsx"
+  if (suggestedEffect === "apply" && admissionPath === "/revit/export-elements-xlsx"
       && !authorizedArtifactExportPath(snapshot.spec.source_user_request, "/revit/export-elements-xlsx")) {
     throw new Error("assignment_kernel_v2_explicit_workbook_export_authority_required");
   }
   if (suggestedEffect === "apply" && !validBoundOperationScope(snapshot.spec) && isExplicitNoWriteRequest(snapshot.spec.source_user_request)
-      && !authorizedArtifactExportPath(snapshot.spec.source_user_request, requestIdentity({ capability_id: input.capability_id, arguments: input.arguments }).path)) {
+      && !authorizedArtifactExportPath(snapshot.spec.source_user_request, admissionPath)) {
     throw new Error("assignment_kernel_v2_user_no_model_write_limit");
   }
   const targetTokens = [...new Set((input.target_tokens ?? []).map(String).filter(Boolean))].sort();
@@ -715,6 +721,11 @@ function commitInput(
 ): ObservationCommitInputV2 | undefined {
   if (!result.observation_required) return undefined;
   if (!envelope.observation) throw new Error("assignment_kernel_v2_observation_payload_missing");
+  if (result.native_lifecycle_receipt !== undefined) {
+    const raw = envelope.observation.raw_payload as Record<string, unknown>;
+    if (canonicalJsonV2(raw?.lifecycle_receipt ?? null) !== canonicalJsonV2(result.native_lifecycle_receipt))
+      throw new Error("assignment_kernel_v2_lifecycle_receipt_payload_mismatch");
+  }
   if (result.native_artifact_receipt !== undefined) {
     const raw = envelope.observation.raw_payload;
     const receipt = raw && typeof raw === "object" && !Array.isArray(raw)

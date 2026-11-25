@@ -5090,13 +5090,22 @@ async function syncComputerState() {
   // computer relay must not enable Send/disable Stop during that run.
   if (state.activeRunKind === "backend") return;
   if (sessionId !== state.sessionId || epoch !== state.taskNavigationEpoch) return;
-  if (state.computerSubmissionMessageId && !computerStateIncludesSubmittedMessage(payload, state.computerSubmissionMessageId)) return;
+  const submittedTurn = !!state.computerSubmissionMessageId
+    && computerStateIncludesSubmittedMessage(payload, state.computerSubmissionMessageId);
+  if (state.computerSubmissionMessageId && !submittedTurn) return;
   if (selectedAssignmentId !== state.taskNavigationAssignmentId
       || savedBinding && savedBinding.assignment_id !== selectedAssignmentId) return;
   if (savedBinding && (!computerStateMatchesTask(payload, savedBinding, sessionId)
       || !computerStateMatchesTask(payload, selectedGoal()?._bindingV2, sessionId))) return;
-  if (!savedBinding && sessionId && payload.backendSessionId !== sessionId) return;
-  state.computerSubmissionMessageId = "";
+  if (!savedBinding && sessionId && payload.backendSessionId !== sessionId && !submittedTurn) return;
+  // Native context/authorization refresh can replace a provisional backend
+  // session before Assignment admission. Keep the submitted-message correlation
+  // until the canonical binding exists (or startup stops); otherwise subsequent
+  // polls reject the real task as foreign and the UI stays busy forever.
+  // Opened saved tasks still require their exact binding above. This observer
+  // transition neither dispatches work nor grants completion/control authority.
+  const awaitingAdmission = submittedTurn && payload.running && !payload.assignmentBindingV2;
+  if (!awaitingAdmission) state.computerSubmissionMessageId = "";
   const copy = payload.checkedProjectCopy;
   const checkedProjectCopy = payload.running && computerStateMatchesTask(payload, copy?.binding, sessionId)
     ? copy.message : null;
@@ -5107,6 +5116,8 @@ async function syncComputerState() {
   applyDesktopPreviewCaptureState("state", !!payload.desktopCaptureSuppressed);
   const certifiedReadFixture = certifiedReadComputerStateFixture(state.certifiedReadUi, payload);
   const signature = JSON.stringify({
+    backendSessionId: payload.backendSessionId,
+    assignmentBindingV2: payload.assignmentBindingV2,
     running: payload.running,
     error: payload.error,
     messages: payload.messages,
@@ -5145,7 +5156,7 @@ async function syncComputerState() {
     state.computerEvents = mergeActivityEvents(state.computerEvents, payload.events);
     // A freshly restarted Sidecar has no computer-run session yet. Preserve
     // the durable conversation/assignment binding restored from local storage.
-    if (`${payload.backendSessionId || ""}`.trim() && (payload.running || state.activeRunKind === "computer")) {
+    if (!awaitingAdmission && `${payload.backendSessionId || ""}`.trim() && (payload.running || state.activeRunKind === "computer")) {
       setSession(payload.backendSessionId);
     }
     renderMessages();

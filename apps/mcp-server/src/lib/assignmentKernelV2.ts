@@ -13,6 +13,7 @@ import {
   MAX_NATIVE_AFFECTED_TARGETS_V2,
   isNativeAffectedTargetIdentityV2,
   nativeArtifactReceiptEffectV1,
+  nativeLifecycleReceiptEffectV1,
   nativeArtifactResultEffectV2,
   assignmentKernelControlEvidenceFactsV2,
   isAssignmentKernelDurableControlEvidenceProducerV2
@@ -893,7 +894,15 @@ function operationResultForCall(call: NativeCall, transportFailed: boolean): Rec
       || settlement.effect_reason !== (artifactEffect === "applied" ? "native_artifact_export_completed" : "native_artifact_export_not_started"))) {
     throw new Error("assignment_kernel_v2_native_artifact_settlement_conflict");
   }
-  const nativeTransactionState = artifactEffect !== null ? "not_applicable" : persistentEffect === "applied" ? "committed"
+  const lifecycleReceipt = object(call.observation_payload).lifecycle_receipt;
+  const lifecycleEffect = !transportFailed && dispatched
+    ? nativeLifecycleReceiptEffectV1(lifecycleReceipt, call.method, call.path, call.lease.requested_effect) : null;
+  if (lifecycleReceipt !== undefined && persistentEffect === "applied" && lifecycleEffect === null)
+    throw new Error("assignment_kernel_v2_native_lifecycle_receipt_invalid");
+  if (lifecycleEffect !== null && (persistentEffect !== lifecycleEffect || settlement.effect_authority !== "native_receipt"
+      || settlement.effect_reason !== "native_lifecycle_returned"))
+    throw new Error("assignment_kernel_v2_native_lifecycle_settlement_conflict");
+  const nativeTransactionState = artifactEffect !== null || lifecycleEffect !== null ? "not_applicable" : persistentEffect === "applied" ? "committed"
     : persistentEffect === "unknown" ? "unknown"
       : confirmedNativeRollback
         ? "rolled_back" : confirmedNativePreflight ? "not_started" : "not_applicable";
@@ -931,6 +940,7 @@ function operationResultForCall(call: NativeCall, transportFailed: boolean): Rec
     persistent_effect: persistentEffect,
     native_transaction_state: nativeTransactionState,
     ...(artifactEffect !== null ? { native_artifact_receipt: structuredClone(artifactReceipt) } : {}),
+    ...(lifecycleEffect !== null ? { native_lifecycle_receipt: structuredClone(lifecycleReceipt) } : {}),
     authority: "native-host",
     result_schema_id: resultSchemaId,
     observation_required: !transportFailed,

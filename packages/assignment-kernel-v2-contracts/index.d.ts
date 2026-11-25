@@ -155,3 +155,5 @@ export * from "./native-continuation.js";
 export * from "./schedule-filter-state.js";
 
 export function isDetachedFamilyLabelEditV2(method: unknown, path: unknown): boolean;
+
+export * from "./native-lifecycle.js";

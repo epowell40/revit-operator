@@ -14,6 +14,9 @@ const retainedPostPaths = [
   "/revit/connect-existing-mep-branch",
   "/revit/set-parameter",
   "/revit/assign-electrical-circuit",
+  "/revit/sync",
+  "/revit/link-revit",
+  "/revit/link-cad",
   "/tools/redline/verify-visual",
   "/tools/mep/semantic-route-plan"
 ];
@@ -30,7 +33,6 @@ const excludedPaths = [
   "/revit/propose-fix",
   "/revit/adjust-hosted-instance-on-host",
   "/revit/low-voltage-layout",
-  "/revit/link-revit",
   "/revit/audit-electrical-circuit-loading",
   "/revit/resize-ductwork-by-scope",
   "/revit/repair-duct-continuity-by-scope",
@@ -70,7 +72,7 @@ test("supported branch connection still requires inclusion in the caller's scope
 
 test("promoted spatial and native circuit primitives still require the caller's scoped allowlist", () => {
   const restricted = { GET: new Set<string>(), POST: new Set(["/revit/get-connectors"]) };
-  for (const path of ["/revit/locate-elements", "/revit/assign-electrical-circuit"]) {
+  for (const path of ["/revit/locate-elements", "/revit/assign-electrical-circuit", "/revit/sync", "/revit/link-revit", "/revit/link-cad"]) {
     assert.equal(isAllowlisted("POST", path, restricted), false);
     assert.equal(isAllowlisted("GET", path, { GET: new Set([path]), POST: new Set([path]) }), false);
     assert.deepEqual(filterAllowlistedActions([{ action_id: "restricted", method: "POST", path, body: {} }], restricted), []);

@@ -22,7 +22,7 @@ test('actual registered C# executor contract reaches owner through bounded docum
   assert.equal(missing.success,false);assert.equal(missing.payload.authorizationGranted,false);
   const raw=listed.find(t=>t.name==='operator_run_dynamic_revit_program');assert(raw?.description);
   assert(Buffer.byteLength(JSON.stringify({'tool.description':raw.description}),'utf8')<8192,'The exact top-level guide must fit one existing evidence selection');
-  assert.match(raw.description,/native_program/);assert.match(raw.description,/tool\.inputSchema\.properties\.source/);
+  assert.match(raw.description,/native_program/);assert.match(raw.description,/public static string Execute\(Autodesk\.Revit\.DB\.Document doc\)/);
   assert.match(raw.description,/GetType\(\)\.Name/);assert.match(raw.description,/UniqueId/);assert.match(raw.description,/coincident/);
   const tool={name:raw.name,description:raw.description,inputSchema:raw.inputSchema,deferLoading:true};
   const models=desktopNativeModelTools([tool]);assert(models.some(t=>t.name==='native__describe_tool'));
@@ -31,7 +31,9 @@ test('actual registered C# executor contract reaches owner through bounded docum
   assert.deepEqual(primary.parameters,raw.inputSchema,'the primary tool receives the exact current schema, not a parallel dictionary');
   assert.equal(primary.description,raw.description);
   const contract=desktopNativeToolContract([tool],{tool:tool.name});
-  assert.match(contract.tool.description,/IDynamicRevitProgram/);assert.match(contract.tool.description,/c\.Input\.Coverage/);
+  assert.match(contract.tool.description,/native_program\.effect_scope="active_document"/);
+  assert.match(contract.tool.description,/mode:"read"/);assert.match(contract.tool.description,/mode:"apply"/);
+  for(const retired of ['category','parameters','snapshot_limit','operation_budget'])assert(!Object.hasOwn(raw.inputSchema.properties??{},retired),retired+' must not compete with native C#');
   const scope={session_id:'s',assignment_id:'a',run_id:'r',generation:1};
   const output=boundDesktopNativeOutput({success:true,contentItems:[{type:'inputText',text:JSON.stringify(contract)}]},scope,'contract');
   const text=(output.contentItems[0] as any).text,visible=JSON.parse(text);
@@ -40,11 +42,11 @@ test('actual registered C# executor contract reaches owner through bounded docum
    const projection=visible.evidence_projections[0];assert.equal(projection.trust_level,'untrusted_caller');assert.equal(projection.truncated,true);
    const retrieve=(fields:string[])=>retrieveEvidence({scope,evidence_id:projection.evidence_id,fields,max_bytes:8192,purpose:'Read exact current executor contract'});
    const guide=retrieve(['tool.description']);assert.equal((guide.selection as any)['tool.description'],raw.description);
-   const fields=['tool.inputSchema.required','tool.inputSchema.properties.source','tool.inputSchema.properties.mode','tool.inputSchema.properties.category','tool.inputSchema.properties.parameters','tool.inputSchema.properties.snapshot_limit'];
+   const fields=['tool.inputSchema.required','tool.inputSchema.properties.source','tool.inputSchema.properties.mode','tool.inputSchema.properties.target_revit_year'];
    const selected=retrieve(fields).selection as any;assert.deepEqual(selected['tool.inputSchema.properties.source'],raw.inputSchema.properties?.source);
    assert.deepEqual(selected['tool.inputSchema.properties.mode'],raw.inputSchema.properties?.mode);
-   assert.deepEqual(selected['tool.inputSchema.properties.snapshot_limit'],raw.inputSchema.properties?.snapshot_limit);
-   assert.match(JSON.stringify(selected['tool.inputSchema.properties.source']),/DynamicMepConnectorSelectorV1/,'Advanced SDK detail remains separately retrievable, not removed');
+   assert.deepEqual(selected['tool.inputSchema.properties.target_revit_year'],raw.inputSchema.properties?.target_revit_year);
+   assert.match(JSON.stringify(selected['tool.inputSchema.properties.source']),/Execute/,'Native C# entry contract remains retrievable');
    const native=retrieve(['tool.inputSchema.properties.native_program']).selection as any;
    assert.deepEqual(native['tool.inputSchema.properties.native_program'],raw.inputSchema.properties?.native_program);
    assert.throws(()=>retrieveEvidence({scope:{...scope,generation:2},evidence_id:projection.evidence_id,fields:['tool.description'],purpose:'Stale scope'}));

@@ -28,7 +28,7 @@ usage separately from any ChatGPT subscription.
 5. Double-click **Start-OpenCore.cmd**. It starts the authenticated loopback-only
    backend and launches Revit with the matching local configuration. If Revit asks
    about the locally built RevitOperator add-in, review it and choose **Always Load**.
-6. Open a disposable model, then choose **RevitOperator → Operator** on the ribbon. The current conversation interface opens inside Revit, with New Chat, Tasks, and Settings. Start with a read-only
+6. Open a disposable model, then choose **RevitOperator → Operator** on the ribbon. The conversation interface opens with New Chat, Tasks, and Settings. Revit 2023–2025 use a separate Operator window; newer versions retain the configured docked interface. Start with a read-only
    request such as “What model and view are open?” before trying model changes.
 
 Keep the extracted folder: the add-in runs from its build output. Do not move or
@@ -54,7 +54,13 @@ the latter contains local task records and setup recovery information.
 
 ## What is included
 
-The ribbon opens the shared Operator interface **inside Revit**. To put the same
+The ribbon opens the shared Operator interface. Revit 2023–2025 use a separate
+window because their embedded Chromium runtime can conflict with current
+WebView2 releases during model close, Home, and Manage Links transitions.
+This preserves the same agent, tools, task history, and normal write access;
+it does not change Windows settings or downgrade the browser runtime.
+See [Autodesk's browser compatibility notice](https://www.autodesk.com/support/technical/article/caas/sfdcarticles/sfdcarticles/Program-crash-on-certain-machines-when-opening-the-Manage-Links-dialog-in-Revit.html).
+Newer Revit versions retain the configured docked interface. To put that same
 interface in a separate browser window, use **Open-Operator-Window.cmd** after
 Start. Both views use the same local runtime and tasks; a second agent is not
 started. The older native interface is no longer the standalone default.

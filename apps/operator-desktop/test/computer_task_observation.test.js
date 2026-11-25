@@ -2,11 +2,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {runInNewContext} from 'node:vm';
-import {computerStateMatchesTask} from '../public/task_navigation.mjs';
+import {computerStateMatchesTask,computerStateIncludesSubmittedMessage} from '../public/task_navigation.mjs';
 import {savedComputerBinding} from '../saved_computer_assignment.mjs';
 const app=fs.readFileSync(new URL('../public/app.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
 const start=app.indexOf('async function syncComputerState('),end=app.indexOf('\n}\n',start)+2;
 const binding={assignment_id:'task',session_id:'session',run_id:'run',generation:1};
+test('submission correlation survives native-context session replacement, but never a foreign or malformed publication',()=>{
+ const messages=[{id:'clicked-once',role:'user'}];
+ assert.equal(computerStateIncludesSubmittedMessage({backendSessionId:'provisional',assignmentBindingV2:null,messages},'clicked-once'),true);
+ assert.equal(computerStateIncludesSubmittedMessage({backendSessionId:'session',assignmentBindingV2:binding,messages},'clicked-once'),true);
+ for(const row of [{backendSessionId:'session',assignmentBindingV2:binding,messages:[{id:'other',role:'user'}]},
+  {backendSessionId:'session',assignmentBindingV2:{...binding,session_id:'foreign'},messages},
+  {backendSessionId:'session',assignmentBindingV2:{...binding,generation:0},messages},
+  {backendSessionId:'session',assignmentBindingV2:binding,messages:[{id:'clicked-once',role:'assistant'}]}])
+  assert.equal(computerStateIncludesSubmittedMessage(row,'clicked-once'),false);
+});
 test('relay publishes only the existing V2 task identity, never executor internals',()=>{
  const server=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
  const i=server.indexOf('function browserComputerAssignmentBinding('),j=server.indexOf('\n}\n',i)+2;
@@ -46,6 +56,17 @@ test('live copy reaches the current conversation only and is cleared on settleme
 });
 test('foreign or cold relay never replaces selected history',async()=>{
  for(const p of [{...payload(),assignmentBindingV2:{...binding,run_id:'other'}},{...payload(),assignmentBindingV2:null},{...payload(),backendSessionId:'foreign'}]){const h=harness(p);await h.sync();assert.equal(h.counts().renders,0);assert.equal(h.state.computerMessages.length,0);}
+});
+test('pending message correlation cannot override an explicitly opened saved task binding',async()=>{
+ const p={...payload(false),backendSessionId:'new',assignmentBindingV2:{...binding,session_id:'new'},messages:[{role:'user',id:'pending'}]};
+ const h=harness(p);h.state.computerSubmissionMessageId='pending';
+ // This branch previously had no pending submission in the harness.
+ // Run the actual matching helper at the same consumer boundary.
+ const original=app.slice(start,end);
+ let renders=0;
+ const sync=runInNewContext(original+';syncComputerState',{state:h.state,selectedGoal:()=>({_bindingV2:binding}),
+  fetchJsonWithTimeout:async()=>p,computerStateMatchesTask,computerStateIncludesSubmittedMessage,renderMessages(){renders++;}});
+ await sync();assert.equal(renders,0);assert.equal(h.state.sessionId,'session');
 });
 test('navigation and backend ownership prevent late relay adoption',async()=>{
  for(const change of [s=>s.taskNavigationEpoch++,s=>s.sessionId='other',s=>s.taskNavigationAssignmentId='other',(_s,g)=>g._bindingV2={...binding,generation:2},s=>s.activeRunKind='backend']){const h=harness(payload(),change);await h.sync();assert.equal(h.counts().renders,0);}

@@ -31,16 +31,10 @@ const certifiedSafeNonRevitAliases = [
   "operator_evaluate_assignment_criteria",
   "operator_manage_work_plan",
   "operator_request_assignment_input",
-  "operator_plan_semantic_mep_route",
-  "operator_plan_existing_conditions_duct_continuation",
-  "operator_register_existing_conditions_interpretation",
-  "operator_resume_existing_conditions_registration",
-  "operator_record_execution_strategy",
   "operator_request_clarification",
   "operator_retrieve_evidence",
   "operator_submit_noop_completion",
   "operator_submit_read_completion",
-  "operator_validate_existing_conditions_interpretation",
   "operator_runtime_probe",
   "read_excel",
   "read_pdf_text",
@@ -175,7 +169,7 @@ test("MCP tools/list opens the legacy catalog only for exact raw development lab
   });
   assert.deepEqual(laboratoryNames, [...SUPPORTED_MCP_ALIASES].sort(), "Exact laboratory exposure must match every reviewed supported alias; counts alone can hide a missing alias paired with an unintended one.");
   assert.equal(laboratoryNames.includes("revit_observe_model"), true, "Laboratory mode must expose the typed spatial observation alias.");
-  assert.equal(laboratoryNames.includes("operator_record_execution_strategy"), true, "Laboratory mode must expose non-authorizing strategy evidence.");
+  assert.equal(laboratoryNames.includes("operator_record_execution_strategy"), false, "Retired strategy declaration must not compete with native C#.");
   assert.equal(laboratoryNames.includes("operator_run_dynamic_revit_program"), true, "Laboratory mode must expose the gated Dynamic Runtime launcher.");
 
   assert.equal(laboratoryNames.includes("write_excel"), false, "Unsettled legacy workbook writer is not advertised as executable.");
@@ -413,6 +407,12 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   assert.equal(names.has("revit_observe_model"), true, "Laboratory tools/list must include the typed spatial observation alias.");
   // Retirement must remove discovery and executable aliases before either transport.
   const retiredPrototypeAliases = [
+    "operator_plan_existing_conditions_duct_continuation",
+    "operator_plan_semantic_mep_route",
+    "operator_record_execution_strategy",
+    "operator_register_existing_conditions_interpretation",
+    "operator_resume_existing_conditions_registration",
+    "operator_validate_existing_conditions_interpretation",
     "revit_place_vavs", "revit_run_thermal_zoning", "revit_run_load_calc", "revit_run_code_check", "write_excel"
   ];
   const requestsBeforeRetiredCalls = { backend: backendRequests, bridge: bridgeRequests.length };
@@ -420,7 +420,7 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
     assert.equal(names.has(name), false, `Retired prototype must not be advertised: ${name}`);
     const denied = await withTimeout(client.callTool({ name, arguments: { query: "Level 1", levelName: "Level 1" } }), `rejecting retired alias ${name}`);
     assert.equal(denied.isError, true);
-    assert.match(JSON.stringify(denied.content), /not found/i);
+    assert.match(JSON.stringify(denied.content), /not found|disabled/i);
   }
   assert.deepEqual({ backend: backendRequests, bridge: bridgeRequests.length }, requestsBeforeRetiredCalls,
     "Retired aliases must fail before backend or native transport, without fallback execution.");
@@ -430,19 +430,14 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   assert.equal(names.has("titleblock_update_text"), false, "Laboratory mode cannot restore an excluded composite alias.");
   for (const name of [
     "operator_runtime_probe",
-    "operator_plan_semantic_mep_route",
-    "operator_register_existing_conditions_interpretation",
-    "operator_resume_existing_conditions_registration",
-    "operator_record_execution_strategy",
-    "operator_request_clarification",
+            "operator_request_clarification",
     "operator_evaluate_assignment_criteria",
     "operator_manage_work_plan",
     "operator_request_assignment_input",
     "operator_retrieve_evidence",
     "operator_submit_noop_completion",
     "operator_submit_read_completion",
-    "operator_validate_existing_conditions_interpretation",
-    "operator_run_dynamic_revit_program",
+      "operator_run_dynamic_revit_program",
     "revit_list_schedules",
     "revit_get_parameters",
     "revit_count_sheets_certified",
@@ -451,44 +446,19 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   ]) {
     assert.equal(names.has(name), true, `Missing MCP tool: ${name}`);
   }
-  const interpretationSchema = tools.tools.find(tool => tool.name === "operator_validate_existing_conditions_interpretation")!.inputSchema as any;
-  const directionSchema = interpretationSchema.properties.response.properties.primitives.items.properties.endpoints.items.properties.outward_direction_uv;
-  assert.equal(directionSchema.type, "array");
-  assert.equal(directionSchema.minItems, 2);
-  assert.equal(directionSchema.maxItems, 2);
-  assert.equal(directionSchema.items.type, "number", "MCP transport must not publish tuple items that Codex rejects at thread start");
-  const registrationSchema = tools.tools.find(tool => tool.name === "operator_register_existing_conditions_interpretation")!.inputSchema as any;
-  const gridIdsSchema = registrationSchema.properties.controls.items.properties.nativeGridElementIds;
-  assert.equal(gridIdsSchema.type, "array");
-  assert.equal(gridIdsSchema.minItems, 2);
-  assert.equal(gridIdsSchema.maxItems, 2);
-  assert.equal(gridIdsSchema.items.type, "integer", "The actual MCP tools/list schema must be accepted by Codex dynamic tools");
-  const handoffSchema = tools.tools.find(tool => tool.name === "operator_resume_existing_conditions_registration")!.inputSchema as any;
-  assert.equal(handoffSchema.properties.originRegistrationEvidenceId.type, "string");
-  assert.equal(handoffSchema.properties.currentLandmarkObservationId.type, "string");
   const sheetTool = tools.tools.find(tool => tool.name === "revit_list_sheets");
   const retrievalTool = tools.tools.find(tool => tool.name === "operator_retrieve_evidence")!;
   assert.match(retrievalTool.description!, /pagination.next_start/);
   assert.match(retrievalTool.description!, /projection.key_counts/);
   assert.match(retrievalTool.description!, /missing_fields/);
   const generatedTool = tools.tools.find(tool => tool.name === "operator_run_dynamic_revit_program")!;
-  // The primary native contract fits one bounded selection. Complete legacy
-  // examples remain reachable through the actual source-property description.
-  const sdkDescription=String((generatedTool.inputSchema as any).properties.source.description??'');
+  const nativeSchema=generatedTool.inputSchema as any;
   assert(Buffer.byteLength(JSON.stringify({'tool.description':generatedTool.description}),'utf8')<8192);
   assert.match(generatedTool.description!, /public static string Execute\(Autodesk.Revit.DB.Document doc\)/);
-  assert.match(generatedTool.description!, /tool\.inputSchema\.properties\.source/);
-  assert.match(generatedTool.description!, /IDynamicRevitProgram/);
-  assert.match(generatedTool.description!, /DynamicProgramResult Execute\(DynamicRevitContext c\)/);
-  assert.match(sdkDescription, /category=OST_DuctCurves/);
-  assert.match(sdkDescription, /public sealed class SampleReport/);
-  assert.match(generatedTool.description!, /print text\(result\): do not assume result\.content/);
-  assert.match(generatedTool.description!, /Leave operation_budget at default normally/);
-  assert.match(sdkDescription, /snapshot_limit is 1\.\.4096 for read and 1\.\.1000 for preview\/apply/);
-  assert.match(generatedTool.description!, /path:\["report","Inspected"\]/);
-  assert.match(sdkDescription, /prioritized assessment with evidence_indices/);
-  assert.match(sdkDescription, /Missing parameter keys do not establish missing model relationships/);
-  assert.equal((generatedTool.inputSchema as any).properties.snapshot_limit.maximum, 4096);
+  assert.deepEqual(nativeSchema.properties.mode.enum,['read','apply']);
+  assert(nativeSchema.required.includes('native_program'));
+  for(const field of ['category','snapshot_limit','result_reference','continue_from_checkpoint','resume','operation_budget'])
+    assert.equal(nativeSchema.properties[field],undefined,field+' must not present a competing graph/snapshot lane');
   assert.equal((generatedTool.inputSchema as any).properties.native_program.properties.parameter_checks.maxItems,64);
   for(const parameter_checks of [[],[{element_id:0,parameter_name:'Author',expected_value:'Checked'}],
     [{element_id:42,parameter_name:'Author',expected_value:3}],
@@ -497,18 +467,14 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
       native_program:{entry_type:'Edit',effect_scope:'active_document',parameter_checks}}});
     assert.equal(denied.isError,true);assert.match(JSON.stringify(denied.content),/Input validation error/);
   }
-  for (const limit of [0, 4097, 5000, 1.5]) {
-    const denied = await client.callTool({ name: generatedTool.name,
-      arguments: { mode: "read", source: "public class Program {}", category: "OST_DuctCurves", snapshot_limit: limit } });
-    assert.equal(denied.isError, true);
-    assert.match(JSON.stringify(denied.content), /Input validation error/);
-    assert.match(JSON.stringify(denied.content), /snapshot_limit/);
+  for(const args of [
+    {mode:'read',source:'public class Legacy {}'},
+    {mode:'preview',source:'public class Program {}',native_program:{entry_type:'Program'}},
+    {mode:'apply',source:'public class Program {}',native_program:{entry_type:'Program',deadline_ms:10001}}
+  ]) {
+    const denied=await client.callTool({name:generatedTool.name,arguments:args});
+    assert.equal(denied.isError,true);assert.match(JSON.stringify(denied.content),/Input validation error/);
   }
-  const invalidGenerated = await client.callTool({ name: generatedTool.name,
-    arguments: { mode: "read", source: "public class Program {}", category: "duct sample summary by type" } });
-  assert.equal(invalidGenerated.isError, true);
-  assert.match(JSON.stringify(invalidGenerated.content), /category/);
-  assert.match(JSON.stringify(invalidGenerated.content), /Input validation error/);
   const safeReadTool = tools.tools.find(tool => tool.name === "revit_count_sheets_certified");
   const getParametersTool = tools.tools.find(tool => tool.name === "revit_get_parameters");
   const findTextNotesTool = tools.tools.find(tool => tool.name === "revit_find_text_notes");
@@ -739,9 +705,9 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
       name: "operator_plan_semantic_mep_route",
       arguments: { userText: "Extend piping from the main to that sink.", [writeControl]: true }
     }), `rejecting semantic ${writeControl} control`);
-    assert.equal((result as any).isError, true, `${writeControl} must be rejected as an MCP InvalidParams input error.`);
+    assert.equal((result as any).isError, true, `${writeControl} must not re-enable a retired planner.`);
     const text = (result as any).content.map((item: any) => item.text ?? "").join("\n");
-    assert.match(text, /Input validation error: Invalid arguments for tool operator_plan_semantic_mep_route/i);
+    assert.match(text, /not found|disabled/i);
   }
   assert.equal(backendRequests, 0, "Invalid semantic planner controls must be rejected before any backend fetch.");
 });
@@ -967,14 +933,14 @@ test("compiled MCP forwards a request-scoped principal JWT to completion without
     arguments: { userText: "Route one bounded branch." },
     _meta: authMeta
   }), "planning a principal-authenticated semantic route through compiled MCP");
-  assert.equal((semantic as any).isError, undefined, stderr.join(""));
+  assert.equal((semantic as any).isError, true);
+  assert.match(JSON.stringify(semantic.content), /not found|disabled/i);
 
   assert.deepEqual(requests.map(request => request.path), [
     "/api/assignments/read-completion-claims",
     "/evidence/retrieve",
     "/evidence/retrieve",
-    "/evidence/retrieve",
-    "/tools/mep/semantic-route-plan"
+    "/evidence/retrieve"
   ]);
   assert.deepEqual(JSON.parse(requests[1]!.body).fields, ["count"]);
   assert.equal(Object.prototype.hasOwnProperty.call(JSON.parse(requests[1]!.body), "target_subset"), false);

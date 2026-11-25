@@ -28,6 +28,9 @@ namespace RevitBridge.Operator
         private static bool LauncherPathPreloadComplete;
         private static int LauncherPathRefreshQueued;
         private static int ShuttingDown;
+        private static string HostVersion = "";
+        internal static bool SupportsEmbeddedBrowser => OperatorBrowserCompatibility.SupportsEmbeddedBrowser(HostVersion);
+        internal static void ConfigureHostVersion(string version) => HostVersion = version ?? "";
         private static readonly ManualResetEventSlim LauncherPathInitialRefreshCompleted = new ManualResetEventSlim(false);
 
         static OperatorDesktopLauncher()
@@ -37,6 +40,7 @@ namespace RevitBridge.Operator
 
         public static bool UseLegacyPane()
         {
+            if (!SupportsEmbeddedBrowser) return false;
             var mode = ReadSetting("OPERATOR_UI_MODE");
             if (string.Equals(mode, "pane", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(mode, "native", StringComparison.OrdinalIgnoreCase)
@@ -49,7 +53,7 @@ namespace RevitBridge.Operator
         }
 
         public static bool UseEmbeddedPane()
-            => string.Equals(ReadSetting("OPERATOR_UI_MODE").Trim(), "embedded", StringComparison.OrdinalIgnoreCase);
+            => SupportsEmbeddedBrowser && string.Equals(ReadSetting("OPERATOR_UI_MODE").Trim(), "embedded", StringComparison.OrdinalIgnoreCase);
 
         public static Task<Uri> LaunchEmbeddedAsync(CancellationToken cancellationToken)
             => Task.Run(() =>

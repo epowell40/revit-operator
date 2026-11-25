@@ -35,4 +35,22 @@ test('large late-completion semantics keep the same exact request and effect che
     const changed=structuredClone(completion);mutate(changed);assert.equal(nativeCompletionReconciliationEffectV1(changed,operation),null);
   }
   assert.equal(operation.result.persistent_effect,'unknown','pure check never clears a historical result');
+  const lifecycle=structuredClone(completion),lifecycleOperation=structuredClone({...operation,input:{body:{action:'reload'}}});
+  lifecycleOperation.request_identity.path='/revit/link-revit';
+  lifecycleOperation.result.request_identity.path='/revit/link-revit';
+  lifecycle.dispatch.identity.request_identity.path='/revit/link-revit';
+  lifecycle.dispatch.native.path='/revit/link-revit';
+  lifecycle.receipt.request.path='/revit/link-revit';
+  lifecycle.proof.canonical_attempt_settlement.path='/revit/link-revit';
+  lifecycle.receipt.document.document_session_id='1'.repeat(32);
+  lifecycle.receipt.document.after_document_session_id='1'.repeat(32);
+  delete lifecycle.proof.transaction;
+  lifecycle.proof.lifecycle_receipt={schema:'revit-operator.native-lifecycle.v1',path:'/revit/link-revit',action:'reload',document_session_id:'1'.repeat(32),
+    native_call_attempted:true,native_call_returned:true,transaction_ownership:'revit_api',status:'returned'};
+  Object.assign(lifecycle.proof.canonical_attempt_settlement,{effect_authority:'native_receipt',effect_reason:'native_lifecycle_returned'});
+  assert.equal(nativeCompletionReconciliationEffectV1(lifecycle,lifecycleOperation),'applied');
+  for(const mutate of [p=>p.proof.lifecycle_receipt.native_call_returned=false,p=>p.proof.lifecycle_receipt.action='load',
+    p=>p.proof.lifecycle_receipt.document_session_id='2'.repeat(32),p=>p.receipt.request.source_body_sha256='sha256:'+'f'.repeat(64)]){
+    const changed=structuredClone(lifecycle);mutate(changed);assert.equal(nativeCompletionReconciliationEffectV1(changed,lifecycleOperation),null);
+  }
 });

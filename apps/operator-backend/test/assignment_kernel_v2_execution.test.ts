@@ -4235,3 +4235,26 @@ for(const variant of ['connected','broken','incomplete-footprint','connected-pee
   assert(!Object.values(settled.snapshot.operations[read.operation_id]!.target.semantic_scope??{}).includes('id:30'),'Related peer is retained input, not a principal verification target');
   assert.deepEqual(settled.observation!.facts.filter(f=>f.fact_id==='verification.deliverable_target_identities').map(f=>f.value),[['element_id:20']]);}
 }));
+
+test('native lifecycle effect survives replay without inventing transaction or task completion', () => {
+ for(const variant of ['valid','wrong_action','wrong_raw','unreturned']) workspace(() => {
+  const {goal,snapshot}=setup('apply'),route='/revit/sync';
+  const receipt:any={schema:'revit-operator.native-lifecycle.v1',path:route,action:'reload_latest',document_session_id:'1'.repeat(32),
+   native_call_attempted:true,native_call_returned:true,transaction_ownership:'revit_api',status:'returned'};
+  const apply=openAssignmentKernelOperationV2({snapshot,controller_request_id:'lifecycle',provider_turn_id:'lifecycle-turn',
+   capability_id:'revit_call_tool',classified_effect:'apply',arguments:{method:'POST',path:route,body:{action:'reload_latest'}}});
+  markAssignmentKernelOperationDispatchStartedV2(apply);
+  if(variant==='wrong_action')receipt.action='sync';
+  if(variant==='unreturned')receipt.native_call_returned=false;
+  const raw=structuredClone(receipt);if(variant==='wrong_raw')raw.document_session_id='2'.repeat(32);
+  const commit=envelope(apply.operation_id,apply.binding,{status:'Success',lifecycle_receipt:raw},'applied');
+  Object.assign(commit.structuredContent.operation_result_v2,{native_transaction_state:'not_applicable',native_lifecycle_receipt:receipt,
+    result_schema_id:'operator-native/POST:'+route+'/v2',affected_target_identities:[]});
+  if(variant!=='valid'){assert.throws(()=>settleAssignmentKernelOperationV2(apply,commit),/lifecycle/);return;}
+  settleAssignmentKernelOperationV2(apply,commit);__testOnlyResetGoalListCache();
+  const state=getAssignmentKernelSnapshotV2(goal.id)!;
+  assert.equal(state.operations[apply.operation_id]!.persistent_effect,'applied');
+  assert.equal(state.operations[apply.operation_id]!.result!.native_transaction_state,'not_applicable');
+  assert.notEqual(state.outcome,'complete');
+ });
+});

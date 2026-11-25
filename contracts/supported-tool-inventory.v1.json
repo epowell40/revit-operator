@@ -493,25 +493,27 @@
     {
       "method": "POST",
       "path": "/revit/inspect-vector-detail"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/sync"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/link-revit"
     }
   ],
   "mcp_aliases": [
     "operator_discover_capabilities",
     "operator_evaluate_assignment_criteria",
     "operator_manage_work_plan",
-    "operator_plan_existing_conditions_duct_continuation",
-    "operator_plan_semantic_mep_route",
-    "operator_record_execution_strategy",
-    "operator_register_existing_conditions_interpretation",
     "operator_request_assignment_input",
     "operator_request_clarification",
-    "operator_resume_existing_conditions_registration",
     "operator_retrieve_evidence",
     "operator_run_dynamic_revit_program",
     "operator_runtime_probe",
     "operator_submit_noop_completion",
     "operator_submit_read_completion",
-    "operator_validate_existing_conditions_interpretation",
     "read_excel",
     "read_pdf_text",
     "read_word",
@@ -594,7 +596,8 @@
     "web_fetch_evidence",
     "workspace_pdf_merge",
     "workspace_pdf_reorder",
-    "workspace_rename_file"
+    "workspace_rename_file",
+    "revit_sync_model"
   ],
   "internal_routes": [
     {
@@ -703,5 +706,5 @@
       "executor_id": "revit-operator.native-program-workstation.v1"
     }
   ],
-  "evidence_note": "The four certified aliases preserve the existing EPIC-0437 observation/move and standalone SafeRead qualification lanes. Native support must never admit a standalone executor route. Editable PDF vector mutation POST /revit/import-vector-detail is intentionally withheld after live commit-normalization failures213/214. POST /revit/inspect-vector-detail remains available for honest inspection/reconciliation of retained attempts. Source extraction/preparation is not importer qualification."
+  "evidence_note": "The four certified aliases preserve the existing EPIC-0437 observation/move and standalone SafeRead qualification lanes. Native support must never admit a standalone executor route. Editable PDF vector mutation POST /revit/import-vector-detail is intentionally withheld after live commit-normalization failures213/214. POST /revit/inspect-vector-detail remains available for honest inspection/reconciliation of retained attempts. Source extraction/preparation is not importer qualification. C#-first actor: six task-specific planning/strategy aliases retired from product exposure. All123 native routes, native API/MCP aliases,22 internal routes and3 standalone executors are unchanged. Historical planner implementations remain for replay; ordinary C# uses the native read/apply contract."
 }

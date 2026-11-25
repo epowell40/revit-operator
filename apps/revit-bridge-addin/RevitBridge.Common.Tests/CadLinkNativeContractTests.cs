@@ -11,16 +11,33 @@ namespace RevitBridge.Common.Tests
         public void NativeCadUsesValidatedFormatAndKeepsSourceDirectionCorrectionExplicit()
         {
             var source = Read("Handlers", "LinkCadHandler.cs");
+            Assert.Contains("NativeMutationPreflightBoundary.Execute", source);
+            source = source.Substring(source.IndexOf("private static object Execute(", StringComparison.Ordinal));
             Assert.Contains("CadLinkOptionPolicy.SourceFormat(full)", source);
             Assert.Contains("options.AutoCorrectAlmostVHLines = p.autoCorrectAlmostVHLines ?? false", source);
             var sourceHash = source.IndexOf("CadLinkOptionPolicy.RequireExpectedSourceHash(p.expectedSourceSha256, sourceSha256)", StringComparison.Ordinal);
             Assert.True(sourceHash >= 0 && sourceHash < source.IndexOf("NativeSingleTransaction.Execute", StringComparison.Ordinal));
-            Assert.Contains("NativeMutationPreflightBoundary.Execute", source);
             var nativeEntry = source.IndexOf("enterNativeScope();", StringComparison.Ordinal);
             Assert.True(sourceHash < nativeEntry && nativeEntry < source.IndexOf("NativeSingleTransaction.Execute", StringComparison.Ordinal));
             Assert.Contains("FileSha256(full), sourceSha256", source);
             Assert.Contains("[\"autoCorrectAlmostVHLines\"] = options.AutoCorrectAlmostVHLines", source);
             Assert.Contains("[\"sourceFormat\"] = sourceFormat", source);
+        }
+
+        [Fact]
+        public void CadReloadValidatesSourceBeforeItsOwnTransactionAndRetainsNativeReadback()
+        {
+            var source = Read("Handlers", "LinkCadHandler.cs");
+            var start = source.IndexOf("private static object ReloadLink(", StringComparison.Ordinal);
+            var end = source.IndexOf("private static object Execute(", StringComparison.Ordinal);
+            var reload = source.Substring(start, end - start);
+            var tx = reload.IndexOf("NativeSingleTransaction.Execute", StringComparison.Ordinal);
+            Assert.True(tx > reload.IndexOf("CadLinkOptionPolicy.RequireExpectedSourceHash", StringComparison.Ordinal));
+            Assert.True(reload.IndexOf("link.Reload()", StringComparison.Ordinal) > tx);
+            Assert.True(reload.IndexOf("link.LoadFrom(source)", StringComparison.Ordinal) > tx);
+            Assert.Contains("GetLinkedFileStatus()", reload);
+            Assert.Contains("GetAbsolutePath()", reload);
+            Assert.DoesNotContain("NativeLifecycleExecution.Execute", reload);
         }
 
         [Fact]

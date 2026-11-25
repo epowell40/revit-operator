@@ -3178,3 +3178,28 @@ test('root native inspection decoration bounds transport after retaining the com
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("worksharing lifecycle preserves native execution without inventing a transaction", async () => {
+ const route='/revit/sync',body={action:'reload_latest'};
+ const receipt={schema:'revit-operator.native-lifecycle.v1',path:route,action:body.action,document_session_id:'1'.repeat(32),
+ native_call_attempted:true,native_call_returned:true,transaction_ownership:'revit_api',status:'returned'};
+ for(const state of ['returned','unknown','malformed']) {
+  const applied=state!=='unknown';
+  const run=()=>runWithAssignmentKernelV2(meta('apply','work',{method:'POST',path:route,body}),async()=>{
+   const request=await beginAssignmentKernelNativeRequestV2('POST',route,body,{classified_effect:'apply'});
+   await markAssignmentKernelNativeRequestDispatchingV2(request);
+   await recordAssignmentKernelNativeResultV2('POST',route,{
+    status:applied?'Success':'Error',lifecycle_receipt:{...receipt,native_call_returned:state==='returned'},
+    canonical_attempt_settlement:{schema:'revit-operator.native-attempt-settlement.v1',requested_effect:'apply',
+     effect_state:applied?'applied':'unknown',effect_authority:applied?'native_receipt':'native_host',
+     effect_reason:applied?'native_lifecycle_returned':'native_lifecycle_unverified',request_dispatched:true,affected_target_identities:[]}
+   },request);
+   return decorateAssignmentKernelMcpResultV2({content:[]},'revit_call_tool') as any;
+  });
+  if(state==='malformed'){await assert.rejects(run,/lifecycle_receipt_invalid/);continue;}
+  const decorated=await run(),result=decorated.structuredContent.operation_result_v2;
+  assert.equal(result.persistent_effect,applied?'applied':'unknown');
+  assert.equal(result.native_transaction_state,applied?'not_applicable':'unknown');
+  if(applied)assert.deepEqual(result.native_lifecycle_receipt,receipt);
+ }
+});

@@ -745,7 +745,13 @@ namespace RevitBridge.Operator
                 }
                 if (obj.HasValue)
                 {
-                    if (!ValidateOptionalString(obj.Value, "comment", maxLen: 200, out error)) return false;
+                    if (!ValidateOptionalString(obj.Value, "action", maxLen: 24, out error)) return false;
+                    if (obj.Value.TryGetProperty("action", out var syncAction) && syncAction.ValueKind == JsonValueKind.String
+                        && syncAction.GetString() != "sync" && syncAction.GetString() != "reload_latest")
+                    { error = "sync.action must be sync or reload_latest."; return false; }
+                    if (!ValidateOptionalBool(obj.Value, "relinquish", out error)) return false;
+                    if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
+                    if (!ValidateOptionalString(obj.Value, "comment", maxLen: 1000, out error)) return false;
                     if (!ValidateOptionalBool(obj.Value, "compact", out error)) return false;
                 }
                 return true;
@@ -5950,13 +5956,25 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/link-cad", StringComparison.OrdinalIgnoreCase))
             {
-                // Source plus existing/named view or sheet. A named drafting owner can precede sheet creation.
+                // Source plus existing/named view or sheet, or lifecycle of an existing link type.
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "link-cad body must be an object.";
                     return false;
                 }
 
+                if (!ValidateOptionalString(obj.Value, "action", maxLen: 24, out error)) return false;
+                if (obj.Value.TryGetProperty("action", out var cadAction) && cadAction.ValueKind == JsonValueKind.String
+                    && cadAction.GetString() != "link")
+                {
+                    if (cadAction.GetString() != "load" && cadAction.GetString() != "reload")
+                    { error = "CAD load/reload use the API; CAD unload requires Manage Links UI."; return false; }
+                    if (!obj.Value.TryGetProperty("linkTypeId", out var typeId) || typeId.ValueKind != JsonValueKind.Number || !typeId.TryGetInt64(out var id) || id <= 0)
+                    { error = "CAD load/reload requires a positive linkTypeId."; return false; }
+                    return ValidateOptionalString(obj.Value, "sourcePath", maxLen: 520, out error)
+                        && ValidateOptionalString(obj.Value, "expectedSourceSha256", maxLen: 64, out error)
+                        && ValidateOptionalBool(obj.Value, "dryRun", out error);
+                }
                 if (!ValidateOptionalBool(obj.Value, "preflightOnly", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
                 var capabilityOnly = obj.Value.TryGetProperty("preflightOnly", out var cadPreflight) && cadPreflight.ValueKind == JsonValueKind.True

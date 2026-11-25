@@ -1,6 +1,7 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "native_lifecycle_contract.test.ts",
     "registered_reference_intake.test.ts",
     "completed_work_delivery.test.ts",
     "feedback_task_binding.test.ts",
@@ -447,6 +448,8 @@
     "lib/connectorWorkGuidance.test.ts"
   ],
   "desktop_tests": [
+    "test/completion_polling.test.js",
+    "test/computer_task_observation.test.js",
     "test/attachment_admission.test.js",
     "test/live_saved_copy.test.js",
     "test/task_feedback_ui.test.js",
@@ -503,6 +506,7 @@
     "OperatorPrintSettingsGuardTests",
     "OperatorNativeArtifactReceiptTests",
     "OperatorAttemptSettlementTests",
+    "OperatorNativeLifecycleTests",
     "MepRouteEndpointContractTests",
     "MepConnectorServicePolicyTests",
     "ConnectorReadStateTests",
@@ -538,6 +542,7 @@
     "OperatorEmbeddedNavigationTests",
     "OperatorDesktopLauncherTests",
     "OperatorPaneIntegrationContractTests",
+    "OperatorBrowserCompatibilityTests",
     "OperatorActiveIdleLeaseTests",
     "OperatorProactivityLifecycleContractTests",
     "OperatorWorkbookWriterTests",
@@ -647,6 +652,36 @@
     "OperatorDeletedTypeContextTests"
   ],
   "failure_families": [
+    {
+      "id": "preflight_session_rotation_answer_delivery_20261125",
+      "coverage": [
+        "desktop:test/completion_polling.test.js",
+        "desktop:test/computer_task_observation.test.js"
+      ]
+    },
+    {
+      "id": "host-owned-lifecycle-return-must-survive-settlement-without-fabricated-transaction",
+      "coverage": [
+        "dotnet:OperatorNativeLifecycleTests",
+        "backend:native_lifecycle_contract.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
+    {
+      "id": "typed_pdf_export_loses_explicit_file_authority_at_kernel_admission",
+      "coverage": [
+        "backend:workbook_export_intent.test.ts",
+        "backend:teammate_loop_runtime.test.ts"
+      ]
+    },
+    {
+      "id": "cold_conversation_intake_caller_deadline_preempts_allowed_startup_and_inference",
+      "coverage": [
+        "desktop:test/server_smoke.test.js",
+        "backend:codex_conversation_turn.test.ts"
+      ]
+    },
     {
       "id": "checked_project_copy_after_pause_or_replacement_20261118",
       "coverage": [
@@ -2120,6 +2155,13 @@
       "coverage": [
         "backend:simple_assistant_presentation.test.ts",
         "desktop:test/conversation_rendering.test.js",
+        "dotnet:OperatorPaneIntegrationContractTests"
+      ]
+    },
+    {
+      "id": "revit-cef-host-crashes-after-in-process-webview-model-close",
+      "coverage": [
+        "dotnet:OperatorBrowserCompatibilityTests",
         "dotnet:OperatorPaneIntegrationContractTests"
       ]
     },

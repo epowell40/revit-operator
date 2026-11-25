@@ -48,6 +48,8 @@
     "native-parameter-checks.js",
     "native-parameter-checks.d.ts",
     "native-result-targets.js",
-    "native-result-targets.d.ts"
+    "native-result-targets.d.ts",
+    "native-lifecycle.js",
+    "native-lifecycle.d.ts"
   ]
 }

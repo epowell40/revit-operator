@@ -194,6 +194,8 @@ namespace RevitBridge.Common
                 return documentActivation ?? OperatorAttemptSettlement.Unknown(effect, method, path, "native_document_activation_unverified");
             if (OperatorFamilySessionReceipt.TrySettlement(root, effect, method, path, out var familySessionSettlement))
                 return familySessionSettlement ?? OperatorAttemptSettlement.Unknown(effect, method, path, "native_family_session_unverified", "native_host");
+            if (OperatorNativeLifecycleReceipt.TrySettlement(root, effect, method, path, out var lifecycleSettlement))
+                return lifecycleSettlement ?? OperatorAttemptSettlement.Unknown(effect, method, path, "native_lifecycle_unverified", "native_host");
             if (OperatorNativeArtifactReceipt.TrySettlement(root, effect, method, path, out var artifactSettlement))
                 return artifactSettlement ?? OperatorAttemptSettlement.Unknown(effect, method, path, "native_artifact_export_unverified", "native_host");
             if (TryCertifiedReceipt(root, out var phase, out var receiptRef))

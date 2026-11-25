@@ -41,33 +41,30 @@ export function resolveOperatorMcpServerSpec(backendCwd: string): { serverJs: st
 }
 
 export const EAGER_OPERATOR_MCP_TOOLS = new Set([
-  "operator_runtime_probe",
+  "operator_run_dynamic_revit_program",
   // Native result projections name this bounded, scope-checked expansion edge.
   // It must remain callable even when deferred capability search is unavailable.
   "operator_retrieve_evidence",
-  "operator_discover_capabilities",
-  "operator_record_execution_strategy",
   "operator_request_clarification",
   "operator_request_assignment_input",
   "operator_evaluate_assignment_criteria",
   "operator_manage_work_plan",
-  "operator_submit_noop_completion",
-  "operator_submit_read_completion",
-  "revit_ping",
   "revit_get_context",
+  // Keep recovery and ordinary sheet navigation one call away. C# cannot
+  // open a document, and these small host contracts avoid discovery round trips.
   "revit_open_model",
+  "revit_close_doc",
+  "revit_list_views",
   "revit_list_sheets",
   "revit_activate_view",
+  "revit_create_sheet",
+  "revit_create_drafting_view",
+  "revit_place_view",
+  "revit_export_pdf",
   "revit_capture_sheet_region",
-  "revit_list_schedules",
-  "revit_update_schedule_cell",
-  "revit_replace_schedule_values",
-  "revit_set_parameters",
   "revit_write_grant_status",
   "revit_search_tools",
-  "revit_tool_registry",
   "revit_tool_doc",
-  "revit_tool_examples",
   "revit_call_tool"
 ]);
 
@@ -311,7 +308,7 @@ export class CodexMcpToolRuntime {
     this.dynamicNamespace = {
       type: "namespace",
       name: "revit_operator",
-      description: "Revit Operator MCP tools. Start with concise semantic capability/substrate discovery when the representation is unclear; inspect exact typed contracts only after choosing a path. Discovery and strategy telemetry never authorize execution.",
+      description: "Use native Revit C# for custom reads and useful edit batches. Basic document, navigation, sheet/view creation and PDF export tools remain directly available. For saving, printing and other supported native operations, use revit_tool_doc and revit_call_tool with the exact route, including POST /revit/save-as, /revit/print or /revit/create-view. Supported native API and MCP tools remain available; retrieve other exact contracts on demand. Inspect actual results and correct remaining discrepancies. No separate execution strategy declaration or task-specific planning program is required. Existing authorization, settlement, review and task-completion rules still apply.",
       tools: [READ_ATTACHMENT_TOOL, READ_OUTPUT_PDF_TOOL, ...listed.tools.filter(tool => tool.name !== READ_ATTACHMENT_TOOL.name && tool.name !== READ_OUTPUT_PDF_TOOL.name
         && !(assignmentKernelV2Enabled(this.opts.spawnEnv)
           && ["operator_submit_read_completion", "operator_submit_noop_completion"].includes(tool.name))).map(tool => ({
