@@ -448,6 +448,8 @@
     "lib/connectorWorkGuidance.test.ts"
   ],
   "desktop_tests": [
+    "test/completion_polling.test.js",
+    "test/computer_task_observation.test.js",
     "test/attachment_admission.test.js",
     "test/live_saved_copy.test.js",
     "test/task_feedback_ui.test.js",
@@ -650,6 +652,13 @@
     "OperatorDeletedTypeContextTests"
   ],
   "failure_families": [
+    {
+      "id": "preflight_session_rotation_answer_delivery_20261125",
+      "coverage": [
+        "desktop:test/completion_polling.test.js",
+        "desktop:test/computer_task_observation.test.js"
+      ]
+    },
     {
       "id": "host-owned-lifecycle-return-must-survive-settlement-without-fabricated-transaction",
       "coverage": [
