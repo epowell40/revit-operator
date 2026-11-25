@@ -1,3 +1,4 @@
+import { nativeLifecycleReceiptEffectV1 } from "./native-lifecycle.js";
 import { nativeArtifactReceiptEffectV1 } from "./native-artifact.js";
 import { MAX_NATIVE_AFFECTED_TARGETS_V2 } from "./native-affected-targets.js";
 
@@ -46,6 +47,13 @@ export function nativeCompletionReconciliationEffectV1(value, operation) {
     || settlement.request_dispatched !== true || !["none", "applied"].includes(settlement.effect_state)) return null;
   const affected = settlement.affected_target_identities;
   if (!Array.isArray(affected) || affected.length > MAX_NATIVE_AFFECTED_TARGETS_V2 || affected.some(id => !text(id)) || new Set(affected).size !== affected.length) return null;
+  if (proof.lifecycle_receipt !== undefined) {
+    const effect=nativeLifecycleReceiptEffectV1(proof.lifecycle_receipt,n.method,n.path,operation.requested_effect);
+    const action=operation.input?.body?.action ?? (n.path === '/revit/sync' ? 'sync' : 'link');
+    return effect === 'applied' && settlement.effect_state === effect && settlement.effect_authority === 'native_receipt'
+      && settlement.effect_reason === 'native_lifecycle_returned' && proof.lifecycle_receipt.action === action
+      && proof.lifecycle_receipt.document_session_id === doc.document_session_id ? effect : null;
+  }
   if (proof.artifact_receipt !== undefined) {
     if (operation.requested_effect !== "apply") return null;
     const effect = nativeArtifactReceiptEffectV1(proof.artifact_receipt, n.method, n.path, "apply");

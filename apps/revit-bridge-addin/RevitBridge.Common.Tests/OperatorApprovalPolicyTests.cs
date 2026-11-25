@@ -9,6 +9,33 @@ namespace RevitBridge.Common.Tests
     public class OperatorApprovalPolicyTests
     {
         [Theory]
+        [InlineData("{}")]
+        [InlineData("{\"action\":null}")]
+        [InlineData("{\"action\":\"list\"}")]
+        [InlineData("{\"action\":\" LIST \"}")]
+        public void WorksetListingIsAReadWithoutWritePermission(string body)
+        {
+            AssertLow("POST", "/revit/worksets", body);
+            Assert.Equal("read", OperatorApprovalPolicy.GetEffectWireValue("POST", "/revit/worksets", body));
+        }
+
+        [Theory]
+        [InlineData("{\"action\":\"create\",\"name\":\"new\"}")]
+        [InlineData("{\"action\":\"set_active\",\"worksetId\":1}")]
+        [InlineData("{\"action\":\"setactive\"}")]
+        [InlineData("{\"action\":42}")]
+        [InlineData("{\"action\":\"list\",\"action\":\"create\"}")]
+        [InlineData("{\"Action\":\"create\"}")]
+        [InlineData("{\"action\":\"list\",\"Action\":\"create\"}")]
+        [InlineData("{\"action\":\"\"}")]
+        [InlineData("null")]
+        [InlineData("[]")]
+        [InlineData("{bad")]
+        public void WorksetMutationsAndMalformedRequestsRemainGated(string body)
+        {
+            AssertHigh("POST", "/revit/worksets", body);
+        }
+        [Theory]
         [InlineData("native-program-prepare-v1","Low","Read")]
         [InlineData("native-program-read-v1","Low","Read")]
         [InlineData("native-program-apply-v1","High","Apply")]

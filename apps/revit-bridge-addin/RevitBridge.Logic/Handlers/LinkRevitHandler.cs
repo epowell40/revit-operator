@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Collections.Generic;
 using System.Reflection;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -25,13 +26,18 @@ namespace RevitBridge.Logic.Handlers
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
+            => Task.FromResult(NativeMutationPreflightBoundary.Execute(enter => Execute(app, jsonData, enter)));
+
+        private static object Execute(UIApplication app, string jsonData, Action enter)
         {
             var p = string.IsNullOrWhiteSpace(jsonData) ? new Params() : (JsonSerializer.Deserialize<Params>(jsonData) ?? new Params());
-            var doc = app.ActiveUIDocument.Document;
+            var doc = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("Open a project before managing links.");
+            if (doc.IsReadOnly || doc.IsModifiable || doc.IsLinked || doc.IsFamilyDocument)
+                throw new InvalidOperationException("Link management requires an editable project with no open transaction.");
             var action = (p.action ?? "link").Trim().ToLowerInvariant();
-            if (action == "unload") return Task.FromResult(UnloadRevitLinkType(doc, p));
-            if (action == "reload") return Task.FromResult(ReloadRevitLinkType(doc, p));
-            if (action != "link") throw new InvalidOperationException("link-revit.action must be 'link', 'reload', or 'unload'.");
+            if (action == "unload") return UnloadRevitLinkType(app, doc, p, enter);
+            if (action == "reload" || action == "load") return ReloadRevitLinkType(app, doc, p, action, enter);
+            if (action != "link") throw new InvalidOperationException("link-revit.action must be link, load, reload, or unload.");
 
             var src = (p.sourcePath ?? "").Trim();
             if (string.IsNullOrWhiteSpace(src)) throw new InvalidOperationException("link-revit.sourcePath is required.");
@@ -54,13 +60,11 @@ namespace RevitBridge.Logic.Handlers
 
             if (dryRun)
             {
-                return Task.FromResult<object>(new { status = "Dry Run", dryRun = true, plan });
+                return new { status = "Dry Run", dryRun = true, plan, transaction = OperatorNativeTransactionReceipt.NotStarted() };
             }
 
-            using (var t = new Transaction(doc, "Link Revit Model"))
-            {
-                t.Start();
-
+            enter();
+            return NativeSingleTransaction.Execute(app, doc, "Link Revit Model", created => {
                 var linkTypeId = FindExistingRevitLinkType(doc, full) ?? CreateRevitLinkType(doc, full);
                 var instanceId = CreateRevitLinkInstance(doc, linkTypeId);
 
@@ -75,22 +79,18 @@ namespace RevitBridge.Logic.Handlers
                     instance.Pinned = true;
                 }
 
-                t.Commit();
-
-                return Task.FromResult<object>(new
+                created.Add(ElementIdCompat.GetValue(instanceId));
+                return new Dictionary<string, object?>
                 {
-                    status = "Success",
-                    sourcePath = src,
-                    linkTypeId = ElementIdCompat.GetValue(linkTypeId),
-                    linkInstanceId = ElementIdCompat.GetValue(instanceId),
-                    placement = "origin",
-                    offset = new { x = offset.X, y = offset.Y, z = offset.Z },
-                    pinned = p.pin ?? false
-                });
-            }
+                    ["status"] = "Success", ["sourcePath"] = src,
+                    ["linkTypeId"] = ElementIdCompat.GetValue(linkTypeId),
+                    ["linkInstanceId"] = ElementIdCompat.GetValue(instanceId), ["placement"] = "origin",
+                    ["offset"] = new { x = offset.X, y = offset.Y, z = offset.Z }, ["pinned"] = p.pin ?? false
+                };
+            });
         }
 
-        private static object UnloadRevitLinkType(Document doc, Params p)
+        private static object UnloadRevitLinkType(UIApplication app, Document doc, Params p, Action enter)
         {
             var rawId = p.linkTypeId ?? 0;
             if (rawId <= 0) throw new InvalidOperationException("link-revit.linkTypeId is required for action='unload'.");
@@ -108,29 +108,23 @@ namespace RevitBridge.Logic.Handlers
                 name = linkType.Name
             };
             if (dryRun)
-                return new { status = "Dry Run", dryRun = true, plan };
-
-            InvokeUnload(linkType);
-            try { doc.Regenerate(); } catch { }
-            return new
-            {
-                status = "Unloaded",
-                action = "unload",
-                dryRun = false,
-                linkTypeId = rawId,
-                name = linkType.Name
-            };
+                return new { status = "Dry Run", dryRun = true, plan, transaction = OperatorNativeTransactionReceipt.NotStarted() };
+            enter();
+            return RevitBridge.Logic.Handlers.NativeLifecycleExecution.Execute(app, doc, "/revit/link-revit", "unload",
+                () => linkType.Unload(null), () => {
+                    var loaded = RevitLinkType.IsLoaded(doc, linkTypeId);
+                    return new Dictionary<string, object?> { ["status"] = loaded ? "Error" : "Success",
+                        ["action"] = "unload", ["linkTypeId"] = rawId, ["name"] = linkType.Name, ["loaded"] = loaded };
+                });
         }
 
-        private static object ReloadRevitLinkType(Document doc, Params p)
+        private static object ReloadRevitLinkType(UIApplication app, Document doc, Params p, string action, Action enter)
         {
             var rawId = p.linkTypeId ?? 0;
             if (rawId <= 0) throw new InvalidOperationException("link-revit.linkTypeId is required for action='reload'.");
             var sourcePath = (p.sourcePath ?? "").Trim();
-            if (string.IsNullOrWhiteSpace(sourcePath))
-                throw new InvalidOperationException("link-revit.sourcePath is required for action='reload'.");
-            var fullPath = ResolveSourcePath(sourcePath);
-            if (!string.Equals(Path.GetExtension(fullPath), ".rvt", StringComparison.OrdinalIgnoreCase))
+            var fullPath = string.IsNullOrWhiteSpace(sourcePath) ? null : ResolveSourcePath(sourcePath);
+            if (fullPath != null && !string.Equals(Path.GetExtension(fullPath), ".rvt", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("link-revit reload only supports .rvt files.");
 
             var linkTypeId = ElementIdCompat.Create(rawId);
@@ -141,7 +135,7 @@ namespace RevitBridge.Logic.Handlers
             var dryRun = p.dryRun ?? false;
             var plan = new
             {
-                action = "reload",
+                action,
                 dryRun,
                 linkTypeId = rawId,
                 name = linkType.Name,
@@ -149,12 +143,15 @@ namespace RevitBridge.Logic.Handlers
                 sourceFullPath = fullPath,
                 preservesExistingInstances = true
             };
-            if (dryRun) return new { status = "Dry Run", dryRun = true, plan };
+            if (dryRun) return new { status = "Dry Run", dryRun = true, plan, transaction = OperatorNativeTransactionReceipt.NotStarted() };
 
-            var modelPath = ModelPathUtils.ConvertUserVisiblePathToModelPath(fullPath);
-            var worksets = new WorksetConfiguration(WorksetConfigurationOption.OpenAllWorksets);
-            var loadResult = linkType.LoadFrom(modelPath, worksets);
-            try { doc.Regenerate(); } catch { }
+            LinkLoadResult? loadResult = null;
+            enter();
+            return RevitBridge.Logic.Handlers.NativeLifecycleExecution.Execute(app, doc, "/revit/link-revit", action, () => {
+                if (fullPath == null) loadResult = linkType.Reload();
+                else using (var worksets = new WorksetConfiguration(WorksetConfigurationOption.OpenAllWorksets))
+                    loadResult = linkType.LoadFrom(ModelPathUtils.ConvertUserVisiblePathToModelPath(fullPath), worksets);
+            }, () => {
             var loadedInstances = new FilteredElementCollector(doc)
                 .OfClass(typeof(RevitLinkInstance))
                 .Cast<RevitLinkInstance>()
@@ -165,56 +162,18 @@ namespace RevitBridge.Logic.Handlers
                     loaded = instance.GetLinkDocument() != null
                 })
                 .ToList();
-            if (loadedInstances.Count == 0 || loadedInstances.Any(instance => !instance.loaded))
+            if (loadResult == null || (loadResult.LoadResult != LinkLoadResultType.LinkLoaded && loadResult.LoadResult != LinkLoadResultType.UsedExisting)
+                || !RevitLinkType.IsLoaded(doc, linkTypeId) || loadedInstances.Any(instance => !instance.loaded))
                 throw new InvalidOperationException($"Revit link type {rawId} did not load every existing instance from the requested path.");
 
-            return new
+            return new Dictionary<string, object?>
             {
-                status = "Reloaded",
-                action = "reload",
-                dryRun = false,
-                linkTypeId = rawId,
-                name = linkType.Name,
-                sourcePath,
-                sourceFullPath = fullPath,
-                loadResult = loadResult?.ToString(),
-                loadedInstances
+                ["status"] = "Success", ["action"] = action, ["linkTypeId"] = rawId,
+                ["name"] = linkType.Name, ["sourcePath"] = sourcePath, ["sourceFullPath"] = fullPath,
+                ["loadResult"] = loadResult?.LoadResult.ToString(), ["loadedInstances"] = loadedInstances,
+                ["loaded"] = RevitLinkType.IsLoaded(doc, linkTypeId)
             };
-        }
-
-        private static void InvokeUnload(RevitLinkType linkType)
-        {
-            var methods = typeof(RevitLinkType)
-                .GetMethods(BindingFlags.Public | BindingFlags.Instance)
-                .Where(m => string.Equals(m.Name, "Unload", StringComparison.Ordinal))
-                .OrderBy(m => m.GetParameters().Length)
-                .ToList();
-
-            Exception? lastError = null;
-            foreach (var method in methods)
-            {
-                try
-                {
-                    var args = method.GetParameters()
-                        .Select(param => param.ParameterType.IsValueType ? Activator.CreateInstance(param.ParameterType) : null)
-                        .ToArray();
-                    method.Invoke(linkType, args);
-                    return;
-                }
-                catch (TargetInvocationException ex)
-                {
-                    lastError = ex.InnerException ?? ex;
-                }
-                catch (Exception ex)
-                {
-                    lastError = ex;
-                }
-            }
-
-            throw new InvalidOperationException(
-                lastError == null
-                    ? "This Revit API version does not expose RevitLinkType.Unload."
-                    : $"Revit link type unload failed: {lastError.Message}");
+            });
         }
 
         private static string ResolveSourcePath(string userProvided)

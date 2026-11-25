@@ -990,3 +990,5 @@ export function isDetachedFamilyLabelEditV2(method, path) {
   return typeof method === "string" && method.trim().toUpperCase() === "POST"
     && typeof path === "string" && path.trim().toLowerCase() === "/revit/set-family-label-style";
 }
+
+export * from "./native-lifecycle.js";

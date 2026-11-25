@@ -50,6 +50,7 @@ export async function recoverLateNativeCompletionV1(
     evidence_id: `ev1_${"0".repeat(32)}`,
     receipt: { ...record, terminal: terminalMetadata },
     proof: { canonical_attempt_settlement: body.canonical_attempt_settlement,
+      ...(body.lifecycle_receipt !== undefined ? { lifecycle_receipt: body.lifecycle_receipt } : {}),
       ...(body.transaction !== undefined ? { transaction: body.transaction } : {}),
       ...(body.artifact_receipt !== undefined ? { artifact_receipt: body.artifact_receipt } : {}) }
   };

@@ -21,7 +21,7 @@ import { appendDiscoveredInputV2, assignmentInputVariablesV2, workUnitInputVaria
 import { invalidateDependentInputResultsV2 } from "./input_result_freshness.js";
 import { canonicalJsonV2 } from "./canonical.js";
 import { isDeepStrictEqual } from "node:util";
-import { nativeFailureDependencyLinksV1, nativeArtifactResultEffectV2, nativeDocumentCheckpointResultV2, operationInputSchemaGapErrorV2, nativeCompletionReconciliationEffectV1 } from "@revitoperator/assignment-kernel-v2-contracts";
+import { nativeFailureDependencyLinksV1, nativeArtifactResultEffectV2, nativeLifecycleResultEffectV2, nativeLifecycleActionMatchesV1, nativeDocumentCheckpointResultV2, operationInputSchemaGapErrorV2, nativeCompletionReconciliationEffectV1 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { validateResultDeliveryV2 } from "./result_delivery.js";
 import { declareWorkPlanV2, completeWorkPlanItemV2, workPlanPendingV2, deferWorkPlanItemV2, workPlanItemDeferredV2 } from "./work_plan.js";
 import type { AssignmentEventV2, AdvisoryCheckpointContinuationV1 } from "./events.js";
@@ -500,12 +500,15 @@ function validateResult(snapshot: AssignmentSnapshotV2, operation: OperationV2, 
     "operation_native_preflight_invalid", "A native preflight result must prove no model effect or affected targets.");
   }
   const nativeArtifactEffect = nativeArtifactResultEffectV2(result);
+  const lifecycleEffect = nativeLifecycleResultEffectV2(result);
+  if (result.native_lifecycle_receipt !== undefined) kernelAssertV2(lifecycleEffect === "applied",
+    "operation_lifecycle_authority_invalid", "Lifecycle effects require exact native route and returned API evidence.");
   if (result.native_artifact_receipt !== undefined) {
     kernelAssertV2(nativeArtifactEffect !== null && result.native_artifact_receipt.phase === operation.requested_effect,
       "operation_artifact_authority_invalid", "Artifact effects require a native, exact-route, current-invocation file receipt.");
   }
   if (result.persistent_effect === "applied") {
-    kernelAssertV2(operation.requested_effect === "apply" && (result.native_transaction_state === "committed" || nativeArtifactEffect === "applied"), "operation_apply_authority_invalid", "Applied effect requires a committed transaction or authoritative native artifact export.");
+    kernelAssertV2(operation.requested_effect === "apply" && (result.native_transaction_state === "committed" || nativeArtifactEffect === "applied" || lifecycleEffect === "applied"), "operation_apply_authority_invalid", "Applied effect requires a committed transaction or authoritative native artifact export.");
   }
   if (operation.requested_effect === "preview" && result.status === "succeeded") {
     kernelAssertV2(result.persistent_effect === "none" && (result.native_transaction_state === "rolled_back" || nativeArtifactEffect === "none"), "operation_preview_settlement_invalid", "Successful preview requires authoritative rollback or a native export plan that did not write files.");
@@ -867,6 +870,14 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         const operation = snapshot.operations[event.result.operation_id];
         kernelAssertV2(operation && operation.settlement_state !== "settled" && !operation.result, "operation_result_unmatched", "Result requires one unsettled admitted operation without a prior result.");
         validateResult(snapshot, operation, event.result);
+        if (event.result.native_lifecycle_receipt !== undefined) {
+          const raw = event.observation_commit?.raw_payload as Record<string, unknown> | undefined;
+          kernelAssertV2(canonicalJsonV2(raw?.lifecycle_receipt ?? null) === canonicalJsonV2(event.result.native_lifecycle_receipt),
+            "lifecycle_receipt_payload_mismatch", "Lifecycle settlement must match the retained native receipt.");
+          const body = operation.input.body as Record<string, unknown> | undefined;
+          kernelAssertV2(nativeLifecycleActionMatchesV1(event.result.native_lifecycle_receipt, operation.request_identity?.path, body),
+            "lifecycle_action_mismatch", "Lifecycle receipt must describe the admitted action.");
+        }
         if (event.result.native_artifact_receipt !== undefined) {
           const raw = event.observation_commit?.raw_payload;
           const receipt = raw && typeof raw === "object" && !Array.isArray(raw)

@@ -16,6 +16,70 @@ public sealed class NativeCompileFactAttribute : FactAttribute
 public sealed class NativeProgramCompilerTests
 {
     [NativeCompileFact]
+    public void ApplicationIdentityAndGeometryToleranceQueriesAreOrdinaryReads()
+    {
+        foreach (var name in new[] { "Username", "VersionName", "VersionNumber", "VersionBuild", "SubVersionNumber", "ShortCurveTolerance", "AngleTolerance", "VertexTolerance" })
+        {
+            var result = Compile(Program("var app=doc.Application;return app." + name + ".ToString();"));
+            Assert.Empty(result.Diagnostics);
+            Assert.NotNull(result.Artifact);
+            Assert.DoesNotContain(result.Artifact!.DirectNativeMembers, m => m.MutationHint);
+        }
+    }
+
+    [NativeCompileFact]
+    public void ApplicationQueriesDoNotAuthorizeUserChangesForeignDocumentsOrLifecycleCalls()
+    {
+        foreach (var body in new[] {
+            "return doc.Application.Documents.Size.ToString();",
+            "doc.Application.OpenDocumentFile(@\"C:\\other.rvt\");return \"done\";",
+            "doc.Application.SharedParametersFilename=@\"C:\\other.txt\";return \"done\";" })
+            Reject(Program(body), "NATIVE_HOST_OWNED_LIFECYCLE", "write");
+        // Username is read-only in the pinned Revit API: the compiler itself
+        // rejects assignment before there is an executable native operation.
+        var usernameWrite = Compile(Program("doc.Application.Username=\"another user\";return \"done\";"), "write");
+        Assert.Null(usernameWrite.Artifact);
+        Assert.Contains(usernameWrite.Diagnostics, d => d.Code == "CS0200");
+    }
+    [NativeCompileFact]
+    public void CadReloadAndLoadFromAreAvailableInWriteModeButNeverReadMode()
+    {
+        foreach (var expression in new[] { "Reload()", "LoadFrom(@\"C:\\fixture.dwg\")" })
+        {
+            var source = Program("((CADLinkType)doc.GetElement(new ElementId(1L)))." + expression + ";return \"done\";");
+            var write = Compile(source, "write");
+            Assert.Empty(write.Diagnostics);
+            Assert.NotNull(write.Artifact);
+            Assert.Contains(write.Artifact!.DirectNativeMembers, m => m.DeclaringType == "Autodesk.Revit.DB.CADLinkType" && m.MutationHint);
+            Assert.Null(Compile(source, "read").Artifact);
+        }
+    }
+    [NativeCompileFact]
+    public void WorksharingLocationQueriesAreReadsNotDocumentLifecycleWrites()
+    {
+        foreach (var expression in new[] { "doc.GetWorksharingCentralModelPath()", "doc.GetCloudModelPath()" })
+        {
+            var result = Compile(Program("return ModelPathUtils.ConvertModelPathToUserVisiblePath(" + expression + ");"));
+            Assert.Empty(result.Diagnostics);
+            Assert.NotNull(result.Artifact);
+            Assert.DoesNotContain(result.Artifact!.DirectNativeMembers, m => m.MutationHint);
+        }
+    }
+
+    [NativeCompileFact]
+    public void LifecycleDiagnosticsDirectActorToWorkingHostTools()
+    {
+        foreach (var item in new[] {
+            ("doc.ReloadLatest(new ReloadLatestOptions());", "/revit/sync"),
+            ("((RevitLinkType)doc.GetElement(new ElementId(1L))).Reload();", "/revit/link-revit") })
+        {
+            var result = Compile(Program(item.Item1 + "return \"done\";"), "write");
+            Assert.Null(result.Artifact);
+            Assert.Contains(result.Diagnostics, d => d.Code == "NATIVE_HOST_OWNED_LIFECYCLE" && d.Message.Contains(item.Item2));
+        }
+    }
+
+    [NativeCompileFact]
     public void StaticFieldRefusalIdentifiesUninitializedStateAndActualSourceLocation()
     {
         const string source = "using Autodesk.Revit.DB;\npublic class NativeTask {\n static Document document;\n public static string Execute(Document doc) { return doc.Title; }\n}";
@@ -197,7 +261,7 @@ public sealed class NativeProgramCompilerTests
     public void HostOwnedDocumentAndTransactionActionsRejectIncludingAliasesAndMethodGroups()
     {
         foreach(var body in new[] { "doc.SaveAs(\"C:/never.rvt\");return \"\";", "doc.Close(false);return \"\";",
-            "Action<string> save=doc.SaveAs;return \"\";", "var app=doc.Application;return \"\";",
+            "Action<string> save=doc.SaveAs;return \"\";", "var app=doc.Application;return app.Documents.Size.ToString();",
             "using(var t=new Transaction(doc,\"x\")){t.Start();t.Commit();}return \"\";" })
             Reject(Program(body), "NATIVE_HOST_OWNED_LIFECYCLE");
         Reject("using Tx=Autodesk.Revit.DB.Transaction;"+Program("using(var t=new Tx(doc,\"x\")){t.Start();}return \"\";"), "NATIVE_HOST_OWNED_LIFECYCLE");

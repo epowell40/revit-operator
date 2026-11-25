@@ -3,6 +3,15 @@
   "notice": "Generic current product metadata projection, checked against the actual native manifest. No project identities, coordinates or customer data.",
   "candidates": [
     {
+      "method": "POST",
+      "path": "/revit/place-mep-accessory-interactively",
+      "group": "MEP",
+      "title": "Place Duct Accessory or Pipe Valve in Revit",
+      "risk": "high",
+      "description": "Start Revit's native placement command for an already-loaded duct accessory or pipe accessory type. The same desktop execution agent supplies clicks on the intended duct or pipe while this one native invocation remains pending; Revit performs its own fitting, splitting and connections. Body requires current expectedModelPath, viewId, expectedViewUniqueId, accessoryTypeId, expectedAccessoryTypeUniqueId, targetHosts:[{elementId,uniqueId}] (1-50 current straight duct/pipe identities) and maximumPlacements (1-50). The prospective host scope captures connected-system topology, prescribed parameters and schedules before native placement; it does not choose or perform a split. After return use the exact independent get-connectors scope for actual fit and preservation; computed flow output may differ and is not treated as an unchanged prescribed input. Position and inspect the intended view before calling; the native command locks the view/type. A single-host single-placement plan request automatically frames a small native-bounds region centered on that host midpoint before entering placement; batch and non-plan framing are unchanged. This is navigation only, not a required insertion location. Inspect the actual placement-ready plan and distinguish the intended host from neighboring lines before clicking; targetHosts does not constrain cursor snapping. Use ordinary pan/zoom if the requested location differs, and restore any caller-created temporary isolation before final appearance review. Placement ends at the explicit count or Escape. Consume the original pending result through native__await_interactive_placement; never repeat the call to recover a result. Actual changed IDs and placed instances are receipts, not proof of correct fit, orientation, reciprocal connections, preserved remote systems, appearance or saved delivery. Verify those independently after the original invocation returns. Cancel may leave already-committed placements; retain all effects. No family load, arbitrary code, manual split, automatic verification or rollback promise. Requires the owned desktop interactive transport; ordinary helper dispatch is refused.",
+      "example": "place a loaded balancing damper on its duct or a loaded valve on its pipe"
+    },
+    {
       "method": "GET",
       "path": "/revit/ping",
       "group": "Core",
@@ -199,6 +208,15 @@
       "risk": "high",
       "description": "Save the active model to a distinct new output with overwrite=false. After new committed edits, an already saved non-workshared model can checkpoint to the same authorized result path with overwrite=true; never the original input or an unrelated file. This is not a retry of an uncertain save: reconcile prior receipts first. Verify the exact output with inspect-exported-files; saving does not verify model content or finish visual review. Body: {filePath,overwrite?,compact?,maximumBackups?,saveAsCentral?,dryRun?}. Relative paths resolve against active document directory (or Workspace when unsaved). Workshared/central saving retains its existing explicit requirements.",
       "example": "save model as Coordination_Copy.rvt; checkpoint later edits to the same authorized result"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/sync",
+      "group": "Core",
+      "title": "Sync With Central",
+      "risk": "high",
+      "description": "Synchronize active workshared model or Reload Latest. Body: {action?:sync|reload_latest,comment?,compact?,relinquish?:true,dryRun?}. Runs outside user transactions; reports actual native return and current central state.",
+      "example": "sync with central using comment \"Synced by Operator\""
     },
     {
       "method": "POST",
@@ -424,6 +442,15 @@
       "risk": "low",
       "description": "Read-only active-host parameter reads. Accepts elementId/elementIds, a strict category/categories scope, or allModelInstances:true narrowed by mutually exclusive valueEquals/valueContains and/or exact names. Use valueEquals for exact identifiers and valueContains for intentional substring audits. Name/value/writability filters are applied before paging; responses are capped at 500 matching elements and return totalScanned, totalMatched, hasMore, and nextOffset. Matching parameter details include exact name, value, storageType, isReadOnly, and parameterId. Optional preservationScheduleIds (maximum32 unique active-project IDs) adds bounded flat schedule definition/table/parameter observations for independent comparison with a native parameter commit; missing/incomplete or changed state is not preservation proof.",
       "example": "find the exact host-model parameter value AHU-1 across all non-type categories without guessing a category or parameter name"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/quantify",
+      "group": "Query",
+      "title": "Quantify",
+      "risk": "low",
+      "description": "Count/list native instances by exact category across host, links or both, independently of view visibility. sourceCoverage records read source identities and unavailable/nested links; incomplete coverage cannot prove absence. Counts cover direct document instances, not unshared family-definition contents or room membership. Supports grouping.",
+      "example": "count doors"
     },
     {
       "method": "POST",
@@ -926,8 +953,17 @@
       "group": "Modeling",
       "title": "Link CAD (DWG/DXF) Into View/Sheet",
       "risk": "high",
-      "description": "Optional expectedSourceSha256 pins the complete source bytes before native work; a mismatch is refused before import/link. Link a DWG or DXF (or explicitly import with link:false) into a target view and optionally place that view on a sheet. Sheet-only requests default to create/reuse a Drafting View at viewScale:1 and place it as a viewport; set directSheetImport:true only for legacy sheet-owned CAD imports. Body: {sourcePath,expectedSourceSha256?,sheetNumber?,sheetViewId?,viewId?,viewName?,viewQuery?,createDraftingView?,placeOnSheet?,moveIfAlreadyPlaced?,directSheetImport?,viewScale?,placement:\"origin\"|\"center\"?,x?,y?,xInches?,yInches?,importUnit?,colorMode?,customScale?,autoCorrectAlmostVHLines?,link?,preflightOnly?,dryRun?}. Use dryRun:true with preflightOnly:true for a no-source-required capability probe. Almost-horizontal/vertical correction defaults false to preserve source directions. Colors default to preserve; colorMode:preserve|black_and_white|invert. A link never falls back to import. For paper-size details use viewScale:1 with resolved source units; customScale overrides units, so its value alone does not prove printed size. Native result returns ownerViewId, viewportId, bounding boxes, and cadCategories for layer/subcategory graphics overrides.",
+      "description": "Optional expectedSourceSha256 pins the complete source bytes before native work; a mismatch is refused before import/link. Link a DWG or DXF (or explicitly import with link:false) into a target view and optionally place that view on a sheet. Sheet-only requests default to create/reuse a Drafting View at viewScale:1 and place it as a viewport; set directSheetImport:true only for legacy sheet-owned CAD imports. Existing links also support {action:load|reload,linkTypeId,sourcePath?,expectedSourceSha256?,dryRun?}; omit sourcePath to reload the stored reference. True CAD unload requires Manage Links UI, not delete/hide. Body: {sourcePath,expectedSourceSha256?,sheetNumber?,sheetViewId?,viewId?,viewName?,viewQuery?,createDraftingView?,placeOnSheet?,moveIfAlreadyPlaced?,directSheetImport?,viewScale?,placement:\"origin\"|\"center\"?,x?,y?,xInches?,yInches?,importUnit?,colorMode?,customScale?,autoCorrectAlmostVHLines?,link?,preflightOnly?,dryRun?}. Use dryRun:true with preflightOnly:true for a no-source-required capability probe. Almost-horizontal/vertical correction defaults false to preserve source directions. Colors default to preserve; colorMode:preserve|black_and_white|invert. A link never falls back to import. For paper-size details use viewScale:1 with resolved source units; customScale overrides units, so its value alone does not prove printed size. Native result returns ownerViewId, viewportId, bounding boxes, and cadCategories for layer/subcategory graphics overrides.",
       "example": "link cad P:\\\\Projects\\\\refs\\\\keyplan.dwg into a drafting view and place it on sheet A1.00"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/link-revit",
+      "group": "Modeling",
+      "title": "Link Revit Model",
+      "risk": "high",
+      "description": "Link an RVT model into the active document at origin with optional XYZ offset and pinning, load/reload an existing link from its stored location or an exact RVT path while preserving instances and placement, or unload a link type. Body: {action?:\"link\",sourcePath,dryRun?,pin?,x?,y?,z?}, {action:\"load|reload\",linkTypeId,sourcePath?,dryRun?}, or {action:\"unload\",linkTypeId,dryRun?}. sourcePath can be workspace-relative or under OPERATOR_ALLOWED_EXTERNAL_ROOTS.",
+      "example": "reload architectural link type 123 from refs\\\\architectural.rvt"
     },
     {
       "method": "POST",
@@ -1090,24 +1126,6 @@
       "risk": "high",
       "description": "Rotate element(s) around a vertical or arbitrary 3D axis (supports dry-run). Body: {ids:[...],angleDegrees,axis:{mode:\"zThroughPoint\"|\"throughPoints\",pointX,pointY,pointZ,endPointX?,endPointY?,endPointZ?},dryRun?,behavior:\"allOrNothing\"|\"bestEffort\",options?}.",
       "example": "dry-run rotate an MEP fitting 90deg about its main-pipe axis"
-    },
-    {
-      "method": "POST",
-      "path": "/revit/quantify",
-      "group": "Query",
-      "title": "Quantify",
-      "risk": "low",
-      "description": "Count/list native instances by exact category across host, links or both, independently of view visibility. sourceCoverage records read source identities and unavailable/nested links; incomplete coverage cannot prove absence. Counts cover direct document instances, not unshared family-definition contents or room membership. Supports grouping.",
-      "example": "count doors"
-    },
-    {
-      "method": "POST",
-      "path": "/revit/place-mep-accessory-interactively",
-      "title": "Place Duct Accessory or Pipe Valve in Revit",
-      "description": "Start Revit's native placement command for an already-loaded duct accessory or pipe accessory type. The same desktop execution agent supplies clicks on the intended duct or pipe while this one native invocation remains pending; Revit performs its own fitting, splitting and connections. Body requires current expectedModelPath, viewId, expectedViewUniqueId, accessoryTypeId, expectedAccessoryTypeUniqueId, targetHosts:[{elementId,uniqueId}] (1-50 current straight duct/pipe identities) and maximumPlacements (1-50). The prospective host scope captures connected-system topology, prescribed parameters and schedules before native placement; it does not choose or perform a split. After return use the exact independent get-connectors scope for actual fit and preservation; computed flow output may differ and is not treated as an unchanged prescribed input. Position and inspect the intended view before calling; the native command locks the view/type. A single-host single-placement plan request automatically frames a small native-bounds region centered on that host midpoint before entering placement; batch and non-plan framing are unchanged. This is navigation only, not a required insertion location. Inspect the actual placement-ready plan and distinguish the intended host from neighboring lines before clicking; targetHosts does not constrain cursor snapping. Use ordinary pan/zoom if the requested location differs, and restore any caller-created temporary isolation before final appearance review. Placement ends at the explicit count or Escape. Consume the original pending result through native__await_interactive_placement; never repeat the call to recover a result. Actual changed IDs and placed instances are receipts, not proof of correct fit, orientation, reciprocal connections, preserved remote systems, appearance or saved delivery. Verify those independently after the original invocation returns. Cancel may leave already-committed placements; retain all effects. No family load, arbitrary code, manual split, automatic verification or rollback promise. Requires the owned desktop interactive transport; ordinary helper dispatch is refused.",
-      "example": "place a loaded balancing damper on its duct or a loaded valve on its pipe",
-      "group": "MEP",
-      "risk": "high"
     }
   ],
   "queries": [

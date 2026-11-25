@@ -493,6 +493,14 @@
     {
       "method": "POST",
       "path": "/revit/inspect-vector-detail"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/sync"
+    },
+    {
+      "method": "POST",
+      "path": "/revit/link-revit"
     }
   ],
   "mcp_aliases": [
@@ -588,7 +596,8 @@
     "web_fetch_evidence",
     "workspace_pdf_merge",
     "workspace_pdf_reorder",
-    "workspace_rename_file"
+    "workspace_rename_file",
+    "revit_sync_model"
   ],
   "internal_routes": [
     {

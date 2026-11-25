@@ -430,6 +430,8 @@ namespace RevitBridge.Operator
             if (m == "POST" && p == "/revit/project-parameters" && TryParseBodyObject(body, out var bindingBody)
                 && RevitBridge.Common.ProjectParameterBindingContract.IsReadOnly(bindingBody)) return OperatorActionRisk.Low;
 
+            if (m == "POST" && p == "/revit/worksets" && IsWorksetListRequest(body)) return OperatorActionRisk.Low;
+
             if (m == "POST" && HasMutatingBody(p, body))
             {
                 return OperatorActionRisk.High;
@@ -445,6 +447,24 @@ namespace RevitBridge.Operator
             }
 
             return GetRisk(m, p);
+        }
+
+        private static bool IsWorksetListRequest(string? body)
+        {
+            if (!TryParseBodyObject(body, out var root)) return false;
+            var seenAction = false;
+            foreach (var property in root.EnumerateObject())
+            {
+                if (!string.Equals(property.Name, "action", StringComparison.OrdinalIgnoreCase)) continue;
+                // Do not let aliases or duplicate keys disagree with the native
+                // request deserializer. Missing/null action defaults to list.
+                if (seenAction || property.Name != "action") return false;
+                seenAction = true;
+                if (property.Value.ValueKind == JsonValueKind.Null) continue;
+                if (property.Value.ValueKind != JsonValueKind.String
+                    || !string.Equals(property.Value.GetString()?.Trim(), "list", StringComparison.OrdinalIgnoreCase)) return false;
+            }
+            return true;
         }
 
         public static OperatorActionEffect GetEffect(string method, string path, string? body)

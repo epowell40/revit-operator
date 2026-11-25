@@ -721,6 +721,11 @@ function commitInput(
 ): ObservationCommitInputV2 | undefined {
   if (!result.observation_required) return undefined;
   if (!envelope.observation) throw new Error("assignment_kernel_v2_observation_payload_missing");
+  if (result.native_lifecycle_receipt !== undefined) {
+    const raw = envelope.observation.raw_payload as Record<string, unknown>;
+    if (canonicalJsonV2(raw?.lifecycle_receipt ?? null) !== canonicalJsonV2(result.native_lifecycle_receipt))
+      throw new Error("assignment_kernel_v2_lifecycle_receipt_payload_mismatch");
+  }
   if (result.native_artifact_receipt !== undefined) {
     const raw = envelope.observation.raw_payload;
     const receipt = raw && typeof raw === "object" && !Array.isArray(raw)

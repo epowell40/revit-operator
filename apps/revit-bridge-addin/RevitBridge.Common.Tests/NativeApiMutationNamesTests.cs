@@ -15,6 +15,9 @@ namespace RevitBridge.Common.Tests
         [InlineData("Delete")]
         [InlineData("CreateBound")]
         [InlineData("Regenerate")]
+        [InlineData("Reload")]
+        [InlineData("LoadFrom")]
+        [InlineData("Unload")]
         public void NativeFactoriesAndExistingMutatorsRequireMutationAdmission(string name)
             => Assert.True(NativeApiMutationNames.IsMutating(name));
 

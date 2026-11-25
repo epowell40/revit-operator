@@ -83,7 +83,7 @@ test('CAD link first predispatch rejection is repaired through fixed inventory w
 test("supported inventory rejects every excluded source route before transport despite caller allowlists and runtime modes", async () => {
   assert.equal(isSupportedToolRoute('POST','/revit/import-vector-detail'),false);
   assert.equal(implemented.length, 227);
-  assert.equal(SUPPORTED_NATIVE_ROUTES.length, 123);
+  assert.equal(SUPPORTED_NATIVE_ROUTES.length, 125);
   for (const route of ['/revit/inspect-family-label-styles', '/revit/set-family-label-style']) {
     assert.equal(isSupportedToolRoute('POST', route), true);
     assert.equal(isAllowlisted('POST', route), true);
@@ -105,13 +105,13 @@ test("supported inventory rejects every excluded source route before transport d
   assert.equal(isSupportedToolRoute("POST", "/revit/existing-conditions-mep-draft-workflow"), true,
     "The source-registered stage executor must be transport-admitted.");
   assert.equal(isSupportedNativeTransport("POST", "/revit/linked-room-boundaries"), true);
-  assert.equal(SUPPORTED_MCP_ALIASES.length, 93);
+  assert.equal(SUPPORTED_MCP_ALIASES.length, 94);
   assert.equal(SUPPORTED_MCP_ALIASES.includes("operator_plan_existing_conditions_duct_continuation"), false,
     "The bespoke continuation planner is retired; native routes and the general work ledger remain.");
   assert.equal(SUPPORTED_MCP_ALIASES.includes("operator_manage_work_plan"), true);
   assert.equal(SUPPORTED_MCP_ALIASES.includes("write_excel"), false, "The legacy writer has no admitted, verifiable assignment effect contract.");
   const excluded = implemented.filter(route => !isSupportedNativeTransport(route.method, route.path));
-  assert.equal(excluded.length, 103);
+  assert.equal(excluded.length, 101);
   let requests = 0;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async () => { requests++; throw new Error("Excluded tool reached network"); }) as typeof fetch;

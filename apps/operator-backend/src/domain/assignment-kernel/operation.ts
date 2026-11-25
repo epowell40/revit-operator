@@ -126,6 +126,7 @@ export interface OperationResultV2 {
   persistent_effect: PersistentEffectV2;
   native_transaction_state: NativeTransactionStateV2;
   native_artifact_receipt?: NativeArtifactReceiptV1;
+  native_lifecycle_receipt?: import("@revitoperator/assignment-kernel-v2-contracts").NativeLifecycleReceiptV1;
   authority: string;
   result_schema_id: string;
   observation_required: boolean;

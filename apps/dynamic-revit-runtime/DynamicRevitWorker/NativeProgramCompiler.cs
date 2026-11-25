@@ -41,13 +41,24 @@ internal static class NativeProgramCompiler
     private static readonly string[] DocumentLifecycle = {
         "Save", "SaveAs", "SaveAsCloudModel", "SaveCloudModel", "Close", "Export", "Print", "SubmitPrint",
         "LoadFamily", "LoadFamilySymbol", "EditFamily", "SynchronizeWithCentral", "ReloadLatest",
-        "GetWorksharingCentralModelPath", "EnableWorksharing", "ConvertToCloudModel", "GetCloudModelPath",
-        "get_Application", "get_PrintManager"
+        "EnableWorksharing", "ConvertToCloudModel",
+        "get_PrintManager"
     };
     private static readonly string[] OwnedLifecycleTypes = {
         "Autodesk.Revit.DB.Transaction", "Autodesk.Revit.DB.SubTransaction", "Autodesk.Revit.DB.TransactionGroup",
         "Autodesk.Revit.DB.FailureHandlingOptions", "Autodesk.Revit.DB.IFailuresPreprocessor",
         "Autodesk.Revit.DB.IUpdater", "Autodesk.Revit.DB.UpdaterRegistry"
+    };
+
+    private static string LifecycleAlternative(string name) => name switch {
+        "SynchronizeWithCentral" => "Use POST /revit/sync with action:sync.",
+        "ReloadLatest" => "Use POST /revit/sync with action:reload_latest.",
+        "Save" or "SaveAs" => "Use the save model / Save As tool.",
+        "LoadFamily" or "LoadFamilySymbol" => "Use the load-family tool.",
+        "Export" or "Print" or "SubmitPrint" or "get_PrintManager" => "Use the export/print tools.",
+        "Close" => "Use the close-active-model tool.",
+        "Load" or "LoadFrom" or "Reload" or "Unload" or "UnloadLocally" or "RevertLocalUnloadStatus" => "Use /revit/link-revit or /revit/link-cad lifecycle actions; use Manage Links UI for CAD unload.",
+        _ => "Use the corresponding native host tool or supported computer-use workflow; this is not a claim that Revit lacks the capability."
     };
 
     public static NativeProgramCompilation Compile(string source, string entryType, string mode, int revitYear,
@@ -148,11 +159,14 @@ internal static class NativeProgramCompiler
             if (!typeName.StartsWith("Autodesk.Revit.", StringComparison.Ordinal)) continue;
             var name = symbol?.MetadataName ?? "";
             if (OwnedLifecycleTypes.Any(prefix => typeName == prefix || typeName.StartsWith(prefix + ".", StringComparison.Ordinal)) ||
-                typeName.StartsWith("Autodesk.Revit.ApplicationServices.", StringComparison.Ordinal) ||
+                typeName.StartsWith("Autodesk.Revit.ApplicationServices.", StringComparison.Ordinal)
+                    && !IsApplicationQuery(symbol, node) ||
                 typeName.StartsWith("Autodesk.Revit.UI.", StringComparison.Ordinal) ||
+                typeName == "Autodesk.Revit.DB.RevitLinkType"
+                    && name is ("Load" or "LoadFrom" or "Reload" or "Unload" or "UnloadLocally" or "RevertLocalUnloadStatus") ||
                 typeName == "Autodesk.Revit.DB.Document" && (DocumentLifecycle.Contains(name, StringComparer.Ordinal)
                     || DocumentLifecycle.Contains("get_" + name, StringComparer.Ordinal)))
-                syntaxDiagnostics.Add(Diagnostic("NATIVE_HOST_OWNED_LIFECYCLE", "The host owns native document/application/file/transaction lifecycle: " + typeName + "." + name));
+                syntaxDiagnostics.Add(Diagnostic("NATIVE_HOST_OWNED_LIFECYCLE", "This call needs host-managed lifecycle outside the C# transaction: " + typeName + "." + name + ". " + LifecycleAlternative(name)));
             if (symbol is not (IMethodSymbol or IPropertySymbol or IFieldSymbol)) continue;
             var id = symbol.GetDocumentationCommentId() ?? symbol.ToDisplayString();
             var mutation = symbol is IMethodSymbol && NativeApiMutationNames.IsMutating(name);
@@ -214,6 +228,22 @@ internal static class NativeProgramCompiler
         return new(new("dynamic-revit-native-compile-artifact/v1", revitYear, mode, entryType,
             DynamicWire.Sha256(normalized), DynamicWire.Sha256(assembly), assembly, identities.ToArray(),
             members.Values.OrderBy(m => m.Id, StringComparer.Ordinal).ToArray()), Array.Empty<WorkerDiagnostic>());
+    }
+
+    private static bool IsApplicationQuery(ISymbol? symbol, ExpressionSyntax node)
+    {
+        // Reading Revit identity and geometry tolerances does not change the
+        // application or open another document. Keep application lifecycle,
+        // events, global settings and foreign document access host-owned.
+        const string application = "Autodesk.Revit.ApplicationServices.Application";
+        if (symbol?.ContainingAssembly?.Name != "RevitAPI") return false;
+        if (symbol is ITypeSymbol type) return type.ToDisplayString() == application;
+        if (symbol is not IPropertySymbol property || property.ContainingType.ToDisplayString() != application
+            || property.Name is not ("Username" or "VersionName" or "VersionNumber" or "VersionBuild"
+                or "SubVersionNumber" or "ShortCurveTolerance" or "AngleTolerance" or "VertexTolerance")) return false;
+        return !(node.Parent is AssignmentExpressionSyntax assignment && assignment.Left == node
+            || node.Parent is PrefixUnaryExpressionSyntax prefix && (prefix.IsKind(SyntaxKind.PreIncrementExpression) || prefix.IsKind(SyntaxKind.PreDecrementExpression))
+            || node.Parent is PostfixUnaryExpressionSyntax postfix && (postfix.IsKind(SyntaxKind.PostIncrementExpression) || postfix.IsKind(SyntaxKind.PostDecrementExpression)));
     }
 
     private static WorkerDiagnostic Diagnostic(string code, string message, Location? location = null)

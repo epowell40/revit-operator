@@ -11,6 +11,17 @@ namespace RevitBridge.Common.Tests
     public sealed class OperatorPaneIntegrationContractTests
     {
         [Fact]
+        public void HostBrowserCompatibilityIsEstablishedBeforePaneRegistration()
+        {
+            var app = ReadRepoFile("apps", "revit-bridge-addin", "RevitBridge", "App.cs");
+            var launcher = ReadRepoFile("apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorDesktopLauncher.cs");
+            AssertOrdered(app, "OperatorDesktopLauncher.ConfigureHostVersion(application.ControlledApplication.VersionNumber)", "application.RegisterDockablePane");
+            Assert.Contains("OperatorBrowserCompatibility.SupportsEmbeddedBrowser", launcher);
+            Assert.Contains("if (!SupportsEmbeddedBrowser) return false;", launcher);
+            Assert.Contains("SupportsEmbeddedBrowser &&", launcher);
+        }
+
+        [Fact]
         public void ModernPaneUsesOneSidecarAndKeepsInitializationOffTheRevitApiPath()
         {
             var pane = ReadRepoFile("apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorEmbeddedPaneControl.cs");

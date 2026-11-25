@@ -3796,9 +3796,12 @@ server.tool("revit_import_excel_table", "Import an .xlsx range into a drafting v
   }
 );
 
-server.tool("revit_link_cad", "Link (or import) a DWG or DXF onto a sheet view. External paths require OPERATOR_ALLOWED_EXTERNAL_ROOTS.",
+server.tool("revit_link_cad", "Link/import DWG or DXF, or load/reload an existing CAD link. CAD unload uses Manage Links UI. External paths require OPERATOR_ALLOWED_EXTERNAL_ROOTS.",
   {
-    sourcePath: z.string().describe("Workspace-relative path OR approved external absolute path to .dwg or .dxf."),
+    action: z.enum(["link", "load", "reload"]).default("link"),
+    linkTypeId: z.number().int().positive().optional(),
+    expectedSourceSha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+    sourcePath: z.string().optional().describe("DWG/DXF path; required for new links. Omit on reload to reuse the existing source."),
     sheetNumber: z.string().optional().describe("Target sheet number (e.g. A1.00)."),
     sheetViewId: z.number().optional().describe("Target sheet view id."),
     placement: z.enum(["origin", "center"]).optional().default("origin"),
@@ -3906,9 +3909,12 @@ server.tool("revit_get_lighting_data", "Get photometrics/IES data from lighting 
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
 
-server.tool("revit_sync_model", "Synchronize with Central and Relinquish All.",
+server.tool("revit_sync_model", "Synchronize a workshared model with Central, or Reload Latest. Revit owns the lifecycle; do not wrap in C# transactions.",
   {
-    comment: z.string().optional().default("Synced by Revit Operator").describe("Sync comment."),
+    action: z.enum(["sync", "reload_latest"]).default("sync"),
+    relinquish: z.boolean().default(true).describe("Relinquish owned elements/worksets during sync."),
+    dryRun: z.boolean().default(false),
+    comment: z.string().max(1000).optional().default("Synced by Revit Operator").describe("Sync comment."),
     compact: z.boolean().default(false).describe("Compact central file.")
   },
   async (args) => {

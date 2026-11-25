@@ -125,8 +125,8 @@ namespace RevitBridge.Common.Tests
             var field = typeof(OperatorToolManifest).GetField("ImplementedTools", BindingFlags.NonPublic | BindingFlags.Static);
             var implemented = Assert.IsAssignableFrom<IReadOnlyList<OperatorToolInfo>>(field!.GetValue(null));
             Assert.Equal(227, implemented.Count);
-            Assert.Equal(123, OperatorToolManifest.Tools.Count);
-            Assert.Equal(123, OperatorActionAllowlist.EnumerateAllowed().Count());
+            Assert.Equal(125, OperatorToolManifest.Tools.Count);
+            Assert.Equal(125, OperatorActionAllowlist.EnumerateAllowed().Count());
             foreach (var path in new[] { "/revit/inspect-family-label-styles", "/revit/set-family-label-style" })
             {
                 Assert.True(OperatorSupportedToolInventory.IsSupportedTool("POST", path));

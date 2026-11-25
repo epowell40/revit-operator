@@ -26,6 +26,9 @@ namespace RevitBridge
         {
             Instance = this;
             WriteStartupLog("OnStartup begin.");
+            OperatorDesktopLauncher.ConfigureHostVersion(application.ControlledApplication.VersionNumber);
+            if (!OperatorDesktopLauncher.SupportsEmbeddedBrowser)
+                WriteStartupLog(OperatorBrowserCompatibility.DesktopExplanation);
 
             application.ControlledApplication.DocumentOpened += OnDocumentOpened;
             application.ControlledApplication.DocumentClosing += OnDocumentClosing;
@@ -155,7 +158,9 @@ namespace RevitBridge
                     _assemblyPath,
                     "RevitBridge.Operator.ShowOperatorPaneCommand"
                 );
-                operatorBtnData.ToolTip = OperatorDesktopLauncher.UseEmbeddedPane()
+                operatorBtnData.ToolTip = !OperatorDesktopLauncher.SupportsEmbeddedBrowser
+                    ? OperatorBrowserCompatibility.DesktopExplanation
+                    : OperatorDesktopLauncher.UseEmbeddedPane()
                     ? "Open Operator beside your model."
                     : "Open Operator Desktop.";
                 operatorBtnData.LargeImage = OperatorRibbonIcon.Create(32);

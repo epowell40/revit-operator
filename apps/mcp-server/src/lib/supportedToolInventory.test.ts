@@ -33,11 +33,11 @@ test("fixed supported inventory narrows search before all laboratory and hosted 
   assert.equal(isSupportedNativeTool("POST", "/revit/existing-conditions-mep-draft-workflow"), true);
   assert.equal(isSupportedNativeTool('POST','/revit/import-vector-detail'),false);
   assert.equal(implemented.length, 227);
-  assert.equal(excluded.length, 104);
+  assert.equal(excluded.length, 102);
   assert.equal(isSupportedNativeTool("POST", "/revit/connect-existing-mep-branch"), true);
   for (const mode of ["development", "hosted", "production"]) {
     const env = { REVIT_OPERATOR_MODE: mode, OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" };
-    assert.equal(filterRegistryEntriesForSearch(implemented, env).length, 123);
+    assert.equal(filterRegistryEntriesForSearch(implemented, env).length, 125);
     assert.equal(isToolRouteExposedForSearch('POST', '/revit/create-family-from-template', env), true);
     assert.equal(isToolRouteExposedForSearch('GET', '/revit/create-family-from-template', env), false);
     assert.equal(isToolRouteExposedForSearch('POST', '/revit/create-family-from-template-other', env), false);

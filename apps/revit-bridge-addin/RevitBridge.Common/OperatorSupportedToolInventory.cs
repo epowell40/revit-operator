@@ -5,7 +5,7 @@ namespace RevitBridge.Common
 {
     public static class OperatorSupportedToolInventory
     {
-        public const string InventoryHash = "sha256:d57b087c215f88e35b1fc1d54e2461be69b12c2b890f0b65c2987860afbf210b";
+        public const string InventoryHash = "sha256:86247e7e56f97dc60e22538ddd87b6c0d27d3e579e0cb06c32227418826ebba6";
         private static readonly HashSet<string> Native = new HashSet<string>(StringComparer.Ordinal)
         {
             "GET /revit/capabilities",
@@ -75,6 +75,7 @@ namespace RevitBridge.Common
             "POST /revit/inspect-family-label-styles",
             "POST /revit/inspect-vector-detail",
             "POST /revit/link-cad",
+            "POST /revit/link-revit",
             "POST /revit/linked-room-boundaries",
             "POST /revit/list-element-types",
             "POST /revit/load-family",
@@ -118,6 +119,7 @@ namespace RevitBridge.Common
             "POST /revit/set-type-parameters",
             "POST /revit/sheets",
             "POST /revit/state-snapshot",
+            "POST /revit/sync",
             "POST /revit/tag-elements",
             "POST /revit/tool-doc",
             "POST /revit/tool-examples",

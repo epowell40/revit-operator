@@ -197,7 +197,8 @@ test("the transport-independent domain imports no edge, route, evidence-projecti
         assert.doesNotMatch(source, /\/revit\//i);
       }
       if (path.basename(file) === "reducer.ts") {
-        assert.match(source, /import \{ nativeFailureDependencyLinksV1, nativeArtifactResultEffectV2, nativeDocumentCheckpointResultV2, operationInputSchemaGapErrorV2, nativeCompletionReconciliationEffectV1 \} from "@revitoperator\/assignment-kernel-v2-contracts"/);
+        assert.match(source, /import \{ nativeFailureDependencyLinksV1, nativeArtifactResultEffectV2, nativeLifecycleResultEffectV2, nativeLifecycleActionMatchesV1, nativeDocumentCheckpointResultV2, operationInputSchemaGapErrorV2, nativeCompletionReconciliationEffectV1 \} from "@revitoperator\/assignment-kernel-v2-contracts"/);
+        assert.doesNotMatch(source, /\/revit\//i, "Lifecycle wire interpretation stays in the shared pure contract");
       }
       if (path.basename(file) === "operation.ts") {
         assert.match(source, /OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA/);
