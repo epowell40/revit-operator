@@ -1,6 +1,7 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "native_lifecycle_contract.test.ts",
     "registered_reference_intake.test.ts",
     "completed_work_delivery.test.ts",
     "feedback_task_binding.test.ts",
@@ -503,6 +504,7 @@
     "OperatorPrintSettingsGuardTests",
     "OperatorNativeArtifactReceiptTests",
     "OperatorAttemptSettlementTests",
+    "OperatorNativeLifecycleTests",
     "MepRouteEndpointContractTests",
     "MepConnectorServicePolicyTests",
     "ConnectorReadStateTests",
@@ -538,6 +540,7 @@
     "OperatorEmbeddedNavigationTests",
     "OperatorDesktopLauncherTests",
     "OperatorPaneIntegrationContractTests",
+    "OperatorBrowserCompatibilityTests",
     "OperatorActiveIdleLeaseTests",
     "OperatorProactivityLifecycleContractTests",
     "OperatorWorkbookWriterTests",
@@ -647,6 +650,15 @@
     "OperatorDeletedTypeContextTests"
   ],
   "failure_families": [
+    {
+      "id": "host-owned-lifecycle-return-must-survive-settlement-without-fabricated-transaction",
+      "coverage": [
+        "dotnet:OperatorNativeLifecycleTests",
+        "backend:native_lifecycle_contract.test.ts",
+        "backend:assignment_kernel_v2_execution.test.ts",
+        "mcp:lib/assignmentKernelV2.test.ts"
+      ]
+    },
     {
       "id": "typed_pdf_export_loses_explicit_file_authority_at_kernel_admission",
       "coverage": [
@@ -2134,6 +2146,13 @@
       "coverage": [
         "backend:simple_assistant_presentation.test.ts",
         "desktop:test/conversation_rendering.test.js",
+        "dotnet:OperatorPaneIntegrationContractTests"
+      ]
+    },
+    {
+      "id": "revit-cef-host-crashes-after-in-process-webview-model-close",
+      "coverage": [
+        "dotnet:OperatorBrowserCompatibilityTests",
         "dotnet:OperatorPaneIntegrationContractTests"
       ]
     },
