@@ -59,10 +59,13 @@ export function requestConversationPersistenceV1(request:Partial<ChatRequest>,te
  if(typeof request.session_id!=='string'||!request.session_id||typeof request.message_id!=='string'||!request.message_id)
   throw Error('Conversation session and message identity are required.');
  const snapshot=request.assignment_id?getAssignmentKernelSnapshotV2(request.assignment_id):null;
+ const resumeActivity = (request.context as any)?.ui?.control_action === 'resume' && text === request.user_text
+  && snapshot?.current_binding.session_id === request.session_id
+  && snapshot.current_binding.run_id === request.assignment_run_id && snapshot.current_binding.generation === request.assignment_generation;
  const helper=snapshot&&snapshot.current_binding.session_id===request.session_id
   &&snapshot.current_binding.run_id===request.assignment_run_id&&snapshot.current_binding.generation===request.assignment_generation
   &&desktopHelperScopeForSnapshotV1(snapshot,desktopHelperScopeFromContextV1(request.context));
- return helper?{pinGoal:false}:{display:conversationDisplay(request.message_id,text,attachments)};
+ return helper || resumeActivity?{pinGoal:false}:{display:conversationDisplay(request.message_id,text,attachments)};
 }
 
 function appendDisplay(binding:AssignmentBindingV2,messageId:string,role:'user'|'assistant',text:string):void{

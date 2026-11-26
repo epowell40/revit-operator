@@ -1,4 +1,5 @@
 import {createCombinedReviewDispatcher} from './combined_review_dispatch.mjs';
+import {createComputerControlIndicator} from './computer_control_indicator.mjs';
 import { EXECUTION_INSPECTION_TOOL, inspectExecution } from './desktop_native_tools.mjs';
 import { affirmativeRevitLaunchIntent as sharedRevitLaunchIntent } from "./revit_launch_intent.mjs";
 import { namedObjectTopologyIdentity } from "./named_object_topology.mjs";
@@ -4994,6 +4995,7 @@ function resetComputerProgress() {
   };
 }
 
+const computerControlIndicator = createComputerControlIndicator(() => computerState);
 function updateComputerProgress(patch = {}) {
   computerState.progress = {
     ...computerState.progress,
@@ -5001,6 +5003,7 @@ function updateComputerProgress(patch = {}) {
     maxSteps: (patch.turnBudgetAuthority??computerState.progress?.turnBudgetAuthority)==='assignment_kernel_v2'?null:MAX_COMPUTER_STEPS,
     updatedAt: new Date().toISOString()
   };
+  if (!computerRunTestHooks && process.env.OPERATOR_DESKTOP_NO_LISTEN !== '1') computerControlIndicator.update();
 }
 
 async function planDelegatedRevitBatch(params = {}) {
@@ -5284,11 +5287,12 @@ function buildComputerFailureFeedback(actionResult) {
   };
 }
 
-function addComputerMessage(role, text, attachments = [], messageId = "") {
+function addComputerMessage(role, text, attachments = [], messageId = "", controlAction = null) {
   computerState.messages.push({
     id: messageId || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
     role,
     text,
+    ...(controlAction === 'resume' ? {controlAction} : {}),
     attachments
   });
 }
@@ -16014,6 +16018,7 @@ app.get("/api/computer/state", (req, res) => {
   res.json({
     running: computerState.running,
     desktopCaptureSuppressed: computerState.desktopCaptureSuppressed,
+    computerControlIndicator: computerControlIndicator.status(),
     error: computerState.error,
     lastResponseId: computerState.lastResponseId,
     backendSessionId: computerState.backendSessionId,
@@ -16078,6 +16083,7 @@ app.post("/api/computer/run", async (req, res) => {
   const freshConversation = req.body?.new_conversation === true;
   const nextRequestAfter = req.body?.next_request_after;
   const savedBinding = req.body?.assignment_binding_v2;
+  const resumeActivity = savedBinding && req.body?.control_action === 'resume' ? 'resume' : null;
   if (nextRequestAfter && (freshConversation || savedBinding || req.body?.clarification_response))
     return sendJsonError(res, 'A next request cannot also resume or reset a conversation.', 409);
   if (savedBinding && (freshConversation || req.body?.clarification_response))
@@ -16173,7 +16179,7 @@ app.post("/api/computer/run", async (req, res) => {
     startedAt: new Date().toISOString(),
     currentAction: "Starting computer-use run"
   });
-  addComputerMessage("user", prompt, attachments, messageId);
+  addComputerMessage("user", prompt, attachments, messageId, resumeActivity);
   addComputerEvent(`Computer-use run started with model ${COMPUTER_MODEL}.`);
   let assignmentExecutionStarted=false;
 
@@ -16188,7 +16194,7 @@ app.post("/api/computer/run", async (req, res) => {
         readBackendJson: computerRunTestHooks?.readBackendJson || readBackendJson,
         buildHybridBackendContext: computerRunTestHooks?.buildHybridBackendContext || buildHybridBackendContext
       });
-      addComputerMessage("user", prompt, attachments, messageId);
+      addComputerMessage("user", prompt, attachments, messageId, resumeActivity);
     } else if(sidecarOwnsAssignment&&retainedDirection){
       await restoreSavedComputerAssignment(retainedDirection.binding,null,{
         userDirection:{command_id:messageId||`direction:${randomId()}`,text:prompt,expected_control_command_id:retainedDirection.expected_control_command_id},

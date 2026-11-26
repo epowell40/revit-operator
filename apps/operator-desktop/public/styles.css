@@ -91,6 +91,29 @@ button:disabled {
   box-shadow: 0 12px 22px rgba(24, 57, 92, 0.2);
 }
 
+.recordingFeedback { display: flex; align-items: center; gap: 12px; color: #2459b5; font-size: 13px; font-weight: 600; }
+.recordingFeedback[hidden], #recStopButton[hidden], .computerControlNotice[hidden] { display: none; }
+.recordingFeedback canvas { width: 144px; height: 28px; }
+.composerFooter { flex-wrap: wrap; }
+.computerControlNotice {
+  position: fixed; z-index: 1000; top: 4px; left: 50%; transform: translateX(-50%);
+  max-width: calc(100vw - 24px); padding: 7px 14px; border-radius: 0 0 12px 12px;
+  background: #2459b5; color: white; font-size: 13px; font-weight: 600;
+  box-shadow: 0 3px 12px #18395c33; pointer-events: none;
+}
+.computerControlNotice.uncertain { background: #755615; }
+body.computerControlActive::after {
+  content: ''; position: fixed; inset: 0; border: 4px solid #4285ef;
+  z-index: 999; pointer-events: none; border-radius: 5px;
+}
+.msg.activity { align-self: center; font-size: 12px; color: var(--text-muted); }
+.msg.activity .role { display: none; }
+.msg.activity .bubble { padding: 5px 10px; background: transparent; box-shadow: none; border: none; }
+@media (max-width: 560px) {
+  .recordingFeedback { flex-basis: 100%; justify-content: space-between; }
+  .computerControlNotice { font-size: 11px; }
+}
+
 textarea {
   width: 100%;
   min-height: 78px;

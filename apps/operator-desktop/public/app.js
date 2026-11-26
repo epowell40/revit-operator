@@ -8,6 +8,7 @@ import { acceptAssignmentMutationViewV2, retainNewerAssignmentViewsV2, savedAssi
 import { createAssignmentInputControl, assignmentInputErrorText } from "./assignment_input_controls.mjs";
 import { refreshAssignmentDisplayContext } from "./assignment_display_context.mjs";
 import { environmentDiagnosticSummary } from "./environment_diagnostics_ui.mjs";
+import { microphoneEnvelope, recordingPresentation, computerControlPresentation, messagePresentation } from './activity_feedback.mjs';
 import { assertLoadedBrowserFresh, STALE_BROWSER_MESSAGE } from "./browser_asset_freshness_ui.js";
 const loadedBrowserIdentity = typeof LOADED_BROWSER_ASSET_IDENTITY === "string" ? LOADED_BROWSER_ASSET_IDENTITY : "";
 import { renderVerifiedWorkPacketHtml } from "./verified_work_packet_ui.js";
@@ -876,6 +877,7 @@ function nextOptimisticChatSubmissionState(current, submission) {
     id: submission.id,
     role: "user",
     text: submission.text,
+    ...(submission.controlAction ? {controlAction: submission.controlAction} : {}),
     attachments: submission.attachments.map((attachment) => ({ ...attachment }))
   };
   const backend = submission.mode === "backend";
@@ -1244,9 +1246,10 @@ function renderMessages() {
   const liveCopy = state.activeRunKind !== "backend" && copy?.sessionId === state.sessionId
     && copy.epoch === state.taskNavigationEpoch ? copy.message : null;
   for (const message of liveCopy ? [...messages, liveCopy] : messages) {
-    const normalizedRole = message.role === "user" ? "user" : message.role === "error" ? "error" : "assistant";
+    const presentation = messagePresentation(message);
+    const normalizedRole = presentation.role;
     const assistantParts = normalizedRole === "assistant" ? splitAssistantControlText(message.text) : null;
-    const messageText = assistantParts ? assistantParts.text : `${message.text || ""}`;
+    const messageText = assistantParts ? assistantParts.text : presentation.text;
     if (normalizedRole === "assistant" && !messageText) continue;
 
     const article = document.createElement("article");
@@ -1254,7 +1257,7 @@ function renderMessages() {
 
     const role = document.createElement("div");
     role.className = "role";
-    role.textContent = normalizedRole === "user" ? (message.sending ? "You · Sending…" : "You") : normalizedRole === "error" ? "Error" : "Operator";
+    role.textContent = presentation.label || (normalizedRole === "user" ? (message.sending ? "You · Sending…" : "You") : normalizedRole === "error" ? "Error" : "Operator");
 
     const bubble = document.createElement("div");
     bubble.className = "bubble";
@@ -2598,15 +2601,46 @@ function encodeWav16Mono(samplesF32, sampleRate) {
   return u8;
 }
 
+let recordingAnimation = 0;
+let microphoneIcon = '';
+function renderRecordingFeedback() {
+  const view = recordingPresentation(state.recState);
+  const feedback = document.getElementById('recordingFeedback');
+  if (!feedback) return;
+  feedback.hidden = !view.visible;
+  document.getElementById('recordingLabel').textContent = view.text;
+  const canvas = document.getElementById('recordingWaveform');
+  canvas.hidden = !state.recState.recording;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#346fdf';
+    const samples = state.recState.session?.getMeterSamples?.();
+    microphoneEnvelope(samples).forEach((level, i) => {
+      const height = Math.max(2, level * 26);
+      ctx.fillRect(i * 6 + 1, (28 - height) / 2, 3, height);
+    });
+  }
+  if (state.recState.recording) recordingAnimation = requestAnimationFrame(renderRecordingFeedback);
+}
+
 function setRecUiState() {
-  elements.recStartButton.disabled = state.recState.busy || state.recState.recording;
+  const view = recordingPresentation(state.recState);
+  if (!microphoneIcon) microphoneIcon = elements.recStartButton.innerHTML;
+  elements.recStartButton.disabled = state.recState.busy;
   elements.recStopButton.disabled = state.recState.busy || !state.recState.recording;
+  elements.recStopButton.hidden = true;
   if (elements.micDeviceSelect) {
     elements.micDeviceSelect.disabled = state.recState.busy || state.recState.recording;
   }
   elements.recStartButton.classList.toggle("active", state.recState.recording);
-  elements.recStartButton.setAttribute("aria-label", state.recState.recording ? "Recording" : "Start dictation");
-  elements.recStartButton.title = state.recState.recording ? "Recording" : "Start dictation";
+  elements.recStartButton.setAttribute('aria-label', view.label);
+  elements.recStartButton.setAttribute('aria-pressed', String(view.stop));
+  elements.recStartButton.title = view.label;
+  elements.recStartButton.innerHTML = view.stop
+    ? '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor" /></svg>' : microphoneIcon;
+  cancelAnimationFrame(recordingAnimation);
+  renderRecordingFeedback();
   updateControls();
 }
 
@@ -2683,6 +2717,10 @@ async function startWavRecordingFromStream(stream, options = {}) {
   const audioCtx = new AudioCtx({ sampleRate: 16000 });
   const sampleRate = audioCtx.sampleRate;
   const source = audioCtx.createMediaStreamSource(stream);
+  const analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 512;
+  source.connect(analyser);
+  const meterSamples = new Float32Array(analyser.fftSize);
   const processor = audioCtx.createScriptProcessor(4096, 1, 1);
   const gain = audioCtx.createGain();
   gain.gain.value = 0;
@@ -2728,6 +2766,7 @@ async function startWavRecordingFromStream(stream, options = {}) {
   };
 
   return {
+    getMeterSamples: () => { analyser.getFloatTimeDomainData(meterSamples); return meterSamples; },
     flushChunk: async ({ force = false } = {}) => exportPendingSamples(force),
     getDiagnostics: () => ({
       deviceLabel: stream.getAudioTracks?.()[0]?.label || "",
@@ -2736,6 +2775,7 @@ async function startWavRecordingFromStream(stream, options = {}) {
     stop: async () => {
       try { processor.disconnect(); } catch {}
       try { source.disconnect(); } catch {}
+      try { analyser.disconnect(); } catch {}
       try { gain.disconnect(); } catch {}
       if (stopTracksOnStop) {
         try { stream.getTracks().forEach((track) => track.stop()); } catch {}
@@ -2749,7 +2789,8 @@ async function startWavRecordingFromStream(stream, options = {}) {
 async function startWavRecording() {
   await refreshMicDevices({ requestPermission: false });
   const stream = await navigator.mediaDevices.getUserMedia(buildMicAudioConstraints());
-  return await beginAudioCaptureSession(stream);
+  try { return await beginAudioCaptureSession(stream); }
+  catch (error) { stream.getTracks().forEach(track => track.stop()); throw error; }
 }
 
 function preferredCompressedAudioMimeType() {
@@ -2902,6 +2943,7 @@ async function startCompressedRecording(stream) {
 
   return {
     flushChunk,
+    getMeterSamples: () => sampleFallback.getMeterSamples(),
     getDiagnostics: () => ({ ...diagnostics }),
     stop: async () => {
       closed = true;
@@ -3548,6 +3590,7 @@ async function onRecStart() {
   try {
     if (elements.micLevelText) elements.micLevelText.textContent = `Using ${selectedMicLabel()}`;
     state.recState.session = await startWavRecording();
+    state.recState.startedAt = Date.now();
     state.recState.recording = true;
   } finally {
     state.recState.busy = false;
@@ -3563,6 +3606,7 @@ async function onRecStop() {
   const session = state.recState.session;
   state.recState.session = null;
   state.recState.recording = false;
+  setRecUiState();
 
   try {
     const result = await session.stop();
@@ -4671,6 +4715,7 @@ async function resumeCanonicalAssignment(goal, options = {}) {
   if (state.sessionId !== goal._bindingV2.session_id) throw new Error("Return to this task's conversation before resuming.");
   const submission = createChatSubmission("Continue the existing task using its saved answers and evidence.", []);
   if (!submission) return;
+  submission.controlAction = 'resume';
   submission.assignmentBindingV2 = goal._bindingV2;
   const owner = await fetchJson("/api/assignment-workspace/v2/executor", {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(goal._bindingV2)
@@ -5021,6 +5066,7 @@ async function sendBackendPrompt(submission, { browserFreshnessChecked = false, 
           client: "operator-desktop",
           surface: "external-sidecar",
           response_style: "conversation",
+          ...(submission.controlAction ? {control_action: submission.controlAction} : {}),
           ...(submission.nextRequestAfter ? { next_request_after: submission.nextRequestAfter } : {}),
           speed_settings: getSpeedSettings()
         }
@@ -5070,6 +5116,20 @@ async function sendBackendPrompt(submission, { browserFreshnessChecked = false, 
   }
 }
 
+let computerControlFreshnessTimer;
+function renderComputerControl(payload, stale = false) {
+  const notice = document.getElementById('computerControlNotice');
+  if (!notice) return;
+  const view = computerControlPresentation(payload, stale);
+  notice.hidden = !view.visible;
+  notice.textContent = view.text;
+  notice.classList.toggle('uncertain', stale);
+  document.body.classList.toggle('computerControlActive', view.active);
+  document.title = view.active ? 'Computer control active · Operator' : 'Operator Desktop';
+  clearTimeout(computerControlFreshnessTimer);
+  if (view.active) computerControlFreshnessTimer = setTimeout(() => renderComputerControl(null, true), 10000);
+}
+
 async function syncComputerState() {
   if (state.resetting || state.activeRunKind === "backend") return;
   if (state.taskNavigationMode && state.activeRunKind !== "computer"
@@ -5087,6 +5147,7 @@ async function syncComputerState() {
   const query = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : "";
   const payload = await fetchJsonWithTimeout(`/api/computer/state${query}`, {}, 10_000);
   if (requestId !== state.computerSyncRequestId) return;
+  renderComputerControl(payload);
   if (state.resetting) return;
   // A fallback backend stream owns its busy state and transcript. An idle
   // computer relay must not enable Send/disable Stop during that run.
@@ -5371,6 +5432,7 @@ async function sendComputerPrompt(submission, { browserFreshnessChecked = false,
       body: JSON.stringify({
         prompt: text,
         new_conversation: submission.newComputerConversation === true,
+        ...(submission.controlAction ? {control_action: submission.controlAction} : {}),
         ...(submission.nextRequestAfter ? { next_request_after: submission.nextRequestAfter } : {}),
         ...(submission.assignmentBindingV2 ? { assignment_binding_v2: submission.assignmentBindingV2,
           resume_control: submission.assignmentResumeControl } : {}),
@@ -6167,7 +6229,8 @@ elements.learnButton?.addEventListener("click", async () => {
 });
 elements.recStartButton.addEventListener("click", async () => {
   try {
-    await onRecStart();
+    if (state.recState.recording) await onRecStop();
+    else await onRecStart();
   } catch (error) {
     state.computerMessages.push({ role: "error", text: error.message || String(error), attachments: [] });
     renderMessages();
