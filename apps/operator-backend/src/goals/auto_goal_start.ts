@@ -54,12 +54,12 @@ export function startAutoGoalIfEligible(input: {
     if (!input.user_text.trim() || !hasRevitTurnContext(input.request_context)) return null;
     decision.signals.push("request in Revit conversation context");
   }
-  const current = getCurrentGoalForSession(input.session_id);
+  let current = getCurrentGoalForSession(input.session_id);
   const nextRequest = object(object(input.request_context).ui).next_request_after;
   // An exact accepted message retry keeps its new task; it never creates a third.
   if (current && input.message_id && current.work_budget?.conversation_message_id === input.message_id
       && current.work_budget?.source_user_request === input.user_text) return current;
-  if (nextRequest) assertNextChatRequest(nextRequest, current, input.session_id);
+  if (nextRequest) current = assertNextChatRequest(nextRequest, current, input.session_id).goal;
   const resume = /^(?:please\s+)?(?:continue|resume|keep going|go on)(?:\s+(?:the\s+)?(?:saved|current|previous|active))?(?:\s+(?:work|task|assignment))?[.!]?$/i.test(input.user_text.trim());
   if (current && resume && !nextRequest) return current;
   if (current && current.work_budget?.mode !== "auto_goal" && !nextRequest) return current;

@@ -12,6 +12,29 @@ import {newDocumentPhaseSpec,type NewProjectContextV1} from '../domain/assignmen
 import {buildAssignmentKernelPublicationV2} from './assignment_kernel_v2_publication.js';
 import {assignmentKernelTerminalSettlementDeferredV2} from './assignment_kernel_v2_terminal_barrier.js';
 
+/** Read-only admission check for resuming between UI creation and handoff.
+ * The acknowledged Resume and all existing stop/resource checks still apply.
+ * No binding, budget, permission or model is changed here. */
+export function inspectNewDocumentResume(binding:AssignmentKernelBindingInputV2,input:Record<string,any>) {
+  const resolved=assignmentKernelV2ForBinding(binding);
+  if(!resolved||!getRequestAssignmentPrincipalId()||!desktopExecutorOwnsAssignmentV2(resolved.snapshot))
+    throw Error('new_document_owner_required');
+  const raw=input.native_context,doc=raw?.document;
+  const target:NewProjectContextV1={process_id:raw?.process_id,title:doc?.title,path:doc?.path,
+    session_id:doc?.sessionId,fingerprint:doc?.projectIdentity?.fingerprint?.replace(/^sha256:/,''),
+    created_at:doc?.createdAtUtc,is_family:doc?.isFamilyDocument};
+  // Revit templates can preserve ProjectInformation.UniqueId, so two new
+  // projects can share a fingerprint. The native document session, creation
+  // event and exact process distinguish them; the fingerprint alone cannot.
+  const originSession=resolved.goal.work_budget?.document_session_id;
+  if(typeof originSession!=='string'||!/^[a-f0-9]{32}$/i.test(originSession)||target.session_id===originSession
+      ||target.process_id!==resolved.goal.work_budget?.revit_process_id||raw?.readiness?.document_loaded!==true
+      ||raw?.readiness?.active_view_ready!==true||assignmentKernelTerminalSettlementDeferredV2(resolved.binding))
+    throw Error('new_document_process_or_readiness_mismatch');
+  newDocumentPhaseSpec(resolved.snapshot,target,'resume-context',new Date().toISOString());
+  return {schema:'operator.new-document-resume.v1',parent_binding:resolved.snapshot.current_binding,target};
+}
+
 /** The document data is captured by the authenticated Sidecar from protected
  * native transport, never supplied as model tool arguments. Every eventual
  * native dispatch still verifies the new fingerprint/session and write grant. */
@@ -32,7 +55,9 @@ export function continueInNewDocument(binding:AssignmentKernelBindingInputV2,inp
   const target:NewProjectContextV1={process_id:raw?.process_id,title:doc?.title,path:doc?.path,
     session_id:doc?.sessionId,fingerprint:doc?.projectIdentity?.fingerprint?.replace(/^sha256:/,''),
     created_at:doc?.createdAtUtc,is_family:doc?.isFamilyDocument};
-  if(target.process_id!==goal.work_budget?.revit_process_id||raw?.readiness?.document_loaded!==true
+  const originSession=goal.work_budget?.document_session_id;
+  if(typeof originSession!=='string'||!/^[a-f0-9]{32}$/i.test(originSession)||target.session_id===originSession
+    ||target.process_id!==goal.work_budget?.revit_process_id||raw?.readiness?.document_loaded!==true
     ||raw?.readiness?.active_view_ready!==true)throw Error('new_document_process_or_readiness_mismatch');
   const commandId=createHash('sha256').update(input.response_id+':'+input.call_id).digest('hex');
   let handoff=snapshot.document_handoff;

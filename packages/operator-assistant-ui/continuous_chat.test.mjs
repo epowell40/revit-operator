@@ -4,8 +4,17 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import {beginComposerSend} from './composer_intake.mjs';
 const publicApp=new URL('../../apps/operator-desktop/public/app.js',import.meta.url);
-const source=fs.readFileSync(fs.existsSync(publicApp)?publicApp:new URL('../../operator-desktop/public/app.js',import.meta.url),'utf8');
+const source=fs.readFileSync(fs.existsSync(publicApp)?publicApp:new URL('../../operator-desktop/public/app.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
 const handler=source.slice(source.indexOf('elements.chatForm.addEventListener("submit"'),source.indexOf('elements.promptInput.addEventListener("input", scheduleComposerDraftSave);'));
+
+test('the real composer offers the next request after failure or completion, while preserving Pause and active work',()=>{
+ const start=source.indexOf('function newRequestAfterReport('),end=source.indexOf('\n}\n',start)+2;
+ const state={streaming:false,goalSelectionPinned:false};const goal={_assignmentPhase:'failed'};
+ const accepts=vm.runInNewContext(source.slice(start,end)+';newRequestAfterReport',{state,selectedGoal:()=>goal});
+ for(const phase of ['failed','blocked','complete','complete_with_issues','verified_noop','awaiting_user_review']){goal._assignmentPhase=phase;assert.equal(accepts(),true);}
+ for(const phase of ['active','paused','awaiting_user_input']){goal._assignmentPhase=phase;assert.equal(accepts(),false);}
+ goal._assignmentPhase='failed';state.streaming=true;assert.equal(accepts(),false);
+});
 test('Send echoes immediately, retains one chat, and prevents a duplicate during slow preflight',async()=>{
   let submit,release;const held=new Promise(resolve=>release=resolve);const rendered=[],sent=[];
   const state={sessionId:'chat',pendingAttachments:[],attachmentReadsPending:0};

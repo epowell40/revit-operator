@@ -1,7 +1,7 @@
 import {createCombinedReviewDispatcher} from './combined_review_dispatch.mjs';
 import {createComputerControlIndicator} from './computer_control_indicator.mjs';
 import { EXECUTION_INSPECTION_TOOL, inspectExecution } from './desktop_native_tools.mjs';
-import {continueNewDocument} from './new_document_handoff.mjs';
+import {continueNewDocument,inspectNewDocumentResume} from './new_document_handoff.mjs';
 import { affirmativeRevitLaunchIntent as sharedRevitLaunchIntent } from "./revit_launch_intent.mjs";
 import { namedObjectTopologyIdentity } from "./named_object_topology.mjs";
 import { immutableEvidenceRetryReason } from "./immutable_evidence_retry.mjs";
@@ -36,7 +36,7 @@ import { needsPrinterCapableLane, PRINT_EXECUTION_GUIDANCE, PDF_EXPORT_TOOL_GUID
 import { createTaskRunRegistry } from "./task_runs.mjs";
 import { rejectedChatSubmissionAdmission } from "./public/chat_submission_admission.mjs";
 import { exactComputerTaskSource, excludesComputerUse, MAX_COMPUTER_TASK_SOURCE_CHARACTERS } from "./public/composer_intake.mjs";
-import { parseTaskNavigation, readNavigationAssignment } from "./task_navigation.mjs";
+import { parseTaskNavigation, readNavigationAssignment, readDocumentNavigation } from "./task_navigation.mjs";
 const taskRuns = createTaskRunRegistry();
 // Only an actual host-scoped retrieval can use the bounded selection relay.
 // Caller payload fields cannot opt arbitrary tool output out of projection.
@@ -5856,8 +5856,14 @@ async function restoreSavedComputerAssignment(binding, control, options = {}) {
   const context = await (options.buildHybridBackendContext || buildHybridBackendContext)();
   const document = context?.ui?.revit_document || {};
   const expected = saved.snapshot.current_binding.document_fingerprint;
-  if (!expected || canonicalAssignmentFingerprint(document.project_fingerprint) !== canonicalAssignmentFingerprint(expected))
-    throw Object.assign(new Error("The active Revit document does not match the saved desktop task."), { status: 409 });
+  let pendingNewDocument=null;
+  if (!expected) throw Object.assign(new Error("The saved desktop task has no document identity."), {status:409});
+  if (canonicalAssignmentFingerprint(document.project_fingerprint) !== canonicalAssignmentFingerprint(expected)) {
+    pendingNewDocument=await inspectNewDocumentResume({binding:saved.binding,
+      readContext:()=>fetchJsonDiagnostic('/revit/context',{certifiedReadLifecycle:false}),request});
+    if(pendingNewDocument.fingerprint!==canonicalAssignmentFingerprint(document.project_fingerprint))
+      throw Error('The active new project changed during Resume. Preserve it and refresh.');
+  }
   if(direction){
     const result=await request('/api/assignments/v2/steer',{method:'POST',body:JSON.stringify({...saved.binding,command_id:direction.command_id,text:direction.text,expected_turn_id:null})});
     if(result?.ok!==true||!['saved','accepted','delivered'].includes(result.receipt?.state)||result.receipt.command_id!==direction.command_id)
@@ -5886,6 +5892,8 @@ async function restoreSavedComputerAssignment(binding, control, options = {}) {
     conversation=savedComputerConversation(checked.goal,checked.snapshot,history,{binding:checked.snapshot.current_binding,
       assignment_version:checked.snapshot.assignment_version,work_plan:page.work_plan,advisory_followups:page.advisory_followups});
   }
+  if(pendingNewDocument) conversation[0].text+='\nThe requested new project '+pendingNewDocument.title
+    +' already exists. Do not create it again. Call native__continue_in_new_revit_model alone before native inspection or edits; the original task binding remains unchanged until that host handoff succeeds.';
   computerState.sidecarAssignment = { ...saved.binding, goal_id: saved.binding.assignment_id, kernel_version: 2,
     control_command_id: fresh.snapshot.execution_control.command_id,
     title: saved.goal.title, objective: saved.goal.objective,
@@ -11010,7 +11018,7 @@ function toComputerInputMessage(message, options = {}) {
 function buildComputerInput(screenshotDataUrl, options = {}) {
   const includeCurrentScreen = options.includeCurrentScreen !== false;
   const conversation = selectComputerConversationForInput(
-    computerState.messages, MAX_CONVERSATION_MESSAGES, computerState.sidecarAssignment);
+    computerState.messages, MAX_CONVERSATION_MESSAGES, browserComputerAssignmentBinding());
   let latestUserIndex = -1;
   for (let index = conversation.length - 1; index >= 0; index -= 1) {
     if (conversation[index]?.role === "user") {
@@ -13820,6 +13828,9 @@ async function executeComputerLoop(options = {}) {
           // old-document actions are never replayed in the new phase.
           computerState.sidecarAssignment=phase.assignment;
           computerState.backendSessionId=phase.assignment.session_id;
+          computerState.messages=savedComputerConversation(phase.goal,phase.snapshot,
+            {session_id:phase.assignment.session_id,messages:browserComputerMessages(computerState.messages)});
+          computerState.messages[0].text+='\n'+phase.message;
           computerState.lastResponseId=null;
           computerState.restoreProviderContext=false;
           computerState.canonicalAssignmentOutcome=null;
@@ -15001,6 +15012,19 @@ app.get("/api/assignment-workspace/v2/task", async (req, res) => {
     res.json({ ok: true, assignment: await readNavigationAssignment(readBackendJson, assignmentWorkspaceGoalV2,
       req.query?.session_id, req.query?.assignment_id) });
   } catch (error) { sendJsonError(res, error, Number(error?.status) || 502); }
+});
+
+app.get("/api/assignment-workspace/v2/document-phase", async (req, res) => {
+  res.setHeader("cache-control", "no-store");
+  try {
+    const binding = key => {
+      const value=req.query?.[key];
+      if(typeof value!=="string"||value.length>1200) throw Error("An exact task binding is required.");
+      return JSON.parse(value);
+    };
+    res.json({ok:true,assignment:await readDocumentNavigation(readBackendJson,parseAssignmentKernelPublicationV2,
+      assignmentWorkspaceGoalV2,binding("parent"),binding("child"))});
+  } catch(error) { sendJsonError(res,error,Number(error?.status)||409); }
 });
 
 function interruptPausedComputerOwner(result, command) {

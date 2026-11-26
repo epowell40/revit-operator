@@ -1,5 +1,17 @@
 /** The actor supplies no target identity. The host reads protected native
  * context and passes it to the authenticated document-phase controller. */
+export async function inspectNewDocumentResume({binding,readContext,request}) {
+  const raw=await readContext();
+  if(!raw?.ok||!raw.data?.document)throw Error('The new project is not ready for Resume.');
+  const result=await request('/api/assignments/v2/document-resume-context',{method:'POST',body:JSON.stringify({...binding,native_context:raw.data})});
+  if(result?.schema!=='operator.new-document-resume.v1'
+      ||!['assignment_id','session_id','run_id','generation'].every(k=>result.parent_binding?.[k]===binding[k])
+      ||result.target?.fingerprint!==raw.data.document.projectIdentity?.fingerprint?.replace(/^sha256:/,'')
+      ||result.target?.session_id!==raw.data.document.sessionId||result.target?.process_id!==raw.data.process_id)
+    throw Error('The pending new-project Resume context could not be confirmed.');
+  return result.target;
+}
+
 export async function continueNewDocument({assignment,response,call,readContext,request,validatePublication}) {
   const args=typeof call.arguments==='string'?JSON.parse(call.arguments):call.arguments;
   if(call.name!=='native__continue_in_new_revit_model'||!args||typeof args!=='object'||Array.isArray(args)
@@ -22,5 +34,5 @@ export async function continueNewDocument({assignment,response,call,readContext,
     throw Error('The document phase does not match the observed new project.');
   return {assignment:{session_id:b.session_id,goal_id:b.assignment_id,run_id:b.run_id,generation:b.generation,
     kernel_version:2,control_command_id:null,title:goal.title,objective:goal.objective,work_budget:goal.work_budget},
-    rawContext:raw.data,message:result.message};
+    rawContext:raw.data,message:result.message,goal,snapshot};
 }

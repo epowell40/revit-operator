@@ -5165,7 +5165,25 @@ async function syncComputerState() {
   if (selectedAssignmentId !== state.taskNavigationAssignmentId
       || savedBinding && savedBinding.assignment_id !== selectedAssignmentId) return;
   if (savedBinding && (!computerStateMatchesTask(payload, savedBinding, sessionId)
-      || !computerStateMatchesTask(payload, selectedGoal()?._bindingV2, sessionId))) return;
+      || !computerStateMatchesTask(payload, selectedGoal()?._bindingV2, sessionId))) {
+    // A resumed new-project task can enter a host-created document phase.
+    // Confirm that exact canonical parent/child relationship before observing it.
+    if (!computerStateMatchesTask(payload, payload.assignmentBindingV2, sessionId)) return;
+    let next;
+    try {
+      const route=`/api/assignment-workspace/v2/document-phase?parent=${encodeURIComponent(JSON.stringify(savedBinding))}&child=${encodeURIComponent(JSON.stringify(payload.assignmentBindingV2))}`;
+      next=(await fetchJsonWithTimeout(route,{},10_000))?.assignment;
+    } catch { return; }
+    if(state.resetting||state.activeRunKind==="backend"||requestId!==state.computerSyncRequestId
+        ||sessionId!==state.sessionId||epoch!==state.taskNavigationEpoch||selectedAssignmentId!==state.taskNavigationAssignmentId
+        ||!computerStateMatchesTask({backendSessionId:sessionId,assignmentBindingV2:selectedGoal()?._bindingV2},savedBinding,sessionId)
+        ||next?._sourceKind!=="assignment_kernel_v2"||!computerStateMatchesTask(payload,next._bindingV2,sessionId)) return;
+    state.taskNavigationAssignmentId=next._bindingV2.assignment_id;
+    state.activeGoalId=next.id;
+    state.goals=[next,...state.goals.filter(goal=>goal.id!==next.id)];
+    state.verifiedWorkPacket=null;
+    localStorage.setItem("operator-desktop.task-target",JSON.stringify([sessionId,state.taskNavigationAssignmentId]));
+  }
   if (!savedBinding && sessionId && payload.backendSessionId !== sessionId && !submittedTurn) return;
   // Native context/authorization refresh can replace a provisional backend
   // session before Assignment admission. Keep the submitted-message correlation
@@ -5856,7 +5874,7 @@ function handleChatSubmissionFailure(error, submission) {
 
 function newRequestAfterReport() {
   return !state.streaming && !state.goalSelectionPinned && !state.pendingCheckpointDirection
-    && selectedGoal()?._assignmentPhase === 'awaiting_user_review';
+    && ['awaiting_user_review','complete','complete_with_issues','verified_noop','failed','blocked'].includes(selectedGoal()?._assignmentPhase);
 }
 
 elements.chatForm.addEventListener("submit", async (event) => {

@@ -3,13 +3,17 @@ const bindingKeys = ["assignment_id", "session_id", "run_id", "generation"];
 /** A new request gets fresh interpretation and authority through ordinary intake.
  * This returns a fenced predecessor for same-chat admission, not new authority. */
 export function assertNewTaskAfterReport(publication, goal) {
-  const context=checkpointDirectionContext(publication,goal),s=publication.snapshot;
-  if (!context.checkpoint || context.paused || !s.quiescent || s.provider_usage_hold
+  const s=publication?.snapshot;
+  assertCheckpointBinding(publication,goal);
+  const terminal=s.terminal===true && ['complete','complete_with_issues','verified_noop','failed','blocked'].includes(s.outcome)
+    && s.pending_review_ids?.length===0;
+  const context=terminal ? {checkpoint:null,paused:s.execution_control?.state==='paused'} : checkpointDirectionContext(publication,goal);
+  if ((!terminal && !context.checkpoint) || context.paused || !s.quiescent || s.provider_usage_hold
       || s.unresolved_unknown_operation_ids?.length || s.pending_input_variable_ids?.length
       || s.in_flight_operation_ids?.length || s.in_flight_provider_call_ids?.length)
     throw Error('The previous task is still settling. Keep this draft and refresh its status.');
   return { ...goal._bindingV2, assignment_version: s.assignment_version,
-    review_id: context.checkpoint.review_id, document_fingerprint: s.current_binding.document_fingerprint,
+    review_id: terminal ? null : context.checkpoint.review_id, document_fingerprint: s.current_binding.document_fingerprint,
     control_command_id: s.execution_control?.command_id ?? null };
 }
 
@@ -50,7 +54,7 @@ export function checkpointResourceRenewalContext(publication,goal) {
 
 /** Read fences from the authenticated canonical publication, never a display badge.
  * This is a UI consistency check; the steering endpoint owns release eligibility. */
-export function checkpointDirectionContext(publication, goal) {
+function assertCheckpointBinding(publication, goal) {
   const snapshot = publication?.snapshot;
   const binding = goal?._bindingV2;
   const document = goal?._projection?.target?.document_fingerprint;
@@ -70,6 +74,11 @@ export function checkpointDirectionContext(publication, goal) {
       || (snapshot.execution_control?.state ?? "running") !== (goal._executionControl?.state ?? "running")) {
     throw new Error("The task or its controls changed. Refresh the task before sending this direction. Your draft is retained.");
   }
+}
+
+export function checkpointDirectionContext(publication, goal) {
+  assertCheckpointBinding(publication,goal);
+  const snapshot=publication.snapshot,document=goal._projection.target.document_fingerprint;
   const paused = snapshot.execution_control?.state === "paused";
   const proposal = snapshot.completion_proposal;
   if (!proposal) return { checkpoint: null, paused };

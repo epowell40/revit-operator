@@ -149,3 +149,14 @@ test('new task navigation after a settled report preserves original effect scope
   const p=structuredClone(publication);Object.assign(p.snapshot,change);assert.throws(()=>checkpointTools.assertNewTaskAfterReport(p,goal));
  }
 });
+
+for(const outcome of ['complete','failed','blocked'])test('settled '+outcome+' accepts a fenced next request without resuming old work',()=>{
+ const {publication,goal}=fixture(),s=publication.snapshot;
+ Object.assign(s,{terminal:true,outcome,pending_review_ids:[],completion_proposal:null});
+ const before=JSON.stringify(s),next=checkpointTools.assertNewTaskAfterReport(publication,goal);
+ assert.equal(next.review_id,null);assert.equal(next.session_id,'conversation');assert.equal(JSON.stringify(s),before);
+ for(const change of [{terminal:false},{quiescent:false},{in_flight_operation_ids:['write']},{unresolved_unknown_operation_ids:['unknown']},
+   {provider_usage_hold:{hold_id:'usage'}},{execution_control:{state:'paused'}},{pending_review_ids:['review']}]){
+   const p=structuredClone(publication);Object.assign(p.snapshot,change);assert.throws(()=>checkpointTools.assertNewTaskAfterReport(p,goal));
+ }
+});

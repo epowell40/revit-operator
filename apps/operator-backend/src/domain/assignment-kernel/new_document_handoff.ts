@@ -26,7 +26,7 @@ export function requestsNewProject(spec:AssignmentSpecV2):boolean {
     &&!spec.target_binding && !spec.document_parent_binding
     &&! /\b(?:before I approve|after I approve|preview|explain|how to)\b/i.test(text)
     &&! /\b(?:do not|don't|never|without)\s+(?:\w+\s+){0,3}(?:make|making|create|creating|start|starting)\b/i.test(text)
-    &&/(?:^|[.!?;,]\s*|\bthen\s+)(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:make|create|start)\s+(?:(?:a|an|the)\s+)?new\s+(?:revit\s+)?(?:architectural\s+)?(?:model|project)\b/i.test(text);
+    &&/(?:^|[.!?;,]\s*|\bthen\s+)(?:now\s+)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:make|create|start)\s+(?:(?:a|an|the)\s+)?new\s+(?:revit\s+)?(?:architectural\s+)?(?:model|project)\b/i.test(text);
 }
 
 export function assertNewDocumentHandoffReady(s:AssignmentSnapshotV2):void {
@@ -44,7 +44,6 @@ export function newDocumentPhaseSpec(s:AssignmentSnapshotV2,target:NewProjectCon
   kernelAssertV2(Number.isSafeInteger(target.process_id)&&target.process_id>0&&target.is_family===false&&target.path===''
     &&typeof target.title==='string'&&target.title.trim().length>0&&target.title.length<=512
     &&/^[a-f0-9]{32}$/i.test(target.session_id)&&/^[a-f0-9]{64}$/.test(target.fingerprint)
-    &&target.fingerprint!==s.current_binding.document_fingerprint?.replace(/^sha256:/,'')
     &&Number.isFinite(started)&&Number.isFinite(timestamp)&&created>=started&&created<=timestamp
     &&timestamp-created<=30*60_000,'new_document_identity_invalid','A newly created unsaved project in the same Revit process is required.');
   kernelAssertV2(/^[A-Za-z0-9._:-]{1,160}$/.test(commandId),'new_document_command_invalid','An exact host command is required.');

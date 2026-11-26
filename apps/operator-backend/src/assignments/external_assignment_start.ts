@@ -95,8 +95,7 @@ export function retainedExternalAssignmentStart(input:Record<string,unknown>,cur
 /** Called after asynchronous intake, immediately before creating the new goal. */
 export function createExternalAssignmentGoal(sessionId: string, input: Record<string, any>): GoalRecord {
   if (!input.next_request_after) return setAgentGoal(sessionId, input);
-  const previous = getCurrentGoalForSession(sessionId);
-  assertNextChatRequest(input.next_request_after, previous, sessionId);
+  const previous = assertNextChatRequest(input.next_request_after, getCurrentGoalForSession(sessionId), sessionId).goal;
   pauseAutomaticAssignmentForNewRequest(previous!);
   return createGoal({ ...input, title: input.title ?? input.objective,
     objective: input.objective, acceptance_criteria: input.acceptance_criteria ?? input.success_criteria,

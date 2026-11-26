@@ -22,6 +22,7 @@ import { openAssignmentKernelOperationV2, markAssignmentKernelOperationDispatchS
 import { selectLocalAdvisoryPolicy,nativeScopePlanningIntentV1 } from "../src/assignments/local_advisory_policy.js";
 import { manageAssignmentWorkPlan } from "../src/assignments/assignment_work_plan.js";
 import { assertNextChatRequest } from '../src/assignments/next_chat_request.js';
+import { settleAssignmentKernelExecutionFailureV2 } from '../src/assignments/assignment_kernel_v2_execution_failure.js';
 import { createExternalAssignmentGoal, startExternalAssignmentRun } from '../src/assignments/external_assignment_start.js';
 import { startAutoGoalIfEligible } from '../src/goals/auto_goal_start.js';
 import { advanceAssignmentKernelProgressV2, DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, recordAssignmentProviderCallStateV2, recordCompletedAssignmentProviderReceiptV2, recordAssignmentProgressEpochV2 } from "../src/assignments/assignment_kernel_v2_progress.js";
@@ -1332,4 +1333,20 @@ test('same-chat transition cannot consume an explicit Pause',()=>fixture(true,f=
     control_command_id:'human-pause',document_fingerprint:s.current_binding.document_fingerprint};
   assert.throws(()=>assertNextChatRequest(next,getGoal(f.goal.id),f.binding.session_id),/paused/);
   assert.deepEqual(f.state(),s);
+}));
+
+for(const transport of ['backend','computer']) test('a settled runtime failure keeps the next request in the same chat through '+transport,()=>fixture(true,f=>{
+  const failed=settleAssignmentKernelExecutionFailureV2({binding:f.state().current_binding,failure_id:'handoff-runtime',error_class:'runtime',phase:'response_handoff'}).snapshot;
+  assert.equal(failed.terminal,true);assert.equal(failed.outcome,'failed');
+  const before=structuredClone(f.state()),next={...f.binding,assignment_version:failed.assignment_version,review_id:null,
+    control_command_id:failed.execution_control?.command_id??null,document_fingerprint:failed.current_binding.document_fingerprint};
+  for(const patch of [{assignment_version:0},{review_id:'invented'},{session_id:'foreign'},{run_id:'foreign'}])
+    assert.throws(()=>assertNextChatRequest({...next,...patch},getGoal(f.goal.id),f.binding.session_id));
+  const source='Rename panel MDP-1 to MDP-1-test in the open model.';
+  const current=transport==='computer'?createExternalAssignmentGoal(f.binding.session_id,{next_request_after:next,title:source,objective:source,acceptance_criteria:['Verify the panel name'],
+    work_budget:{mode:'sidecar_computer',source:'operator_desktop',source_user_request:source,conversation_message_id:'after-failure',requested_effect:'apply',document_fingerprint:next.document_fingerprint}})
+    :startAutoGoalIfEligible({session_id:f.binding.session_id,message_id:'after-failure',user_text:source,tool_result_count:0,source:'chat',created_by:'local-host',
+      request_context:{ui:{next_request_after:next},revit:{document:{projectIdentity:{fingerprint:next.document_fingerprint}}}}})!;
+  assert.notEqual(current.id,f.goal.id);assert.equal(current.related_session_id,f.binding.session_id);
+  assert.equal(current.work_budget!.previous_assignment_id,f.goal.id);assert.deepEqual(f.state(),before);
 }));
