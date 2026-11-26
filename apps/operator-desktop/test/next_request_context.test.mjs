@@ -6,7 +6,7 @@ import {savedComputerBinding,savedComputerConversation,browserComputerMessages,s
 
 const server=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
 const start=server.indexOf('  if (nextRequestAfter) {',server.indexOf('app.post("/api/computer/run"'));
-const restore=server.slice(start,server.indexOf('  if (freshConversation &&',start));
+const restore=server.slice(start,server.indexOf('  // Admission and the exact-owned interactive release',start));
 const buildStart=server.indexOf('function buildComputerInput(');
 const build=server.slice(buildStart,server.indexOf('\n}\n',buildStart)+2);
 const bindingStart=server.indexOf('function browserComputerAssignmentBinding(');

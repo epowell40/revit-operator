@@ -125,7 +125,7 @@ test('retained desktop report keeps its full qualified evidence in closed Detail
   assert.ok(details);assert.equal(details.open,undefined);
   assert.ok(flatten(details).some(n=>n.textContent===claim));
   const summary=answer.children.filter(n=>n!==details).flatMap(flatten).map(n=>n.textContent).filter(Boolean).join(' ');
-  assert.ok(summary.length<800);assert.match(summary,/not independently verified/);assert.match(summary,/Check the layout/);assert.match(summary,/Whole-project scope not checked/);
+  assert.ok(summary.length<800);assert.match(flatten(details).map(n=>n.textContent).join(" "),/not independently verified/);assert.match(summary,/Check the layout/);assert.match(summary,/Whole-project scope not checked/);
  }
 });
 

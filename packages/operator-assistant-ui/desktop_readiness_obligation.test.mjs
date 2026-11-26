@@ -3,7 +3,16 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {createDesktopReadinessObligation} from './desktop_readiness_obligation.mjs';
+import {createDesktopReadinessObligation,desktopReadinessFilename} from './desktop_readiness_obligation.mjs';
+
+test('fresh tasks do not inherit another task readiness; resume preserves it',t=>{
+ const root=path.dirname(fixture(t)),owner={session_id:'chat',goal_id:'revit-task',generation:1};
+ const file=desktopReadinessFilename(root,owner);createDesktopReadinessObligation(file).beforeInput();
+ assert.equal(desktopReadinessFilename(root,{...owner,generation:2}),file);
+ assert.equal(createDesktopReadinessObligation(desktopReadinessFilename(root,{...owner,goal_id:'outlook-task'})).required(),false);
+ assert.equal(createDesktopReadinessObligation(file).required(),true);
+ assert.throws(()=>desktopReadinessFilename(root,{goal_id:'a'}),/owner_required/);
+});
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'desktop-readiness-'));

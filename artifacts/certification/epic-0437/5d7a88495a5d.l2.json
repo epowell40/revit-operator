@@ -1012,7 +1012,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/desktop_execution_guidance.ts",
-      "sha256": "sha256:661e78e591b630b2c065551c816178039bb16ede72d9bf827f7a7cb0b2b4674a"
+      "sha256": "sha256:3fd02cb372288ff712598b960040bc085c0ace67d05da78c094460948976c5e7"
     },
     {
       "path": "apps/operator-backend/src/assignments/desktop_executor_owner.ts",
@@ -9516,6 +9516,10 @@
       "sha256": "sha256:2d5438f28d4af5e923ab9b11c76152d80443c46a60c9e40cf489f924ee7c6030"
     },
     {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorWorkbookPresentationTests.cs",
+      "sha256": "sha256:990c7f011ff612acc550215b4dc873e0fc3e79ed3f267996489c93fcb7010ce3"
+    },
+    {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorWorkbookSupplementalTablesTests.cs",
       "sha256": "sha256:b6b354469c529feb6187998b25250aae8ee4a75c771835a5729c47facc283c7f"
     },
@@ -10701,8 +10705,12 @@
       "sha256": "sha256:a020099a8b80530308fe34c36f290ec884b96a8854e92e8de318c74521eba55c"
     },
     {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorWorkbookPresentation.cs",
+      "sha256": "sha256:3aeaf4f98591043264e8ad9601e0548c62cf1937e3ed0c4563fed2718c4c1d9b"
+    },
+    {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorWorkbookSupplementalTables.cs",
-      "sha256": "sha256:17811b72cbeca61536624918f0a346d17547320a59b6ef5b69fc78e5135ac834"
+      "sha256": "sha256:bc60ce4cf4a6d46e65f9ddf2a69f4e72d8a62bae84d0e45e9376a4d07ab426a4"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorWorkbookWriter.cs",
@@ -12110,7 +12118,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ExportElementsXlsxHandler.cs",
-      "sha256": "sha256:314f2dd15504a87dc99ba00dda146f72962027b9c1d5878336d4afd945b90593"
+      "sha256": "sha256:f684e97c0296b83b3d6b44985e4914492288b3ec10244272d9821a2f2dc76fe2"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ExportIfcHandler.cs",
@@ -12821,7 +12829,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:de44568fb94030cbc25bef43a0a2c0593926cb98035b5f8d1e66e6b98aec7c9a",
+  "inputs_hash": "sha256:ea55577c45bade97a421554e78c730934fff9b224523d603b16465b55613cdec",
   "result": {
     "passed": true,
     "checks": [

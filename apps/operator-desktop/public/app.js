@@ -1296,6 +1296,8 @@ function renderLinkedText(container, text) {
     link.target = "_blank";
     link.rel = "noopener noreferrer";
     if (isLocalFileLink(href)) {
+      link.href = '#';
+      link.removeAttribute('target');
       link.addEventListener("click", (event) => {
         event.preventDefault();
         openLocalPath(href).catch((error) => {
@@ -1318,7 +1320,7 @@ function cleanLinkHref(value) {
 }
 
 function isLocalFileLink(href) {
-  return /^file:\/\/\//i.test(`${href || ""}`);
+  return /^(?:file:\/\/\/|op:\/\/open-folder\?)/i.test(`${href || ""}`);
 }
 
 async function openLocalPath(href) {

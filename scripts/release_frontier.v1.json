@@ -547,6 +547,7 @@
     "OperatorActiveIdleLeaseTests",
     "OperatorProactivityLifecycleContractTests",
     "OperatorWorkbookWriterTests",
+    "OperatorWorkbookPresentationTests",
     "ExportedRasterFrameGeometryTests",
     "MepDuctProfilePolicyTests",
     "MepDuctTypeSelectionPolicyTests",
@@ -5794,6 +5795,27 @@
         "backend:goal_endpoint_security.test.ts",
         "backend:task_navigation.test.ts"
       ]
+    },
+    {
+      "id": "physical_double_escape_and_incremental_pointer_stop_release",
+      "coverage": [
+        "javascript:app/operator-desktop/test/computer_pointer.test.mjs",
+        "javascript:app/operator-desktop/test/computer_control_indicator.test.mjs"
+      ]
+    },
+    {
+      "id": "desktop_only_input_does_not_create_revit_readiness_obligation",
+      "coverage": [
+        "javascript:app/operator-desktop/test/native_readiness_obligation.test.mjs",
+        "javascript:package/operator-assistant-ui/desktop_readiness_obligation.test.mjs"
+      ]
+    },
+    {
+      "id": "workbook_requested_column_presentation_and_local_artifact_open",
+      "coverage": [
+        "dotnet:OperatorWorkbookPresentationTests",
+        "javascript:app/operator-desktop/test/artifact_open_path.test.mjs"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
@@ -5869,6 +5891,11 @@
     "app/operator-desktop/test/evidence_store_contract.test.mjs",
     "app/operator-desktop/test/next_request_context.test.mjs",
     "package/operator-assistant-ui/continuous_chat.test.mjs",
-    "package/operator-assistant-ui/history_archive_request.test.mjs"
+    "package/operator-assistant-ui/history_archive_request.test.mjs",
+    "app/operator-desktop/test/computer_pointer.test.mjs",
+    "app/operator-desktop/test/native_readiness_obligation.test.mjs",
+    "app/operator-desktop/test/computer_control_indicator.test.mjs",
+    "app/operator-desktop/test/artifact_open_path.test.mjs",
+    "package/operator-assistant-ui/desktop_readiness_obligation.test.mjs"
   ]
 }

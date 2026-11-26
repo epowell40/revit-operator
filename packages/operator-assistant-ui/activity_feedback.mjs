@@ -22,7 +22,9 @@ export function computerControlPresentation(payload, stale = false) {
   if (stale) return {visible: true, active: false, text: 'Computer control status unavailable · Reconnecting…'};
   const active = payload?.running === true && payload?.desktopCaptureSuppressed === false;
   const unavailable = payload?.computerControlIndicator === 'unavailable';
-  return {visible: active, active, text: active ? 'Computer control active · Operator may move the pointer and type'
+  const stopped = payload?.stopRequested === true || payload?.computerControlIndicator === 'stopped';
+  if(active&&stopped)return {visible:true,active:false,text:'Computer control stopped · Waiting for admitted work to settle'};
+  return {visible: active, active, text: active ? 'Computer control active · Press Esc twice to stop'
     + (unavailable ? ' · Desktop outline unavailable' : '') : ''};
 }
 

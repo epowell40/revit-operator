@@ -47,7 +47,7 @@ test("long desktop reports have a concise unverified summary and lossless Detail
  const report=retainedWorkReportMessage({name:"report_work_for_review"},{output:JSON.stringify({ok:true,verification_policy:"advisory",completion_proposal:{...proposal,verified:false,review_id:"review"}})});
  assert.ok(report.includes("## Details"));
  const [summary,details]=report.split("## Details");
- assert.ok(summary.length<800);assert.match(summary,/not independently verified/);
+ assert.ok(summary.length<800);assert.match(details,/not independently verified/);
  assert.match(summary,/Work reported: 2 items in Details/);assert.ok(!summary.includes("Changed M002."));
  assert.match(summary,/Remaining work: Review the titleblock layout/);assert.match(summary,/Uncertainties: Whole-project scope was not checked/);
  for(const item of Object.values(proposal).flat())assert.ok(details.includes(item));

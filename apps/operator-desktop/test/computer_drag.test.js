@@ -12,41 +12,39 @@ const retained=[
  [{x:872,y:766},{x:872,y:760},{x:878,y:749},{x:890,y:729},{x:903,y:709},{x:917,y:692}],
  [{x:839,y:782},{x:840,y:780},{x:845,y:770},{x:860,y:750},{x:880,y:710},{x:907,y:671}]
 ];
-function harness({controlError,readinessError,inputError,stop=false}={}) {
- const calls=[],events=[],state={stopRequested:stop,desktopInputDispatched:false}; let control=0,readiness=0;
+function harness({controlError,inputError,stop=false}={}) {
+ const calls=[],events=[],state={stopRequested:stop,desktopInputDispatched:false}; let control=0;
  const run=runInNewContext(source.slice(a,z)+';executeComputerAction',{
   computerState:state,computerDragArguments,normalizeComputerDrag,summarizeComputerDrag,Buffer,
   assertComputerActionControl:async()=>{control++;if(controlError)throw Error(controlError);},
-  desktopReadinessObligation:()=>({beforeInput(){readiness++;if(readinessError)throw Error(readinessError);}}),
   toAbsoluteDesktopPoint:(x,y)=>({x:x-1920,y:y+40}),
   formatRelativeToDesktopPoint:(x,y)=>`(${x},${y})`,summarizeComputerAction:summarizeComputerDrag,
   addComputerEvent:e=>events.push(e),runDesktopScript:async args=>{calls.push(Array.from(args));if(inputError)throw Error(inputError);}
  });
- return {run,calls,events,state,counts:()=>({control,readiness})};
+ return {run,calls,events,state,counts:()=>({control})};
 }
 for(const [i,path]of retained.entries())test(`actual dispatcher retained355 drag${i+1} preserves every mapped vertex`,async()=>{
  const h=harness();await h.run({type:'drag',path});assert.equal(h.calls.length,1);
  const args=h.calls[0];assert(args.includes('-DragPathJsonBase64'),'Missing full path argument');
  const got=JSON.parse(Buffer.from(args[args.indexOf('-DragPathJsonBase64')+1],'base64').toString());
  assert.deepEqual(got,path.map(p=>({x:p.x-1920,y:p.y+40})));
- assert.deepEqual(h.counts(),{control:1,readiness:1});assert.equal(h.state.desktopInputDispatched,true);
+ assert.deepEqual(h.counts(),{control:1});assert.equal(h.state.desktopInputDispatched,true);
 });
 test('actual dispatcher rejects malformed geometry before input/readiness obligation',async()=>{
  for(const action of [{type:'drag'},{type:'drag',path:[]},{type:'drag',path:[{x:1,y:2},{x:null,y:4}]}]){
   const h=harness();await assert.rejects(h.run(action),/drag/i);assert.equal(h.calls.length,0);
-  assert.equal(h.state.desktopInputDispatched,false);assert.equal(h.counts().readiness,0);
+  assert.equal(h.state.desktopInputDispatched,false);
  }
 });
 for(const [name,options,message]of [
- ['stop',{stop:true},'Stopped by user'],['control',{controlError:'pause control'},'pause control'],
- ['readiness persistence',{readinessError:'disk failure'},'disk failure']
+ ['stop',{stop:true},'Stopped by user'],['control',{controlError:'pause control'},'pause control']
 ])test(`actual drag ${name} refuses input`,async()=>{
  const h=harness(options);await assert.rejects(h.run({type:'drag',path:retained[0]}),new RegExp(message));
  assert.equal(h.calls.length,0);assert.equal(h.state.desktopInputDispatched,false);
 });
-test('unknown input outcome retains readiness obligation without retry',async()=>{
+test('unknown input outcome retains dispatch state without retry',async()=>{
  const h=harness({inputError:'outcome unknown'});await assert.rejects(h.run({type:'drag',path:retained[0]}),/outcome unknown/);
- assert.equal(h.calls.length,1);assert.equal(h.state.desktopInputDispatched,true);assert.equal(h.counts().readiness,1);
+ assert.equal(h.calls.length,1);assert.equal(h.state.desktopInputDispatched,true);
 });
 test('manual desktop adapter uses the same full path contract',()=>{
  const start=source.indexOf('function normalizeDesktopAction('),end=source.indexOf('\nfunction ',start+20);
