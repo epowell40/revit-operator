@@ -21,6 +21,9 @@ import { getAssignmentKernelSnapshotV2, appendCurrentAssignmentKernelEventV2 } f
 import { openAssignmentKernelOperationV2, markAssignmentKernelOperationDispatchStartedV2, settleAssignmentKernelOperationV2, failAssignmentKernelOperationV2 } from "../src/assignments/assignment_kernel_v2_execution.js";
 import { selectLocalAdvisoryPolicy,nativeScopePlanningIntentV1 } from "../src/assignments/local_advisory_policy.js";
 import { manageAssignmentWorkPlan } from "../src/assignments/assignment_work_plan.js";
+import { assertNextChatRequest } from '../src/assignments/next_chat_request.js';
+import { createExternalAssignmentGoal, startExternalAssignmentRun } from '../src/assignments/external_assignment_start.js';
+import { startAutoGoalIfEligible } from '../src/goals/auto_goal_start.js';
 import { advanceAssignmentKernelProgressV2, DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, recordAssignmentProviderCallStateV2, recordCompletedAssignmentProviderReceiptV2, recordAssignmentProgressEpochV2 } from "../src/assignments/assignment_kernel_v2_progress.js";
 import { defaultAssignmentWorkBudgetV2 } from "../src/assignments/assignment_work_allowance_v2.js";
 import { controlAssignmentExecutionV2 } from "../src/assignments/assignment_kernel_v2_controls.js";
@@ -1295,4 +1298,38 @@ test("rejected advisory proposals cannot partially retain unfinished state, and 
   assert.equal(strict.snapshot().advisory_followups, undefined);
   assert.throws(() => strict.append({ ...event, work_unit_ids: [] } as AssignmentEventV2), { code: "advisory_proposal_not_enabled" });
   assert.equal(strict.snapshot().advisory_followups, undefined);
+}));
+
+for (const transport of ['backend','computer']) test('same chat next request creates fresh scope through '+transport,()=>fixture(true,f=>{
+  manageAssignmentWorkPlan({binding:f.binding,action:'propose_completion',completion_proposal:{...proposal,remaining_work:[]}});
+  const before=structuredClone(f.state());
+  const next={...f.binding,assignment_version:before.assignment_version,review_id:before.completion_proposal!.review_id,
+    control_command_id:before.execution_control?.command_id??null,document_fingerprint:before.current_binding.document_fingerprint};
+  for(const change of [{session_id:'foreign'},{generation:99},{assignment_version:0},{review_id:'other'},{control_command_id:'late'},{document_fingerprint:'other'}]) {
+    assert.throws(()=>assertNextChatRequest({...next,...change},getGoal(f.goal.id),f.binding.session_id));
+    assert.deepEqual(f.state(),before);
+  }
+  const source='Rename panel MDP-1 to MDP-1-test in the open model.';
+  const current=transport==='computer'?createExternalAssignmentGoal(f.binding.session_id,{next_request_after:next,
+    title:source,objective:source,acceptance_criteria:['Verify the panel name'],work_budget:{mode:'sidecar_computer',source:'operator_desktop',
+      source_user_request:source,conversation_message_id:'next-message',requested_effect:'apply',document_fingerprint:next.document_fingerprint}})
+    :startAutoGoalIfEligible({session_id:f.binding.session_id,message_id:'next-message',user_text:source,tool_result_count:0,
+      source:'chat',created_by:'local-host',request_context:{ui:{next_request_after:next},revit:{document:{projectIdentity:{fingerprint:next.document_fingerprint}}}}})!;
+  assert.notEqual(current.id,f.goal.id);assert.equal(current.related_session_id,f.binding.session_id);
+  assert.equal(current.work_budget!.previous_assignment_id,f.goal.id);
+  const run=startExternalAssignmentRun({goal:current,sessionId:f.binding.session_id,actor:'test',requestedRunId:'next-run'});
+  const fresh=getAssignmentKernelSnapshotV2(run.assignmentId)!;
+  assert.equal(fresh.spec.source_user_request,source);assert.equal(fresh.spec.requested_effect,'apply');
+  assert.deepEqual(f.state().spec,before.spec);assert.deepEqual(f.state().operations,before.operations);
+  assert.equal(f.state().execution_control?.state,'paused');
+  assert.throws(()=>assertNextChatRequest(next,getGoal(current.id),f.binding.session_id));
+}));
+
+test('same-chat transition cannot consume an explicit Pause',()=>fixture(true,f=>{
+  manageAssignmentWorkPlan({binding:f.binding,action:'propose_completion',completion_proposal:proposal});
+  controlAssignmentExecutionV2({binding:f.binding,command_id:'human-pause',expected_command_id:null,action:'pause'});
+  const s=f.state(),next={...f.binding,assignment_version:s.assignment_version,review_id:s.completion_proposal!.review_id,
+    control_command_id:'human-pause',document_fingerprint:s.current_binding.document_fingerprint};
+  assert.throws(()=>assertNextChatRequest(next,getGoal(f.goal.id),f.binding.session_id),/paused/);
+  assert.deepEqual(f.state(),s);
 }));

@@ -1,13 +1,16 @@
 const bindingKeys = ["assignment_id", "session_id", "run_id", "generation"];
 
 /** A new request gets fresh interpretation and authority through ordinary intake.
- * This only permits navigation away; it never changes the old task's scope. */
+ * This returns a fenced predecessor for same-chat admission, not new authority. */
 export function assertNewTaskAfterReport(publication, goal) {
   const context=checkpointDirectionContext(publication,goal),s=publication.snapshot;
   if (!context.checkpoint || context.paused || !s.quiescent || s.provider_usage_hold
       || s.unresolved_unknown_operation_ids?.length || s.pending_input_variable_ids?.length
       || s.in_flight_operation_ids?.length || s.in_flight_provider_call_ids?.length)
     throw Error('The previous task is still settling. Keep this draft and refresh its status.');
+  return { ...goal._bindingV2, assignment_version: s.assignment_version,
+    review_id: context.checkpoint.review_id, document_fingerprint: s.current_binding.document_fingerprint,
+    control_command_id: s.execution_control?.command_id ?? null };
 }
 
 /** Display eligibility only. A button must not promise a renewal unsupported by

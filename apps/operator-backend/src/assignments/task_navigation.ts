@@ -79,8 +79,11 @@ function* navigationSteps(limit = 100, archived = false): Generator<NavigationPa
         : state === "failed" ? "Open the conversation to review what remains." : "Open the conversation to see the result."
     };
     const previous = entries.get(sessionId);
-    if (!previous || rank(state) < rank(previous.state)
-      || rank(state) === rank(previous.state) && Date.parse(entry.updated_at) > Date.parse(previous.updated_at)) entries.set(sessionId, entry);
+    // A conversation can contain successive objectives. Old saved checkpoints
+    // must not replace the latest result; a genuinely working owner still wins.
+    if (!previous || rank(state) === 0 && rank(previous.state) !== 0
+      || (rank(state) === 0) === (rank(previous.state) === 0)
+        && Date.parse(entry.updated_at) > Date.parse(previous.updated_at)) entries.set(sessionId, entry);
   }
   return page(false);
 }

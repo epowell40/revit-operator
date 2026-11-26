@@ -1239,7 +1239,7 @@ function renderAttachStrip() {
 function renderMessages() {
   renderSessionStartScreen();
   elements.messages.innerHTML = "";
-  const messages = activeMessages();
+  const messages = state.sendingMessage ? [...activeMessages(), state.sendingMessage] : activeMessages();
   const copy = state.checkedProjectCopy;
   const liveCopy = state.activeRunKind !== "backend" && copy?.sessionId === state.sessionId
     && copy.epoch === state.taskNavigationEpoch ? copy.message : null;
@@ -1254,7 +1254,7 @@ function renderMessages() {
 
     const role = document.createElement("div");
     role.className = "role";
-    role.textContent = normalizedRole === "user" ? "You" : normalizedRole === "error" ? "Error" : "Operator";
+    role.textContent = normalizedRole === "user" ? (message.sending ? "You · Sending…" : "You") : normalizedRole === "error" ? "Error" : "Operator";
 
     const bubble = document.createElement("div");
     bubble.className = "bubble";
@@ -2010,7 +2010,7 @@ function updateControls() {
     ? "Sending…"
     : backendSubmissionActive || state.streaming && state.activeRunKind === "computer"
       ? "Steer"
-      : newRequestAfterReport() ? "Start new task" : pausedTaskAcceptsDirection() ? "Add direction" : "Send";
+      : pausedTaskAcceptsDirection() && !newRequestAfterReport() ? "Send direction" : "Send";
   elements.chatForm?.setAttribute("aria-busy", state.streaming || state.composerSubmissionPending ? "true" : "false");
   elements.newSessionButton.disabled = captureActive || captureBusy;
   elements.stopButton.disabled = !state.streaming;
@@ -4691,7 +4691,7 @@ async function resumeCanonicalAssignment(goal, options = {}) {
 async function runCanonicalGoalControl(goal, action, stillCurrent = () => true, options = {}) {
   if (!["pause", "resume"].includes(action)) return;
   if (state.sessionId !== goal._bindingV2.session_id) throw new Error("This control belongs to another conversation.");
-  if (action === "resume" && state.assignmentResumePending) return;
+  if (action === "resume" && (state.assignmentResumePending || state.composerSubmissionPending && !options.onAccepted)) return;
   if (action === "resume" && (!goal._canResume || state.streaming)) throw new Error("Resolve pending questions and wait for admitted work to settle before resuming.");
   const binding = { ...goal._bindingV2 };
   const command = { ...binding, command_id: crypto.randomUUID(), expected_command_id: goal._executionControl?.command_id || null,
@@ -5021,6 +5021,7 @@ async function sendBackendPrompt(submission, { browserFreshnessChecked = false, 
           client: "operator-desktop",
           surface: "external-sidecar",
           response_style: "conversation",
+          ...(submission.nextRequestAfter ? { next_request_after: submission.nextRequestAfter } : {}),
           speed_settings: getSpeedSettings()
         }
       },
@@ -5338,12 +5339,14 @@ async function sendComputerPrompt(submission, { browserFreshnessChecked = false,
   }
 
   if (submission.mode === "computer-interject") {
+    submission.sessionId = state.sessionId;
     submission.transportStarted = true;
     await fetchJson("/api/computer/interject", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         prompt: text,
+        session_id: submission.sessionId,
         message_id: submission.id,
         pending_attachments: attachments,
         speed_settings: getSpeedSettings()
@@ -5368,6 +5371,7 @@ async function sendComputerPrompt(submission, { browserFreshnessChecked = false,
       body: JSON.stringify({
         prompt: text,
         new_conversation: submission.newComputerConversation === true,
+        ...(submission.nextRequestAfter ? { next_request_after: submission.nextRequestAfter } : {}),
         ...(submission.assignmentBindingV2 ? { assignment_binding_v2: submission.assignmentBindingV2,
           resume_control: submission.assignmentResumeControl } : {}),
         message_id: submission.id,
@@ -5617,7 +5621,7 @@ async function syncTaskNavigation({ refreshCatalogue = false } = {}) {
   finally { state.taskNavigationBusy = false; }
 }
 
-async function sendPrompt(input, attachments = [], { browserFreshnessChecked = false } = {}) {
+async function sendPrompt(input, attachments = [], { browserFreshnessChecked = false, onAccepted } = {}) {
   if (state.resetting) return;
   if (!browserFreshnessChecked) await assertLoadedBrowserFresh(loadedBrowserIdentity);
   if (state.resetting) return;
@@ -5627,9 +5631,9 @@ async function sendPrompt(input, attachments = [], { browserFreshnessChecked = f
   if (!submission) return;
   if (!submission.optimisticMessage) beginOptimisticChatSubmission(submission);
   if (submission.mode === "computer-run" || submission.mode === "computer-interject") {
-    return sendComputerPrompt(submission, { browserFreshnessChecked: true });
+    return sendComputerPrompt(submission, { browserFreshnessChecked: true, onAccepted });
   }
-  return sendBackendPrompt(submission, { browserFreshnessChecked: true });
+  return sendBackendPrompt(submission, { browserFreshnessChecked: true, onAccepted });
 }
 
 function applyRuntimeSpeedDefaults(config) {
@@ -5747,7 +5751,16 @@ async function initializeBackendBootstrap() {
 }
 
 function handleChatSubmissionFailure(error, submission) {
-  if (!submission.transportStarted || error?.code === "SIDECAR_BROWSER_STALE") restoreChatSubmissionInput(submission);
+  const rejected = mayRestoreRejectedChatSubmission(submission, error);
+  if (!submission.transportStarted || rejected || error?.code === "SIDECAR_BROWSER_STALE") restoreChatSubmissionInput(submission);
+  if (rejected && submission.mode === 'computer-interject') {
+    state.pendingComputerUserMessages = state.pendingComputerUserMessages.filter(m => m.id !== submission.id);
+    state.computerMessages = state.computerMessages.filter(m => m.id !== submission.id);
+    setStreaming(false); renderMessages();
+    setStatus('The task finished. Your follow-up is in the draft, ready to send.');
+    void syncComputerState(); void syncGoals();
+    return;
+  }
   if (error?.code === "SIDECAR_BROWSER_STALE") {
     state.pendingComputerUserMessages = state.pendingComputerUserMessages.filter((message) => message?.id !== submission.id);
     if (submission.mode !== "computer-interject") setStreaming(false);
@@ -5781,37 +5794,41 @@ function newRequestAfterReport() {
 elements.chatForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (state.attachmentReadsPending > 0) return;
-  if (newRequestAfterReport()) {
-    if(state.composerSubmissionPending || state.resetting || state.assignmentResumePending)return;
-    const text=elements.promptInput.value, attachments=state.pendingAttachments.map(a=>({...a})), goal=selectedGoal();
-    if(!text.trim() && !attachments.length)return;
-    state.composerSubmissionPending=true;updateControls();
-    try {
-      await assertLoadedBrowserFresh(loadedBrowserIdentity);
-      const current=await fetchJson('/api/assignments/v2/'+encodeURIComponent(goal._bindingV2.assignment_id));
-      // A polling refresh may replace the view object without changing identity.
-      // Validate the current selection's canonical binding and control version.
-      assertNewTaskAfterReport(current.assignment_kernel_v2,selectedGoal());
-      // The navigation helper retains the old task and its draft before switching.
-      state.composerSubmissionPending=false;
-      await openTaskConversation(null);
-      if(state.sessionId || state.resetting)throw Error('Could not start a new conversation. Your draft is retained.');
-      elements.promptInput.value=text;state.pendingAttachments=attachments;renderAttachStrip();
-    } catch(error) { setStatus(error.message || 'Could not start the next task.'); return; }
-    finally { state.composerSubmissionPending=false;updateControls(); }
-  }
-  if (state.streaming && state.activeRunKind === "backend" || pausedTaskAcceptsDirection()) { await submitTaskDirection(); return; }
+  const nextGoal = newRequestAfterReport() ? selectedGoal() : null;
+  if (!nextGoal && (state.streaming && state.activeRunKind === "backend" || pausedTaskAcceptsDirection())) { await submitTaskDirection(); return; }
   const captured = beginComposerSend(state, elements.promptInput.value);
   if (!captured) return;
+  let ownsSendLock = true;
+  const releaseSendLock = () => {
+    if (!ownsSendLock) return;
+    ownsSendLock = false;
+    state.composerSubmissionPending = false;
+    updateControls();
+  };
   setStatus("Sending…");
   updateControls();
   let submission;
   try {
     assertAttachmentTotalSize(captured.attachments);
+    state.sendingMessage = { role: 'user', text: captured.prompt, attachments: captured.attachments, sending: true };
+    renderMessages();
     await persistComposerDraft();
     await assertLoadedBrowserFresh(loadedBrowserIdentity);
     if (state.resetting) return;
     submission = createChatSubmission(captured.prompt, captured.attachments);
+    if (nextGoal) {
+      const current = await fetchJson('/api/assignments/v2/' + encodeURIComponent(nextGoal._bindingV2.assignment_id));
+      submission.nextRequestAfter = assertNewTaskAfterReport(current.assignment_kernel_v2, selectedGoal());
+      const owner = await fetchJson('/api/assignment-workspace/v2/executor', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(nextGoal._bindingV2)
+      });
+      if (owner?.ok !== true || !['computer', 'backend'].includes(owner.executor)
+          || !['assignment_id', 'session_id', 'run_id', 'generation'].every(k => owner.binding?.[k] === nextGoal._bindingV2[k])
+          || state.sessionId !== nextGoal._bindingV2.session_id) throw Error('The selected chat changed. Your draft is retained.');
+      submission = { ...routeSavedChatSubmission(submission, owner.executor), nextRequestAfter: submission.nextRequestAfter };
+      state.taskNavigationAssignmentId = ''; state.activeGoalId = ''; state.verifiedWorkPacket = null;
+    }
+    state.sendingMessage = null;
     clearChatComposerForSubmission();
     beginOptimisticChatSubmission(submission);
     // Persist the cleared composer under its original conversation key before
@@ -5820,21 +5837,21 @@ elements.chatForm.addEventListener("submit", async (event) => {
     if (!await persistComposerDraft()) throw new Error("Your draft could not be updated. Please try sending again.");
     // This same admission already checked the loaded assets. All
     // other sendPrompt callers still check, and the server fences every send.
-    void sendPrompt(submission, [], { browserFreshnessChecked: true }).catch((error) => handleChatSubmissionFailure(error, submission));
+    await sendPrompt(submission, [], { browserFreshnessChecked: true, onAccepted: releaseSendLock });
   } catch (error) {
     if (submission) handleChatSubmissionFailure(error, submission);
     else if (error?.code === "SIDECAR_BROWSER_STALE") await showStaleComposerNotice();
     else setStatus(error.message || String(error));
   } finally {
-    state.composerSubmissionPending = false;
-    updateControls();
+    state.sendingMessage = null; renderMessages();
+    releaseSendLock();
   }
 });
 
 elements.promptInput.addEventListener("input", scheduleComposerDraftSave);
 
 async function submitTaskDirection({renewResources=false}={}) {
-  if (state.composerSubmissionPending || state.resetting) return;
+  if (state.composerSubmissionPending || state.resetting || state.assignmentResumePending) return;
   const text = elements.promptInput.value;
   const sessionId = state.sessionId;
   const initialGoal = selectedGoal();
@@ -5857,6 +5874,8 @@ async function submitTaskDirection({renewResources=false}={}) {
     state.composerSubmissionPending = false;
     updateControls();
   };
+  state.sendingMessage = { role: 'user', text, attachments: [], sending: true };
+  setStatus('Sending direction…'); renderMessages();
   updateControls();
   try {
     if (!await persistComposerDraft()) throw new Error("Your draft could not be saved. Your direction has not been sent.");
@@ -5900,9 +5919,10 @@ async function submitTaskDirection({renewResources=false}={}) {
     if (["saved", "accepted", "delivered"].includes(response.receipt?.state)) await composerDraftStore.clear(commandKey);
     if (command.checkpoint) state.pendingCheckpointDirection = null;
     if (elements.promptInput.value === text) { elements.promptInput.value = ""; await persistComposerDraft(); }
+    state.sendingMessage = null;
     await restoreConversationHistory();
     if (command.checkpoint) {
-      setStatus(wasPaused ? "Direction saved. The task remains paused." : wasHeld ? "Direction saved. The task is still waiting for usage. Use Resume when ready." : "Direction saved. Refresh the task and use Resume if work does not continue.");
+      setStatus(wasPaused ? "Direction saved. The task remains paused." : wasHeld ? "Direction saved. The task is still waiting for usage. Use Resume when ready." : "Direction accepted. Continuing…");
       await syncGoals();
       if (!stillCurrent() || wasPaused || wasHeld || selectedGoal()?._providerUsageHold || state.streaming) return;
       const current = await fetchJson(`/api/assignments/v2/${encodeURIComponent(binding.assignment_id)}`);
@@ -5920,7 +5940,7 @@ async function submitTaskDirection({renewResources=false}={}) {
   } catch (error) {
     if (error?.code === "SIDECAR_BROWSER_STALE") await showStaleComposerNotice();
     else setStatus(checkpointSaved ? `Direction saved. ${error.message || "Continuation could not be confirmed."} Refresh the task before using Resume.` : error.message || "Could not send the direction. Your draft is retained.");
-  } finally { releaseSubmissionLock(); }
+  } finally { state.sendingMessage = null; renderMessages(); releaseSubmissionLock(); }
 }
 
 elements.newSessionButton.addEventListener("click", resetCurrentMode);
@@ -5951,7 +5971,7 @@ const taskBudgetContinueButton=document.createElement('button');
 const taskContinueReportButton=document.createElement('button');
 taskContinueReportButton.id='taskContinueReportButton';taskContinueReportButton.hidden=true;
 taskContinueReportButton.textContent='Continue this task';
-taskContinueReportButton.title='Apply the typed direction to the existing task and its original scope. Use Start new task for a separate request.';
+taskContinueReportButton.title='Apply the typed direction to the existing task and its original scope. Send handles your next request in this chat.';
 document.querySelector('#taskResumeButton').after(taskContinueReportButton);
 taskContinueReportButton.addEventListener('click',()=>{
   if(!elements.promptInput.value.trim())elements.promptInput.value='Continue the remaining work on this task using its saved answers and evidence.';
@@ -5986,7 +6006,7 @@ function renderCompactWork() {
     : state.streaming ? state.agentProgress || compactWorkSummary(selectedGoal(), true) : saved ? taskStateLabel(task.state) : "";
   document.querySelector("#taskPauseButton").hidden = !state.streaming || task?.state === "pausing";
   document.querySelector("#taskResumeButton").hidden = state.streaming || state.goalSelectionPinned || !goal?._canResume;
-  document.querySelector("#taskResumeButton").disabled = Boolean(state.assignmentResumePending);
+  document.querySelector("#taskResumeButton").disabled = Boolean(state.assignmentResumePending || state.composerSubmissionPending);
   const renewalButton=document.querySelector('#taskBudgetContinueButton');
   if(renewalButton){
     renewalButton.textContent=goal?._resourceRenewalAddsTime===true

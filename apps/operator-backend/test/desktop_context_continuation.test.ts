@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {createHash} from 'node:crypto';
+import {canonicalJsonV2} from '../src/domain/assignment-kernel/index.js';
+import {ensureWorkspaceLayout} from '../src/workspace.js';
 import {retainDesktopResponse,retainDesktopContext,readDesktopContext} from '../src/desktop_response_store.js';
 const binding={session_id:'s',assignment_id:'a',run_id:'r',generation:1,kernelVersion:2 as const};
 const profile={model:'gpt-6.1-terra',reasoning_effort:'medium'};
@@ -18,6 +21,25 @@ async function isolated(run:()=>Promise<void>){const old=process.env.OPERATOR_WO
  try{await run();}finally{if(old===undefined)delete process.env.OPERATOR_WORKSPACE_ROOT;else process.env.OPERATOR_WORKSPACE_ROOT=old;
  assert(path.resolve(root).startsWith(path.resolve(os.tmpdir())+path.sep));fs.rmSync(root,{recursive:true,force:true});}}
 async function retain(value=response(),message='m'){await retainDesktopResponse(binding,message,profile,async()=>value,()=>({error:'retained'}),true);}
+
+test('a new task in the same chat has separate provider context and preserves prior continuation',()=>isolated(async()=>{
+ await retain();retainDesktopContext(binding,'m',outputs);
+ const before=readDesktopContext(binding,state());
+ // Replay an installed pre-fix chat whose context used the session-only key.
+ const root=path.join(ensureWorkspaceLayout().runs,'desktop-responses');
+ const context=fs.readdirSync(root).find(name=>name.endsWith('.context'))!;
+ const legacy=path.join(root,createHash('sha256').update(canonicalJsonV2([binding.session_id,'owner-context'])).digest('hex')+'.json.context');
+ fs.renameSync(path.join(root,context),legacy);
+ const legacyBytes=fs.readFileSync(legacy);
+ const next={...binding,assignment_id:'next-task',run_id:'next-run'};
+ const nextState={...state(),current_binding:next};
+ assert.deepEqual(readDesktopContext(next,nextState),{status:'unavailable'});
+ await retainDesktopResponse(next,'next-message',profile,async()=>response('next-message'),()=>({error:'retained'}),true);
+ retainDesktopContext(next,'next-message',outputs);
+ assert.equal((readDesktopContext(next,nextState) as any).binding.assignment_id,'next-task');
+ assert.deepEqual(readDesktopContext(binding,state()),before);
+ assert.deepEqual(fs.readFileSync(legacy),legacyBytes);
+}));
 
 test('repeated failed evidence navigation is retained across response invalidation and cold reopen',()=>isolated(async()=>{
  const evidenceId='ev1_'+'a'.repeat(32);
@@ -79,7 +101,8 @@ test('foreign, stale, Pause, pending review, unknown and unsettled usage never r
   {pending_input_variable_ids:['i']},{unresolved_unknown_operation_ids:['u']},{in_flight_provider_call_ids:['p']},
   {in_flight_operation_ids:['o']},{provider_calls:{}},{current_binding:{...binding,generation:2}}])
   assert.throws(()=>readDesktopContext(binding,{...state(),...patch}));
- assert.throws(()=>readDesktopContext({...binding,run_id:'foreign'},{...state(),current_binding:{...binding,run_id:'foreign'}}),/binding_mismatch/);
+ // A separately admitted binding has no saved context; it cannot inherit this run.
+ assert.deepEqual(readDesktopContext({...binding,run_id:'foreign'},{...state(),current_binding:{...binding,run_id:'foreign'}}),{status:'unavailable'});
 }));
 
 test('untrusted receipts, wrong or duplicate call outputs and unsupported item types fail closed',()=>isolated(async()=>{

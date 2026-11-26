@@ -4,6 +4,7 @@ import { hasRevitTurnContext } from "../revit_context_policy.js";
 import { isIndependentAssistantTurn } from "./assistant_turn.js";
 import { pauseAutomaticAssignmentForNewRequest } from "../assignments/fresh_request.js";
 import { assertConversationIntakeResolved, retainedIntakeDecision } from "../conversation_intake.js";
+import { assertNextChatRequest } from '../assignments/next_chat_request.js';
 
 type JsonMap = Record<string, unknown>;
 
@@ -54,9 +55,14 @@ export function startAutoGoalIfEligible(input: {
     decision.signals.push("request in Revit conversation context");
   }
   const current = getCurrentGoalForSession(input.session_id);
+  const nextRequest = object(object(input.request_context).ui).next_request_after;
+  // An exact accepted message retry keeps its new task; it never creates a third.
+  if (current && input.message_id && current.work_budget?.conversation_message_id === input.message_id
+      && current.work_budget?.source_user_request === input.user_text) return current;
+  if (nextRequest) assertNextChatRequest(nextRequest, current, input.session_id);
   const resume = /^(?:please\s+)?(?:continue|resume|keep going|go on)(?:\s+(?:the\s+)?(?:saved|current|previous|active))?(?:\s+(?:work|task|assignment))?[.!]?$/i.test(input.user_text.trim());
-  if (current && resume) return current;
-  if (current && current.work_budget?.mode !== "auto_goal") return current;
+  if (current && resume && !nextRequest) return current;
+  if (current && current.work_budget?.mode !== "auto_goal" && !nextRequest) return current;
   if (current) pauseAutomaticAssignmentForNewRequest(current);
   const context = object(input.request_context);
   const revit = object(context.revit);

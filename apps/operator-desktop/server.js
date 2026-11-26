@@ -5939,12 +5939,14 @@ async function beginSidecarComputerAssignment(prompt, attachments = [], options 
     attachment_count: Array.isArray(attachments) ? attachments.length : 0,
     attachment_ids: registeredAttachments.map(attachment => attachment.id).filter(Boolean)
   };
-  const requestedRunId = `sidecar:${randomId()}`;
+  const requestedRunId = options.nextRequestAfter && conversationMessageId
+    ? `sidecar:${conversationMessageId}` : `sidecar:${randomId()}`;
   const payload = await request("/api/agent-goal", {
     method: "POST",
     body: JSON.stringify({
       session_id: sessionId,
       title,
+      ...(options.nextRequestAfter ? { next_request_after: options.nextRequestAfter } : {}),
       objective: source || title,
       acceptance_criteria: [
         "Return a truthful, evidence-backed result for the requested work."
@@ -16074,18 +16076,21 @@ app.post("/api/computer/run", async (req, res) => {
   const requestedMessageId = `${req.body?.message_id || ""}`.trim();
   const messageId = /^[A-Za-z0-9._:-]{1,200}$/.test(requestedMessageId) ? requestedMessageId : "";
   const freshConversation = req.body?.new_conversation === true;
+  const nextRequestAfter = req.body?.next_request_after;
   const savedBinding = req.body?.assignment_binding_v2;
+  if (nextRequestAfter && (freshConversation || savedBinding || req.body?.clarification_response))
+    return sendJsonError(res, 'A next request cannot also resume or reset a conversation.', 409);
   if (savedBinding && (freshConversation || req.body?.clarification_response))
     return sendJsonError(res, "Saved continuation cannot also start a new conversation or resolve a different clarification.", 409);
   const requestedClarificationResponse = req.body?.clarification_response;
   if (freshConversation && requestedClarificationResponse) return sendJsonError(res, "A new conversation cannot resume a saved clarification.", 409);
   let clarificationContinuation = null;
   try {
-    clarificationContinuation = freshConversation || savedBinding ? null : normalizeSidecarClarificationContinuation(prompt, requestedClarificationResponse);
+    clarificationContinuation = freshConversation || savedBinding || nextRequestAfter ? null : normalizeSidecarClarificationContinuation(prompt, requestedClarificationResponse);
   } catch (error) {
     return sendJsonError(res, error, 409);
   }
-  const retainedDirection=!freshConversation&&!savedBinding&&!clarificationContinuation&&computerState.sidecarAssignment?.kernel_version===2
+  const retainedDirection=!freshConversation&&!savedBinding&&!nextRequestAfter&&!clarificationContinuation&&computerState.sidecarAssignment?.kernel_version===2
     ? {binding:savedComputerBinding({assignment_id:computerState.sidecarAssignment.goal_id,session_id:computerState.sidecarAssignment.session_id,
         run_id:computerState.sidecarAssignment.run_id,generation:computerState.sidecarAssignment.generation}),
       expected_control_command_id:computerState.sidecarAssignment.control_command_id??null}:null;
@@ -16100,6 +16105,20 @@ app.post("/api/computer/run", async (req, res) => {
   if(retainedDirection&&attachments.length)return sendJsonError(res,'Saved task directions currently accept text only. Your attachments remain in the draft.',409);
   if (!prompt && attachments.length === 0) {
     return sendJsonError(res, "prompt or attachment is required.", 400);
+  }
+  if (nextRequestAfter) {
+    try {
+      const saved = await readSavedAssignmentExecutor(nextRequestAfter);
+      if (saved.executor !== 'computer')
+        throw new Error('The selected chat changed. Reopen it before sending.');
+      const history = await readBackendJson(`/session/history?session_id=${encodeURIComponent(saved.binding.session_id)}`, {method:'GET'});
+      computerState.messages = savedComputerConversation(saved.goal, saved.snapshot, history);
+      computerState.backendSessionId = saved.binding.session_id;
+      // The authenticated backend rechecks the report and settlement fences at
+      // goal creation. Preserve transcript/session; only provider context resets.
+      computerState.lastResponseId = null;
+      computerState.restoreProviderContext = false;
+    } catch (error) { return sendJsonError(res, error, 409); }
   }
   if (freshConversation && desktopHandoffReadinessRequired()) {
     try {
@@ -16207,6 +16226,7 @@ app.post("/api/computer/run", async (req, res) => {
       const reviewStart=captureNativeCodeReviewStart(initialContext,
         computerState.messages.filter(m=>m.role==='user').map(m=>m.text).join('\n\n'));
       const started = await beginSidecarComputerAssignment(prompt, attachments, {
+        nextRequestAfter,
         conversationMessageId: messageId || `computer:${randomId()}`,
         signal: startupAbortController.signal,
         ensureComputerBackendSession: computerRunTestHooks?.ensureComputerBackendSession || ensureComputerBackendSession,
@@ -16415,7 +16435,8 @@ app.post("/api/computer/stop", (_req, res) => {
 
 app.post("/api/computer/interject", (req, res) => {
   if (!computerState.running) {
-    return sendJsonError(res, "No computer-use run is currently in progress.", 409);
+    return res.status(409).json({error:'The task just finished. Your follow-up has not been sent.',
+      code:'COMPUTER_RUN_FINISHED', submission_admission:rejectedChatSubmissionAdmission(req.body, null)});
   }
 
   let attachments = [];

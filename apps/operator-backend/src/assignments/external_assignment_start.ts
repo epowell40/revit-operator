@@ -10,6 +10,9 @@ import {getAssignmentKernelSnapshotV2} from './assignment_kernel_v2_store.js';
 import {canonicalAssignmentOutcomeForBinding} from './outcome_handoff.js';
 import {advanceAssignmentKernelProgressV2} from './assignment_kernel_v2_progress.js';
 import {desktopExecutorOwnsAssignmentV2} from './desktop_executor_owner.js';
+import { assertNextChatRequest } from './next_chat_request.js';
+import { createGoal, getCurrentGoalForSession, setAgentGoal } from '../goals/service.js';
+import { pauseAutomaticAssignmentForNewRequest } from './fresh_request.js';
 
 /** The controller sends the user's request; the backend owns its effect contract. */
 export function normalizeExternalAssignmentRequest(input: Record<string, unknown>): Record<string, unknown> {
@@ -81,8 +84,24 @@ export function retainedExternalAssignmentStart(input:Record<string,unknown>,cur
     materializeDesktopStartupQuestions(snapshot);
     return {assignmentId:current.id,runId:snapshot.current_binding.run_id,generation:snapshot.current_binding.generation,kernelVersion:2};
   }
+  if (input.next_request_after) {
+    assertNextChatRequest(input.next_request_after, current, String(input.session_id ?? ''));
+    return null;
+  }
   throw Object.assign(new Error('This conversation already has a saved task. Add direction or Resume that task; use New Chat for a separate task.'),
     {code:'external_assignment_requires_continuation'});
+}
+
+/** Called after asynchronous intake, immediately before creating the new goal. */
+export function createExternalAssignmentGoal(sessionId: string, input: Record<string, any>): GoalRecord {
+  if (!input.next_request_after) return setAgentGoal(sessionId, input);
+  const previous = getCurrentGoalForSession(sessionId);
+  assertNextChatRequest(input.next_request_after, previous, sessionId);
+  pauseAutomaticAssignmentForNewRequest(previous!);
+  return createGoal({ ...input, title: input.title ?? input.objective,
+    objective: input.objective, acceptance_criteria: input.acceptance_criteria ?? input.success_criteria,
+    work_budget: { ...input.work_budget, previous_assignment_id: previous!.id },
+    related_session_id: sessionId, status: 'active' });
 }
 
 /** Trusted external-controller edge. V2 and V1 are mutually exclusive writes. */
