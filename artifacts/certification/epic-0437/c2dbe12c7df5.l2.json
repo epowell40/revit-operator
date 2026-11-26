@@ -4981,7 +4981,7 @@
     },
     {
       "path": "apps/operator-backend/test/advisory_verification_policy.test.ts",
-      "sha256": "sha256:4960dec9086d504159073794bcf816352afcfd6499d7912a789ce07d8021d3a6"
+      "sha256": "sha256:a14708e80cdc372ed637da3eedb2d3a1180bb25f4f7e08c575882d6b539e7915"
     },
     {
       "path": "apps/operator-backend/test/aec_intent_evidence.test.ts",
@@ -12821,7 +12821,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:1c940e61baf5bc57f62b36bfddf8f8408f8d5ae87d1d3dccd087691a4366f452",
+  "inputs_hash": "sha256:de44568fb94030cbc25bef43a0a2c0593926cb98035b5f8d1e66e6b98aec7c9a",
   "result": {
     "passed": true,
     "checks": [
