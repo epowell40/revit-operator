@@ -51,6 +51,8 @@ export interface AssignmentWorkUnitSpecV2 {
 export type AssignmentWorkUnitStateV2 = "pending" | "active" | "complete" | "retained" | "blocked" | "failed";
 
 export interface AssignmentSpecV2 {
+  /** A document phase retains its immutable predecessor rather than rebinding it. */
+  document_parent_binding?: AssignmentBindingV2;
   schema: typeof ASSIGNMENT_SPEC_V2_SCHEMA;
   binding: AssignmentBindingV2;
   source_user_request: string;

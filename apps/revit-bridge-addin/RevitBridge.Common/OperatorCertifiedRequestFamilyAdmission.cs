@@ -415,7 +415,11 @@ namespace RevitBridge.Common
     /// </summary>
     public static class OperatorNativeDocumentSessionAuthority
     {
-        private sealed class Session { public string Id { get; } = Guid.NewGuid().ToString("N"); }
+        private sealed class Session
+        {
+            public string Id { get; } = Guid.NewGuid().ToString("N");
+            public string? CreatedAtUtc { get; set; }
+        }
         private static readonly object Gate = new object();
         private static readonly Dictionary<string, Session> Sessions = new Dictionary<string, Session>(StringComparer.OrdinalIgnoreCase);
 
@@ -438,6 +442,18 @@ namespace RevitBridge.Common
         {
             if (document == null) throw new ArgumentNullException(nameof(document));
             lock (Gate) Sessions[DocumentKey(document)] = new Session();
+        }
+
+        // First inspection or opening an existing RVT is not project creation.
+        public static void RegisterCreatedDocument(Document document)
+        {
+            if (document == null) throw new ArgumentNullException(nameof(document));
+            lock (Gate) Sessions[DocumentKey(document)] = new Session { CreatedAtUtc = DateTime.UtcNow.ToString("o") };
+        }
+
+        public static string? CreatedAtUtc(Document document)
+        {
+            lock (Gate) return Sessions.TryGetValue(DocumentKey(document), out var session) ? session.CreatedAtUtc : null;
         }
 
         public static void InvalidateClosingDocument(Document document)

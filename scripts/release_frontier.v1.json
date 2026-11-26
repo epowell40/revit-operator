@@ -1,6 +1,7 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "new_document_handoff.test.ts",
     "native_lifecycle_contract.test.ts",
     "registered_reference_intake.test.ts",
     "completed_work_delivery.test.ts",
@@ -5800,6 +5801,7 @@
     "NativeCompileTransportTests"
   ],
   "javascript_tests": [
+    "app/operator-desktop/test/new_document_handoff.test.mjs",
     "package/operator-assistant-ui/target_resolution_failure.test.mjs",
     "package/operator-assistant-ui/provider_continuation.test.mjs",
     "package/operator-assistant-ui/verification_closeout_guidance.test.mjs",

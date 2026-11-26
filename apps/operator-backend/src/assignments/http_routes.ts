@@ -1,4 +1,5 @@
 import type http from "node:http";
+import {continueInNewDocument} from './new_document_handoff.js';
 import {desktopNativeCatalog,executeDesktopNativeCall,desktopNativeInteractionState} from './desktop_native_tools.js';
 import { activeProviderTurnForBinding, interruptActiveProviderForBinding } from "../codex/active_turns.js";
 import { assignmentDirections, steerAssignment } from "./task_steering.js";
@@ -72,6 +73,16 @@ export async function handleAssignmentHttpRoute(
   url: URL,
   authorizeSession: (sessionId: string) => boolean
 ): Promise<boolean> {
+  if(req.method==='POST'&&url.pathname==='/api/assignments/v2/document-handoff') {
+    try {
+      const body=await readJson(req,128_000) as JsonMap;
+      const binding=v2Binding(body);
+      if(!authorizeSession(binding.session_id))return true;
+      requireV2Principal(getAssignmentKernelSnapshotV2(binding.assignment_id));
+      writeJson(res,200,continueInNewDocument(binding,body));
+    }catch(error){writeJson(res,409,{error:error instanceof Error?error.message:String(error)});}
+    return true;
+  }
   if(req.method==='POST'&&['/api/assignments/v2/desktop-native/catalog','/api/assignments/v2/desktop-native/call','/api/assignments/v2/desktop-native/interaction'].includes(url.pathname)) {
     try {
       const body=await readJson(req,128_000) as JsonMap;

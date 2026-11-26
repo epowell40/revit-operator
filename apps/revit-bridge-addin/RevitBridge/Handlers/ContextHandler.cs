@@ -47,6 +47,8 @@ namespace RevitBridge.Handlers
                     title = doc.Title,
                     path = doc.PathName,
                     sessionId = RevitBridge.Common.OperatorNativeDocumentSessionAuthority.GetSessionId(doc),
+                    createdAtUtc = RevitBridge.Common.OperatorNativeDocumentSessionAuthority.CreatedAtUtc(doc),
+                    isFamilyDocument = doc.IsFamilyDocument,
                     nativeExecutionAttestation = RevitBridge.Common.OperatorNativeExecutionAttestationAuthority.PublicBinding(),
                     projectIdentity = new
                     {

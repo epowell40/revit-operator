@@ -3,8 +3,8 @@
   "exceptions": [
     {
       "path": "domain/assignment-kernel/reducer.ts",
-      "max_lines": 1208,
-      "reason": "November25 adds native lifecycle receipt-to-retained-payload and admitted-action equality checks at the existing operation result reduction boundary. Keep authoritative settlement checks together; lifecycle parsing stays in the shared contract. Exact measured size, no spare growth."
+      "max_lines": 1216,
+      "reason": "November25 adds native lifecycle receipt-to-retained-payload and admitted-action equality checks at the existing operation result reduction boundary. Keep authoritative settlement checks together; lifecycle parsing stays in the shared contract. Exact measured size, no spare growth. November26 adds eight lines for the canonical new-document handoff event and old-phase resume rejection. Identity, scope, remaining-budget and stop-condition validation are extracted into new_document_handoff.ts; the reducer retains only event application. Exact measured size, no spare growth."
     },
     {
       "path": "brains/openai_brain.ts",

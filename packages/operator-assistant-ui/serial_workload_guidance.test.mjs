@@ -5,7 +5,9 @@ test('one executor owns whole typical scope and uses compact inventory then boun
 });
 test('source reconstruction keeps device and branch coverage in the same owner without new mandatory previews or handoffs',()=>{
  const s=singleExecutionInstructions('Preserve Pause, unknown effects and the user scope.','Current native contracts.');
- assert.match(s,/compact source-to-model outline/i);
+ assert.match(s,/compact component-to-element map/i);
+ assert.match(s,/Revalidate actual identity, owner and relevant geometry before correction/i);
+ assert.match(s,/lookup aid, not an independent readback or permission/i);
  assert.match(s,/devices.*branches.*connections/i);
  assert.match(s,/one connected system.*before starting/i);
  assert.match(s,/unfinished work alone is not a blocking decision/i);

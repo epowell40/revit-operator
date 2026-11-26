@@ -1,6 +1,7 @@
 import {createCombinedReviewDispatcher} from './combined_review_dispatch.mjs';
 import {createComputerControlIndicator} from './computer_control_indicator.mjs';
 import { EXECUTION_INSPECTION_TOOL, inspectExecution } from './desktop_native_tools.mjs';
+import {continueNewDocument} from './new_document_handoff.mjs';
 import { affirmativeRevitLaunchIntent as sharedRevitLaunchIntent } from "./revit_launch_intent.mjs";
 import { namedObjectTopologyIdentity } from "./named_object_topology.mjs";
 import { immutableEvidenceRetryReason } from "./immutable_evidence_retry.mjs";
@@ -6515,10 +6516,14 @@ function bindHybridContextToBackendSession(context, options = {}) {
   if (changed) {
     if (computerState.backendSessionId) {
       addComputerEvent(
-        `RevitOperator context changed (${summarizeHybridBackendContext(context)}); starting a fresh deterministic backend session before Assignment admission.`
+        `RevitOperator context changed (${summarizeHybridBackendContext(context)}); binding the next request to the active model in this chat.`
       );
     }
-    computerState.backendSessionId = "";
+    // Chat identity is independent of the model. The next assignment gets a
+    // fresh immutable native binding; an admitted assignment still rejects a
+    // changed model above unless it uses the explicit new-document handoff.
+    computerState.lastResponseId = null;
+    computerState.restoreProviderContext = false;
   }
   computerState.hybridContextSignature = nextSignature;
   return { changed, signature: nextSignature };
@@ -13640,7 +13645,7 @@ async function executeComputerLoop(options = {}) {
       body:JSON.stringify(desktopNativeBinding(computerState.sidecarAssignment))});
     tools=installDesktopNativeTools(tools,catalog);
     attachmentDelivery={sessionId:computerState.backendSessionId,tools};
-    nativeContext=await (testHooks.buildHybridBackendContext||buildHybridBackendContext)({bootstrapModelRequestText:latestUserText});
+    nativeContext=options.documentPhaseContext ?? await (testHooks.buildHybridBackendContext||buildHybridBackendContext)({bootstrapModelRequestText:latestUserText});
     // Replace legacy routing directions rather than presenting contradictory
     // delegate instructions to the single executor. Safety rules stay intact.
     instructions=singleExecutionInstructions(instructions,catalog.guidance,catalog.execution_mode);
@@ -13807,6 +13812,35 @@ async function executeComputerLoop(options = {}) {
           currentAction: item.name
         });
         const nativeCall=!!nativeContext&&item.name?.startsWith('native__');
+        if(nativeContext&&item.name==='native__continue_in_new_revit_model') {
+          const phase=await continueNewDocument({assignment:computerState.sidecarAssignment,response,call:item,
+            readContext:()=>fetchJsonDiagnostic('/revit/context',{certifiedReadLifecycle:false}),
+            request:nativeRequest,validatePublication:validateSidecarAssignmentKernelPublication});
+          // The parent provider call and handoff remain durably retained. Its
+          // old-document actions are never replayed in the new phase.
+          computerState.sidecarAssignment=phase.assignment;
+          computerState.backendSessionId=phase.assignment.session_id;
+          computerState.lastResponseId=null;
+          computerState.restoreProviderContext=false;
+          computerState.canonicalAssignmentOutcome=null;
+          computerState.nativeChangeObservationCursor=null;
+          computerState.hybridContextSignature='';
+          computerState.functionToolReceipts=[];
+          computerState.dynamicProgramReceipts=[];
+          computerState.checkedProjectCopy=null;
+          computerState.ownerWrittenFindings=null;
+          computerState.nativeCodeReviewStart=null;
+          const phaseContext=normalizeHybridBackendContext(
+            {ok:true,data:readLocalWriteGrantStatus()},
+            {ok:true,data:{...phase.rawContext,courier_executor_id:phase.assignment.work_budget.executor_id}});
+          computerState.nativeCodeReviewStart=bindNativeCodeReviewStart(captureNativeCodeReviewStart(
+            phaseContext,computerState.messages.filter(m=>m.role==='user').map(m=>m.text).join('\n\n')),phase.assignment);
+          computerState.nativeChangeObservationCursor=nativeChangeObservationCursor(
+            phase.assignment,nativeChangeObservationFromContext(phase.rawContext));
+          addComputerEvent(phase.message);
+          updateComputerProgress({phase:'starting',currentAction:'Continuing in '+phase.rawContext.document.title});
+          return executeComputerLoop({...options,documentPhaseContext:phaseContext});
+        }
         computerState.checkedProjectCopy = null;
         const functionOutput = nativeCall
           ? await invokeDesktopNativeTool({assignment:computerState.sidecarAssignment,messageId:response.desktop_message_id,

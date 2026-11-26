@@ -14,10 +14,11 @@ test('local annotation review uses native geometry and one sufficient visual sco
   assert.match(text,/native verification and checkpoint save\/file inspection before handoff/);
 });
 
-test('review discovery has a consistent actual-screen first strategy, with native export only for a stated need',()=>{
+test('review discovery distinguishes native drawing pixels from actual application UI and forbids automatic fallback',()=>{
   const text=VISUAL_WORK_REVIEW_TOOL.description;
-  assert.match(text,/Prefer visible_work for an active sheet or drawing/);
-  assert.match(text,/native_visible_region only when/);
+  assert.match(text,/For drawing content, prefer native_visible_region/);
+  assert.match(text,/Use visible_work when the question concerns the actual application UI\/display/);
+  assert.match(text,/Native export is not evidence of the current desktop screen/);
   assert.match(text,/target_view only when/);
   assert.doesNotMatch(text,/Use target_view for a full-sheet\/inactive overview/);
   assert.match(text,/Do not ask the reviewer to re-prove/);

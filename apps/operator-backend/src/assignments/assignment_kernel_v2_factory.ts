@@ -310,6 +310,12 @@ export function assignmentKernelV2ForBinding(input: Readonly<{
   const goal = getGoal(input.assignment_id);
   const snapshot = goal ? getAssignmentKernelSnapshotV2(goal.id) : null;
   if (!goal || !snapshot) return null;
+  if(snapshot.spec.document_parent_binding) {
+    const parent=getAssignmentKernelSnapshotV2(snapshot.spec.document_parent_binding.assignment_id);
+    if(!parent?.document_handoff||!sameAssignmentBindingV2(parent.current_binding,snapshot.spec.document_parent_binding)
+      ||parent.document_handoff.child_spec.binding.assignment_id!==goal.id
+      ||parent.execution_control?.command_id!=='document:'+parent.document_handoff.command_id)return null;
+  }
   if (!trustedTaskExecutionHost(snapshot.spec)) return null;
   const requestPrincipalId = getRequestAssignmentPrincipalId();
   if (requestPrincipalId && !requestMatchesAssignmentPrincipalId(
