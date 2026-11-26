@@ -1,5 +1,6 @@
 import type {AssignmentSnapshotV2} from '../domain/assignment-kernel/snapshot.js';
 import {checkedEditIsCurrentV2} from '../verification/current_postcondition_v2.js';
+import {reportHasVerifiedRefinement} from './report_verified_refinement.js';
 
 /** Presentation of retained work, not a completion/authorization transition.
  * A native check verifies an edit's postcondition, not every claim in prose. */
@@ -12,6 +13,7 @@ export function workReportPresentation(snapshot: AssignmentSnapshotV2) {
   const applied = Object.values(snapshot.operations).filter(op => op.requested_effect === 'apply' && op.persistent_effect === 'applied'
     && !['/revit/export-elements-xlsx', '/revit/export-pdf'].includes(op.request_identity?.path ?? ''));
   const checked = applied.filter(op => checkedEditIsCurrentV2(snapshot, op.operation_id));
+  const refined = applied.filter(op => !checked.includes(op) && reportHasVerifiedRefinement(snapshot,op.operation_id));
   const unsettled = snapshot.unresolved_unknown_operation_ids.length > 0 || snapshot.in_flight_operation_ids.length > 0;
   const answer = proposal.user_facing_text?.trim();
   const normalize = (s:string) => s.replace(/[*_`]/g,'').replace(/\s+/g,' ').trim().toLowerCase();
@@ -19,7 +21,7 @@ export function workReportPresentation(snapshot: AssignmentSnapshotV2) {
     : `${items.length} ${items.length === 1 ? 'item' : 'items'} retained in Details.`;
   const summary = [answer || summarize(proposal.claimed_completed) || 'No completed work was reported.'];
   if (unsettled) summary.push('An operation still needs reconciliation. Do not repeat the edit.');
-  else if (applied.length > checked.length) summary.push('Some model changes still need checking.');
+  else if (applied.length > checked.length + refined.length) summary.push('Some model changes still need checking.');
   // Keep unresolved work visible, including qualifications omitted by the owner.
   for (const [label, items] of [['Remaining work', proposal.remaining_work], ['Notes', proposal.uncertainties]] as const) {
     const omitted = items.filter(item => !normalize(summary.join(' ')).includes(normalize(item))
@@ -31,7 +33,7 @@ export function workReportPresentation(snapshot: AssignmentSnapshotV2) {
   }
   const evidence = checked.length ? `${checked.length} model change${checked.length === 1 ? '' : 's'} verified by current native readback.`
     : 'No current native model-change check is recorded for this report.';
-  const details = [evidence, 'Native checks cover the referenced changes. Other report claims are agent-authored; this is not independent certification of the entire task.',
+  const details = [evidence, ...(refined.length ? [`${refined.length} earlier checked edit${refined.length===1?' was':'s were'} refined by later verified edits. The earlier proof remains historical.`] : []), 'Native checks cover the referenced changes. Other report claims are agent-authored; this is not independent certification of the entire task.',
     ...[['Work reported', proposal.claimed_completed], ['Remaining work', proposal.remaining_work], ['Notes', proposal.uncertainties]]
       .filter(([,items]) => (items as readonly string[]).length)
       .map(([label,items]) => `### ${label}\n\n` + (items as readonly string[]).map(item => '- ' + item.replace(/\r?\n/g,'\n  ')).join('\n'))].join('\n\n');

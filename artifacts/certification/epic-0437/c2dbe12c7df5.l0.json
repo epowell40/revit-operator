@@ -1012,7 +1012,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/desktop_execution_guidance.ts",
-      "sha256": "sha256:ca26c4e4d7feff21c893709200419054739cc22db7b6cdae3dd7e71eaa28b09e"
+      "sha256": "sha256:251434d148397fadd11b0669bc63d8906a1a1baa12417e2ec22275216def572a"
     },
     {
       "path": "apps/operator-backend/src/assignments/desktop_executor_owner.ts",
@@ -1167,6 +1167,10 @@
       "sha256": "sha256:095c89d4c1a240217f198d7e4e6be7197dfb7b41bb4e211c4ec5d09453bd51dc"
     },
     {
+      "path": "apps/operator-backend/src/assignments/report_verified_refinement.ts",
+      "sha256": "sha256:b080dea0e0cc89fa0b607bc44cbb64f19fe36d245a36fe125450a4d343cd570d"
+    },
+    {
       "path": "apps/operator-backend/src/assignments/saved_copy_handoff_v2.ts",
       "sha256": "sha256:59d1523a0f6099e46d575cd2324fa3c32a6fbbcde367f9a13ea92f683078871f"
     },
@@ -1268,7 +1272,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/work_report_presentation.ts",
-      "sha256": "sha256:f486e8055050a71b922bc1f85c3e066a0848943dfa24e42043a6e9e7d00fc85c"
+      "sha256": "sha256:6b7e739a55232405aaf1472c65ef2ab229bdfa70905b92bd966e36bef68bd8fc"
     },
     {
       "path": "apps/operator-backend/src/assignments/work_review_handoff.ts",
@@ -7557,7 +7561,7 @@
     },
     {
       "path": "apps/operator-backend/test/native_program_effect_postcondition_v2.test.ts",
-      "sha256": "sha256:73d90ceca16ae73d9af96997728123324a5434ef28964207c1a2e09654c88187"
+      "sha256": "sha256:b58e00d25d8a2ce23c8669eeb56a50813e9b02d33301249168124e104376b680"
     },
     {
       "path": "apps/operator-backend/test/native_program_parameter_postcondition_v2.test.ts",
@@ -12829,7 +12833,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:56a62168e74626e9d6a585079561d8f4c8fe363bd29d32eb512703c0eba79526",
+  "inputs_hash": "sha256:16062b4fb313547fb206be756cfa41e67b8287f9774321934c8e938d3b98a5fb",
   "result": {
     "passed": true,
     "checks": [

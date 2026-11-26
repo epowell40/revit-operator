@@ -19,6 +19,8 @@ import {nativeProgramResultScopeNoticeV2} from '../src/verification/native_progr
 import {verifiedDeliverableTargetGroupsV2} from '../src/verification/verified_deliverable_targets_v2.js';
 import {checkedEditIsCurrentV2,checkedReadIsCurrentV2} from '../src/verification/current_postcondition_v2.js';
 import {codexAssignmentEvidenceContextV2} from '../src/brains/codex_assignment_evidence.js';
+import {reportHasVerifiedRefinement} from '../src/assignments/report_verified_refinement.js';
+import {workReportPresentation} from '../src/assignments/work_report_presentation.js';
 
 const sha=(s:string)=>createHash('sha256').update(s).digest('hex');
 function state(id:number,found=true){const json=JSON.stringify({elementId:id,found,identity:found?'native-'+id:null,geometry:found?{kind:'Line',start:[0,0,0],end:[1,0,0]}:null});
@@ -414,6 +416,57 @@ function laterTouch(f:ReturnType<typeof checkedScopedFixture>,ids:number[]){
   target:{target_id:'element_id:'+ids[0],semantic_scope:{}},opened_at:'2026-11-08T10:00:04Z',
   result:{...f.subject.result,operation_id:'later',completed_at:'2026-11-08T10:00:05Z',affected_target_identities:ids.map(id=>'element_id:'+id)}};
 }
+
+function refinementFixture(){
+ const f=checkedScopedFixture(),next=checkedScopedFixture();
+ f.snapshot.observations.obs.facts=[];next.snapshot.observations.obs.facts=[];
+ const stored=storeEvidence({scope:{...next.subject.binding,attempt_id:'refine'},source:'assignment_kernel_v2:operator_run_dynamic_revit_program',trust_level:'authoritative_native',raw:next.payload}).ref;
+ Object.assign(next.subject,{operation_id:'refine',observation_ids:['refine-obs'],verification_operation_ids:['refine-read']});
+ Object.assign(next.subject.result,{operation_id:'refine',completed_at:'2026-11-08T10:00:05Z'});
+ Object.assign(next.op,{operation_id:'refine-read',verification_of_operation_id:'refine',observation_ids:['refine-verified'],opened_at:'2026-11-08T10:00:06Z'});
+ Object.assign(next.result,{operation_id:'refine-read',completed_at:'2026-11-08T10:00:07Z'});
+ f.snapshot.operations.refine=next.subject;f.snapshot.operations['refine-read']=next.op;
+ f.snapshot.observations['refine-obs']={...next.snapshot.observations.obs,operation_id:'refine',raw_payload_ref:'evidence:'+stored.evidence_id};
+ f.snapshot.observations['refine-verified']={...next.snapshot.observations.verified,operation_id:'refine-read'};
+ f.snapshot.completion_proposal={review_id:'report',claimed_completed:['Created and aligned the tags.'],remaining_work:[],uncertainties:[],user_facing_text:'Created the size tags and checked their final placement.'};
+ return f;
+}
+
+test('verified tag refinement changes report presentation without renewing the earlier native proof',()=>workspace(()=>{
+ const f=refinementFixture(),before=JSON.stringify(f.snapshot);
+ assert.equal(checkedEditIsCurrentV2(f.snapshot,'apply'),false);
+ assert.equal(checkedEditIsCurrentV2(f.snapshot,'refine'),true);
+ assert.equal(reportHasVerifiedRefinement(f.snapshot,'apply'),true);
+ const p=workReportPresentation(f.snapshot)!;
+ assert.equal(p.checked_edit_count,1);assert.equal(p.applied_edit_count,2);
+ assert.equal(p.summary,f.snapshot.completion_proposal.user_facing_text);
+ assert.match(p.details,/earlier checked edit was refined by later verified edits/);
+ assert.equal(JSON.stringify(f.snapshot),before);
+}));
+
+test('refinement presentation retains warnings for missing, foreign, stale, partial and unknown checks',()=>workspace(()=>{
+ for(const mutate of [
+  (f:any)=>f.subject.verification_operation_ids=[],
+  (f:any)=>f.subject.verification_operation_ids=['refine-read'],
+  (f:any)=>f.snapshot.observations.verified.raw_payload_hash='foreign',
+  (f:any)=>f.snapshot.operations.refine.verification_operation_ids=[],
+  (f:any)=>f.snapshot.observations['refine-verified'].raw_payload_hash='foreign',
+  (f:any)=>f.snapshot.operations.refine.input.source+='changed',
+  (f:any)=>f.snapshot.operations.refine.input.native_program.result_targets={element_ids:[42]},
+  (f:any)=>f.snapshot.operations['refine-read'].result.binding={...f.subject.binding,document_fingerprint:'other'},
+  (f:any)=>f.snapshot.input_invalidated_operation_ids=['apply'],
+  (f:any)=>f.snapshot.input_invalidated_operation_ids=['refine-read'],
+  (f:any)=>f.snapshot.unresolved_unknown_operation_ids=['unknown'],
+  (f:any)=>f.snapshot.in_flight_operation_ids=['running'],
+  (f:any)=>f.snapshot.execution_control={state:'paused'},
+  (f:any)=>laterTouch(f,[42]),
+ ]){
+  const f=refinementFixture();mutate(f);const before=JSON.stringify(f.snapshot);
+  assert.equal(reportHasVerifiedRefinement(f.snapshot,'apply'),false,String(mutate));
+  assert.match(workReportPresentation(f.snapshot)!.summary,/need checking|needs reconciliation/,String(mutate));
+  assert.equal(JSON.stringify(f.snapshot),before);
+ }
+}));
 
 test('checked requested results stay current across incidental notification overlap, without rewriting history',()=>workspace(()=>{
  const f=checkedScopedFixture();assert.equal(checkedEditIsCurrentV2(f.snapshot,'apply'),true);
