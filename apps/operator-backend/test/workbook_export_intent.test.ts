@@ -16,6 +16,20 @@ const prompt = "Prepare a room-by-room Excel workbook of the information we can 
 const context = { revit: { source: { live: true }, process_id: 42, document: { title: "Rooms", path: "C:/fixture/Rooms.rvt", projectIdentity: { fingerprint: "model" } } } };
 const exportArgs = { method: "POST", path: "/revit/export-elements-xlsx", body: { elementIds: [42], parameterNames: ["Area", "Number"], fileName: "rooms.xlsx", dryRun: false } };
 
+test('put together a workbook is file authority, with prohibitions and deferrals preserved', () => {
+  for (const text of ['Can you put together an Excel file with room names, areas, heights and volumes?',
+    'Please put together a room spreadsheet. Do not change the Revit model.']) {
+    assert.deepEqual(requestedArtifactExportPaths(text), ['/revit/export-elements-xlsx']);
+    const owner = {}, lease = beginTeammateLoopOwner(owner, {user_text:text, context} as any);
+    try { assert.equal(guardTeammateMcpCall(owner, {tool:'revit_call_tool', arguments:exportArgs}).allowed, true); }
+    finally { endTeammateLoopOwner(lease); }
+  }
+  for (const text of ['Could we put together an Excel file?', 'Explain how to put together an Excel file.',
+    'Put together an Excel file after I approve.', 'Put together an Excel file without writing any files.',
+    'Create an Excel workbook. Do not put together any files.', 'Put together an Excel file. Do not create any files.',
+    'Put together a plan for an Excel file, preview only.']) assert.equal(requestedWorkbookExport(text), false, text);
+});
+
 test("typed PDF export retains explicit file authority while the model stays unchanged", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-pdf-alias-admission-"));
   const previous = [process.env.OPERATOR_WORKSPACE_ROOT, process.env.OPERATOR_ASSIGNMENT_KERNEL_V2];
