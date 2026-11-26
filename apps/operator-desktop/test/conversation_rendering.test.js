@@ -4,6 +4,7 @@ import {runInNewContext} from 'node:vm';
 import test from 'node:test';
 import {renderAssistantBlocks,appendInlineText,compactWorkSummary} from '../public/conversation_ui.js';
 import {currentTaskState,taskStateLabel} from '../public/task_navigation.mjs';
+import {messagePresentation} from '../public/activity_feedback.mjs';
 import {retainedWorkReportMessage} from '../work_report.mjs';
 const source=(await readFile(new URL('../public/app.js',import.meta.url),'utf8')).replace(/\r\n/g,'\n');
 function fn(name){const start=source.indexOf(`function ${name}(`);assert.ok(start>=0);return source.slice(start,source.indexOf('\n}\n',start)+2);}
@@ -16,7 +17,7 @@ test('saved apply review exposes budget continuation only when canonical policy 
  const goal={_sourceKind:'assignment_kernel_v2',_bindingV2:{session_id:'conversation',assignment_id:'task'},
   _assignmentPhase:'awaiting_user_review',_projection:{execution:{requested_effect:'apply'},truth:{}}};
  const controls={};
- const render=runInNewContext(fn('assignmentContextPresentation')+'\n'+fn('renderCompactWork')+';renderCompactWork',
+ const render=runInNewContext(fn('newRequestAfterReport')+'\n'+fn('assignmentContextPresentation')+'\n'+fn('renderCompactWork')+';renderCompactWork',
   {state,elements,currentTaskState,taskStateLabel,compactWorkSummary,selectedGoal:()=>goal,document:{querySelector:id=>controls[id]||={}}});
  render();assert.equal(controls['#taskBudgetContinueButton'].hidden,true,'Missing capability fails closed');
  goal._canRenewResources=false;render();assert.equal(controls['#taskBudgetContinueButton'].hidden,true);
@@ -39,16 +40,16 @@ test('C51 actual compact banner clears stale Paused after a completed resumed ta
  const elements={assignmentCompact:{},assignmentCompactStep:{textContent:''},stopButton:{}};
  const goal={_sourceKind:'assignment_kernel_v2',_bindingV2:{session_id:'conversation',assignment_id:'task'},_assignmentPhase:'complete',_canResume:false,_projection:{truth:{}}};
  const controls={};
- const render=runInNewContext(fn('assignmentContextPresentation')+'\n'+fn('renderCompactWork')+';renderCompactWork',{state,elements,currentTaskState,taskStateLabel,compactWorkSummary,selectedGoal:()=>goal,document:{querySelector:id=>controls[id]||=( {})}});
+ const render=runInNewContext(fn('newRequestAfterReport')+'\n'+fn('assignmentContextPresentation')+'\n'+fn('renderCompactWork')+';renderCompactWork',{state,elements,currentTaskState,taskStateLabel,compactWorkSummary,selectedGoal:()=>goal,document:{querySelector:id=>controls[id]||=( {})}});
  render();assert.equal(elements.assignmentCompact.hidden,true);assert.equal(elements.assignmentCompactStep.textContent,'');assert.equal(controls['#taskResumeButton'].hidden,true);
  goal._assignmentPhase='paused';goal._canResume=true;render();assert.equal(elements.assignmentCompact.hidden,false);assert.equal(elements.assignmentCompactStep.textContent,'Paused');assert.equal(controls['#taskResumeButton'].hidden,false);
- goal._assignmentPhase='complete';goal._canResume=false;goal._projection.truth.outcome_uncertain=true;render();assert.equal(elements.assignmentCompactStep.textContent,'Result needs checking');
+ goal._assignmentPhase='complete';goal._canResume=false;goal._projection.truth.outcome_uncertain=true;render();assert.equal(elements.assignmentCompactStep.textContent,'Result uncertain');
 });
 
 test('live compact status does not describe a read execution as model changes',()=>{
  const state={streaming:true,agentProgress:'',taskNavigation:[]},elements={assignmentCompact:{},assignmentCompactStep:{textContent:''},stopButton:{}};
  const goal={current_step:'Executing task',_projection:{execution:{requested_effect:'read'}}};
- const render=runInNewContext(fn('assignmentContextPresentation')+'\n'+fn('renderCompactWork')+';renderCompactWork',{state,elements,compactWorkSummary,currentTaskState,selectedGoal:()=>goal,document:{querySelector:()=>({})}});
+ const render=runInNewContext(fn('newRequestAfterReport')+'\n'+fn('assignmentContextPresentation')+'\n'+fn('renderCompactWork')+';renderCompactWork',{state,elements,compactWorkSummary,currentTaskState,selectedGoal:()=>goal,document:{querySelector:()=>({})}});
  render();assert.equal(elements.assignmentCompactStep.textContent,'Checking the model…');
  goal._projection.execution.requested_effect='preview';render();assert.equal(elements.assignmentCompactStep.textContent,'Preparing a preview…');
  goal._projection.execution.requested_effect='apply';render();assert.equal(elements.assignmentCompactStep.textContent,'Making the requested changes…');
@@ -60,11 +61,11 @@ test('saved review shows Ready for review without a question or an enabled Resum
  const elements={assignmentCompact:{},assignmentCompactStep:{textContent:''},stopButton:{}};
  const goal={_sourceKind:'assignment_kernel_v2',_bindingV2:{session_id:'conversation',assignment_id:'task'},_assignmentPhase:'awaiting_user_review',_canResume:false,_projection:{truth:{}}};
  const controls={};
- const render=runInNewContext(fn('assignmentContextPresentation')+'\n'+fn('renderCompactWork')+';renderCompactWork',{state,elements,currentTaskState,taskStateLabel,compactWorkSummary,selectedGoal:()=>goal,document:{querySelector:id=>controls[id]||={}}});
+ const render=runInNewContext(fn('newRequestAfterReport')+'\n'+fn('assignmentContextPresentation')+'\n'+fn('renderCompactWork')+';renderCompactWork',{state,elements,currentTaskState,taskStateLabel,compactWorkSummary,selectedGoal:()=>goal,document:{querySelector:id=>controls[id]||={}}});
  render();assert.equal(elements.assignmentCompact.hidden,false);assert.equal(elements.assignmentCompactStep.textContent,'Ready for review');
  assert.equal(controls['#taskResumeButton'].hidden,true);assert.equal(controls['#taskPauseButton'].hidden,true);
  goal._assignmentPhase='awaiting_user_input';render();assert.equal(elements.assignmentCompactStep.textContent,'Needs your input');
- goal._assignmentPhase='awaiting_user_review';goal._projection.truth.reconciliation_required=true;render();assert.equal(elements.assignmentCompactStep.textContent,'Result needs checking');
+ goal._assignmentPhase='awaiting_user_review';goal._projection.truth.reconciliation_required=true;render();assert.equal(elements.assignmentCompactStep.textContent,'Result uncertain');
  goal._projection.truth.reconciliation_required=false;goal._assignmentPhase='paused';goal._canResume=true;render();
  assert.equal(elements.assignmentCompactStep.textContent,'Paused');assert.equal(controls['#taskResumeButton'].hidden,false);
 });
@@ -87,7 +88,7 @@ test('actual SSE handler presents progress separately and final text supersedes 
 test('actual message renderer uses blocks for assistant prose and keeps user input literal',()=>{
  const document={createTextNode:text=>({tag:'text',textContent:text}),createElement:tag=>({tag,children:[],ownerDocument:document,textContent:'',appendChild(child){this.children.push(child);},replaceChildren(){this.children=[];}})};
  const messages=document.createElement('section');
- const render=runInNewContext(fn('renderMessages')+';renderMessages',{state:{checkedProjectCopy:null,sessionId:"",taskNavigationEpoch:0},document,elements:{messages},activeMessages:()=>[
+ const render=runInNewContext(fn('renderMessages')+';renderMessages',{messagePresentation,state:{checkedProjectCopy:null,sessionId:"",taskNavigationEpoch:0},document,elements:{messages},activeMessages:()=>[
   {role:'user',text:'## Please inspect this'}, {role:'assistant',text:'## Findings\n- **Page 3:** red marks.\n- <img onerror=run()>\n\n## Model evidence\n- [1] Retained row value.'}],
   renderSessionStartScreen(){},splitAssistantControlText:text=>({text}),renderAssistantBlocks,renderLinkedText:appendInlineText,updateFeedbackBarVisibility(){},scrollMessagesToBottom(){}});
  render();
@@ -102,7 +103,7 @@ test('C55 short review stays three bullets through message rendering and restore
  const document={createTextNode:text=>({tag:'text',textContent:text}),createElement:tag=>({tag,children:[],ownerDocument:document,textContent:'',appendChild(child){this.children.push(child);},replaceChildren(){this.children=[];}})};
  const messages=document.createElement('section');
  const text='- Project and levels: HVAC, Parking through Roof.\n- Mechanical sheets: 17.\n- Not verified: design loads and whether R1 needs a plan.\n\n## Details\nSupporting view inventory.\n\n### Scope and limitations\nLinked model not inspected.\n\n### Model evidence\n- [1] Sheet count: 17';
- const render=runInNewContext(fn('renderMessages')+';renderMessages',{state:{checkedProjectCopy:null,sessionId:"",taskNavigationEpoch:0},document,elements:{messages},activeMessages:()=>[{role:'assistant',text}],
+ const render=runInNewContext(fn('renderMessages')+';renderMessages',{messagePresentation,state:{checkedProjectCopy:null,sessionId:"",taskNavigationEpoch:0},document,elements:{messages},activeMessages:()=>[{role:'assistant',text}],
   renderSessionStartScreen(){},splitAssistantControlText:text=>({text}),renderAssistantBlocks,renderLinkedText:appendInlineText,updateFeedbackBarVisibility(){},scrollMessagesToBottom(){}});
  for(let restore=0;restore<2;restore++){
   render();const answer=messages.children[0].children[1];
@@ -117,7 +118,7 @@ test('retained desktop report keeps its full qualified evidence in closed Detail
  const text=retainedWorkReportMessage({name:'report_work_for_review'},{output:JSON.stringify({ok:true,verification_policy:'advisory',completion_proposal:{review_id:'review',verified:false,claimed_completed:[claim],remaining_work:['Check the layout.'],uncertainties:['Whole-project scope not checked.']}})});
  const document={createTextNode:text=>({tag:'text',textContent:text}),createElement:tag=>({tag,children:[],ownerDocument:document,textContent:'',appendChild(child){this.children.push(child);},replaceChildren(){this.children=[];}})};
  const messages=document.createElement('section');
- const render=runInNewContext(fn('renderMessages')+';renderMessages',{state:{checkedProjectCopy:null,sessionId:"",taskNavigationEpoch:0},document,elements:{messages},activeMessages:()=>[{role:'assistant',text}],renderSessionStartScreen(){},splitAssistantControlText:text=>({text}),renderAssistantBlocks,renderLinkedText:appendInlineText,updateFeedbackBarVisibility(){},scrollMessagesToBottom(){}});
+ const render=runInNewContext(fn('renderMessages')+';renderMessages',{messagePresentation,state:{checkedProjectCopy:null,sessionId:"",taskNavigationEpoch:0},document,elements:{messages},activeMessages:()=>[{role:'assistant',text}],renderSessionStartScreen(){},splitAssistantControlText:text=>({text}),renderAssistantBlocks,renderLinkedText:appendInlineText,updateFeedbackBarVisibility(){},scrollMessagesToBottom(){}});
  const flatten=n=>[n,...n.children?.flatMap(flatten)??[]];
  for(let restore=0;restore<2;restore++){
   render();const answer=messages.children[0].children[1];const details=answer.children.find(n=>n.tag==='details');
@@ -132,7 +133,7 @@ test('actual restored answer displays the reported duct table instead of pipe-de
  const document={createTextNode:text=>({tag:'text',textContent:text}),createElement:tag=>({tag,children:[],ownerDocument:document,textContent:'',set innerHTML(value){assert.equal(value,'');this.children=[];},appendChild(child){this.children.push(child);},replaceChildren(){this.children=[];}})};
  const messages=document.createElement('section');
  const answer='| Duct type | Count |\n|---|---:|\n| Mitered Elbows / Taps | 2 |\n| Taps | 8 |\n| Tees | 10 |\n| **Total** | **20** |';
- const render=runInNewContext(fn('renderMessages')+';renderMessages',{state:{checkedProjectCopy:null,sessionId:"",taskNavigationEpoch:0},document,elements:{messages},activeMessages:()=>[{role:'assistant',text:answer}],
+ const render=runInNewContext(fn('renderMessages')+';renderMessages',{messagePresentation,state:{checkedProjectCopy:null,sessionId:"",taskNavigationEpoch:0},document,elements:{messages},activeMessages:()=>[{role:'assistant',text:answer}],
   renderSessionStartScreen(){},splitAssistantControlText:text=>({text}),renderAssistantBlocks,renderLinkedText:appendInlineText,updateFeedbackBarVisibility(){},scrollMessagesToBottom(){}});
  render();
  const flatten=n=>[n,...n.children?.flatMap(flatten)??[]],nodes=flatten(messages);
@@ -146,7 +147,7 @@ test('actual compaction SSE progress stays separate from answers and retains Pau
  const elements={assignmentCompact:{},assignmentCompactStep:{textContent:''},stopButton:browserControl(),sendButton:browserControl(),chatForm:{setAttribute(){}},newSessionButton:browserControl(),attachButton:browserControl(),attachInput:browserControl(),refreshScreenButton:browserControl(),promptInput:browserControl()};
  const goal={_sourceKind:'assignment_kernel_v2',_bindingV2:{session_id:'conversation',assignment_id:'task'},_assignmentPhase:'active',_canResume:false,_projection:{truth:{}}};
  const controls={},message={text:''};
- const api=runInNewContext(fn('assignmentContextPresentation')+'\n'+fn('renderCompactWork')+'\n'+fn('updateControls')+'\n'+fn('setStreaming')+'\n'+fn('dispatchBackendSseEvent')+';({dispatchBackendSseEvent,setStreaming,updateControls})',{
+ const api=runInNewContext(fn('newRequestAfterReport')+'\n'+fn('assignmentContextPresentation')+'\n'+fn('renderCompactWork')+'\n'+fn('updateControls')+'\n'+fn('setStreaming')+'\n'+fn('dispatchBackendSseEvent')+';({dispatchBackendSseEvent,setStreaming,updateControls})',{
   state,elements,currentTaskState,taskStateLabel,compactWorkSummary,selectedGoal:()=>goal,document:{querySelector:id=>controls[id]||={}},pausedTaskAcceptsDirection:()=>false,
   renderNextCertifiedReadUi(){},certifiedReadSseFixture(){},setStatus(){},renderMessages(){},updateStatusTone(){},updateFeedbackBarVisibility(){}});
  api.updateControls();

@@ -31,7 +31,7 @@ function harness(payload,change){
  const state={taskNavigationMode:true,sessionId:'session',taskNavigationAssignmentId:'task',taskNavigationEpoch:1,computerSyncRequestId:0,activeRunKind:'',pendingComputerUserMessages:[],computerMessages:[],computerEvents:[],lastScreenshotVersion:0};
  const goal={_bindingV2:binding};let reads=0,renders=0;
  const sync=runInNewContext(app.slice(start,end)+';syncComputerState',{
-  state,selectedGoal:()=>goal,computerStateMatchesTask,
+  state,selectedGoal:()=>goal,computerStateMatchesTask,renderComputerControl(){},
   fetchJsonWithTimeout:async route=>{assert.equal(route,'/api/computer/state?session_id=session');reads++;change?.(state,goal);return payload;},
   desktopPreviewCaptureBlocked:()=>false,applyDesktopPreviewCaptureState(){},certifiedReadComputerStateFixture:()=>null,renderNextCertifiedReadUi(){},renderWorkReturnPanel(){},
   reconcileComputerMessages:messages=>({messages,pendingUserMessages:[]}),mergeActivityEvents:(_old,events)=>events,
@@ -65,7 +65,7 @@ test('pending message correlation cannot override an explicitly opened saved tas
  const original=app.slice(start,end);
  let renders=0;
  const sync=runInNewContext(original+';syncComputerState',{state:h.state,selectedGoal:()=>({_bindingV2:binding}),
-  fetchJsonWithTimeout:async()=>p,computerStateMatchesTask,computerStateIncludesSubmittedMessage,renderMessages(){renders++;}});
+  fetchJsonWithTimeout:async()=>p,computerStateMatchesTask,computerStateIncludesSubmittedMessage,renderComputerControl(){},renderMessages(){renders++;}});
  await sync();assert.equal(renders,0);assert.equal(h.state.sessionId,'session');
 });
 test('navigation and backend ownership prevent late relay adoption',async()=>{

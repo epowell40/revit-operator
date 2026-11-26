@@ -93,7 +93,7 @@ function renderHarness(goal) {
   const elements = new Proxy({}, { get(target, key) { return target[key] ||= element(); } });
   const state = { streaming: false, goals: [], taskNavigation: [{ session_id: goal._bindingV2.session_id, state: "ready" }], sessionId: goal._bindingV2.session_id, assignmentRevitContext: { document_fingerprint: goal._projection.target.document_fingerprint } };
   const nodes = new Map(); const document = { querySelector(key) { if (!nodes.has(key)) nodes.set(key, element()); return nodes.get(key); }, createElement: () => element() };
-  const code = ["assignmentContextPresentation", "goalStatusPresentation", "goalProgressPresentation", "goalStatusLabel", "renderGoalPanel", "renderCompactWork"].map(name => body(name)).join("\n");
+  const code = ["newRequestAfterReport", "assignmentContextPresentation", "goalStatusPresentation", "goalProgressPresentation", "goalStatusLabel", "renderGoalPanel", "renderCompactWork"].map(name => body(name)).join("\n");
   const context = { state, elements, document, selectedGoal: () => goal, currentTaskState, taskStateLabel,
     escapeHtml: s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]),
     renderVerifiedWorkPacketPanel() {}, renderAssignmentInputsV2() {}, renderRunSummary() {}, compactWorkSummary: () => "" };
@@ -115,13 +115,13 @@ test("actual task UI keeps held work visible and distinguishes configured/reques
   assert.equal(h.elements.goalResumeButton.disabled, "command"); assert.equal(h.nodes.get("#taskResumeButton").disabled, true);
 });
 
-test("task navigation accepts both usage states, keeps waiting in Needs you and old polls cannot resurrect a hold", () => {
+test("task navigation accepts both usage states, keeps waiting in Recent and old polls cannot resurrect a hold", () => {
   const p = fixture(), waiting = assignmentWorkspaceGoalV2(p);
   const tasks = parseTaskNavigation({ schema: "revit-operator.task-navigation/v1", tasks: [
     { task_id: "a", session_id: "other", assignment_id: "task-a", title: "Held work", state: "waiting_for_usage", summary: "Retained", updated_at: "2026-09-27T16:01:00Z" },
     { task_id: "b", session_id: "next", assignment_id: "task-b", title: "Settling", state: "stopping_after_usage_limit", summary: "Settling", updated_at: "2026-09-27T16:01:00Z" }
   ] });
-  const groups = groupTasks(tasks); assert.equal(groups.find(g => g.title === "Working").items[0].task_id, "b"); assert.equal(groups.find(g => g.title === "Needs you").items[0].task_id, "a");
+  const groups = groupTasks(tasks); assert.equal(groups.find(g => g.title === "Working").items[0].task_id, "b"); assert.equal(groups.find(g => g.title === "Recent").items[0].task_id, "a");
   assert.equal(currentTaskState({ state: "ready" }, waiting, "same-conversation"), "waiting_for_usage");
   delete p.snapshot.provider_usage_hold; p.assignment_version = p.snapshot.assignment_version = 8; const released = assignmentWorkspaceGoalV2(p);
   assert.equal(retainNewerAssignmentViewsV2([waiting], [released])[0], released);

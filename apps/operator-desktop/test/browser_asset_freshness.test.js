@@ -7,6 +7,7 @@ import { runInNewContext } from 'node:vm';
 import { webcrypto } from 'node:crypto';
 import { createBrowserAssetFreshness } from '../browser_asset_freshness.js';
 import { assertLoadedBrowserFresh } from '../public/browser_asset_freshness_ui.js';
+import { mayRestoreRejectedChatSubmission } from '../public/chat_submission_admission.mjs';
 import { beginComposerSend } from '../public/composer_intake.mjs';
 async function assets(t) { const root = await mkdtemp(path.join(os.tmpdir(), 'operator-browser-freshness-')); t.after(() => rm(root, { recursive: true, force: true })); await writeFile(path.join(root, 'app.js'), 'const application = 1;'); return root; }
 function request(service, pathname, headers = {}, method = 'POST', body = {}) {
@@ -50,7 +51,7 @@ test('stale Send preserves draft, attachments and assignment before optimistic U
   const totalStart=source.indexOf('function assertAttachmentTotalSize(');
   assert.ok(totalStart >= 0);
   const totalCheck=source.slice(totalStart,source.indexOf('\n}\n',totalStart)+2);
-  runInNewContext(totalCheck+'\n'+directionPolicy+'\n'+source.slice(start,end+4), { elements,state,beginComposerSend,selectedGoal:()=>null,updateControls(){},loadedBrowserIdentity:'old', assertLoadedBrowserFresh:async()=>{throw Object.assign(new Error('Refresh before sending'),{code:'SIDECAR_BROWSER_STALE'});}, persistComposerDraft:async()=>true,showStaleComposerNotice:async()=>{status='Refresh before sending';},setStatus: text=>{status=text;},createChatSubmission(){effects++;},clearChatComposerForSubmission(){effects++;},beginOptimisticChatSubmission(){effects++;},sendPrompt(){effects++;} });
+  runInNewContext(totalCheck+'\n'+directionPolicy+'\n'+source.slice(start,end+4), { elements,state,beginComposerSend,newRequestAfterReport:()=>false,renderMessages(){},selectedGoal:()=>null,updateControls(){},loadedBrowserIdentity:'old', assertLoadedBrowserFresh:async()=>{throw Object.assign(new Error('Refresh before sending'),{code:'SIDECAR_BROWSER_STALE'});}, persistComposerDraft:async()=>true,showStaleComposerNotice:async()=>{status='Refresh before sending';},setStatus: text=>{status=text;},createChatSubmission(){effects++;},clearChatComposerForSubmission(){effects++;},beginOptimisticChatSubmission(){effects++;},sendPrompt(){effects++;} });
   await handler({preventDefault(){}});
   assert.equal(effects,0); assert.equal(elements.promptInput.value,'Do the next room');
   assert.equal(state.pendingAttachments[0].filename,'drawing.pdf'); assert.equal(state.activeGoalId,'assignment-kept'); assert.match(status,/Refresh/);
@@ -66,7 +67,7 @@ test('a final admission stale response restores the draft without resubmission o
   const until = normalized.indexOf('\n}\n',from);
   const state = { pendingComputerUserMessages:[{id:'send-1'}], activeGoalId:'keep-task' };
   let restored=0, status, streaming;
-  const handle = runInNewContext(normalized.slice(from,until+2)+'; handleChatSubmissionFailure', {state,STALE_BROWSER_MESSAGE:'Refresh before sending',restoreChatSubmissionInput(){restored++;},showStaleComposerNotice:async()=>{status='Refresh before sending';},setStatus(text){status=text;},setStreaming(value){streaming=value;}});
+  const handle = runInNewContext(normalized.slice(from,until+2)+'; handleChatSubmissionFailure', {state,mayRestoreRejectedChatSubmission,STALE_BROWSER_MESSAGE:'Refresh before sending',restoreChatSubmissionInput(){restored++;},showStaleComposerNotice:async()=>{status='Refresh before sending';},setStatus(text){status=text;},setStreaming(value){streaming=value;}});
   handle({code:'SIDECAR_BROWSER_STALE',request_dispatched:false},{id:'send-1',transportStarted:true,mode:'computer-run'});
   assert.equal(restored,1);assert.equal(state.activeGoalId,'keep-task');assert.equal(state.pendingComputerUserMessages.length,0);assert.equal(streaming,false);assert.match(status,/Refresh/);
 });

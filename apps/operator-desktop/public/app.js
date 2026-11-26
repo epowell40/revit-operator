@@ -4117,7 +4117,13 @@ function createChatSubmission(prompt, attachments) {
 function beginOptimisticChatSubmission(submission) {
   // Freeze observation intent before the first async preflight can let a timer
   // see the previous idle relay. Only the exact submitted nonce acknowledges it.
-  if (submission.mode === "computer-run") state.computerSubmissionMessageId = submission.id;
+  if (submission.mode === "computer-run") {
+    state.computerSubmissionMessageId = submission.id;
+    // Keep the prior report in chat, not in the new run's live activity card.
+    state.computerProgress = null;
+    state.computerEvents = [];
+    state.agentProgress = "";
+  }
   const next = nextOptimisticChatSubmissionState({
     backendMessages: state.backendMessages,
     computerMessages: state.computerMessages,
@@ -5537,7 +5543,7 @@ function renderTaskHistory() {
 
 async function archiveTaskHistory(task) {
   try {
-    await fetchJson('/api/task-navigation/archive',{method:'POST',body:JSON.stringify(task
+    await fetchJson('/api/task-navigation/archive',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(task
       ? {session_id:task.session_id,archived:!task.archived} : {all:true,archived:true})});
     setStatus(task?.archived ? 'Chat restored.' : 'History archived. You can restore it from Archived.');
     await syncTaskNavigation({refreshCatalogue:true});
@@ -5856,7 +5862,7 @@ function newRequestAfterReport() {
 elements.chatForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (state.attachmentReadsPending > 0) return;
-  const nextGoal = newRequestAfterReport() ? selectedGoal() : null;
+  let nextGoal = newRequestAfterReport() ? selectedGoal() : null;
   if (!nextGoal && (state.streaming && state.activeRunKind === "backend" || pausedTaskAcceptsDirection())) { await submitTaskDirection(); return; }
   const captured = beginComposerSend(state, elements.promptInput.value);
   if (!captured) return;
@@ -5877,6 +5883,14 @@ elements.chatForm.addEventListener("submit", async (event) => {
     await persistComposerDraft();
     await assertLoadedBrowserFresh(loadedBrowserIdentity);
     if (state.resetting) return;
+    if (state.sessionId && !state.streaming) {
+      const sessionId = state.sessionId;
+      // A report can arrive before the periodic task poll. Resolve its owner
+      // before choosing the follow-up transport; the immediate echo stays up.
+      await syncGoals();
+      if (state.sessionId !== sessionId || state.streaming) throw Error('The chat changed while preparing this request. Your draft is retained.');
+      nextGoal = newRequestAfterReport() ? selectedGoal() : null;
+    }
     submission = createChatSubmission(captured.prompt, captured.attachments);
     if (nextGoal) {
       const current = await fetchJson('/api/assignments/v2/' + encodeURIComponent(nextGoal._bindingV2.assignment_id));
@@ -5889,6 +5903,9 @@ elements.chatForm.addEventListener("submit", async (event) => {
           || state.sessionId !== nextGoal._bindingV2.session_id) throw Error('The selected chat changed. Your draft is retained.');
       submission = { ...routeSavedChatSubmission(submission, owner.executor), nextRequestAfter: submission.nextRequestAfter };
       state.taskNavigationAssignmentId = ''; state.activeGoalId = ''; state.verifiedWorkPacket = null;
+      // The next state poll calls setSession with this same chat. Do not let
+      // its saved navigation selection pin observation to the previous task.
+      try { localStorage.removeItem('operator-desktop.task-target'); } catch {}
     }
     state.sendingMessage = null;
     clearChatComposerForSubmission();

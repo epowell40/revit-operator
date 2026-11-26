@@ -257,7 +257,7 @@ test('actual Send handler acknowledges synchronously, retains immutable click in
   const attachment = { filename: 'redline.pdf', data_base64: 'retained-file-bytes' };
   const state = { resetting: false, pendingAttachments: [attachment] };
   const elements = { chatForm: { addEventListener(_event, fn) { handler = fn; } }, promptInput: { value: 'Review these marks' }, sendButton: {} };
-  runInNewContext(directionPolicy + '\n' + appBody('assertAttachmentTotalSize') + '\n' + source.slice(from, until + 4), { state, elements, beginComposerSend, loadedBrowserIdentity: 'current', selectedGoal: () => null,
+  runInNewContext(directionPolicy + '\n' + appBody('assertAttachmentTotalSize') + '\n' + source.slice(from, until + 4), { state, elements, beginComposerSend, newRequestAfterReport:()=>false,renderMessages(){},loadedBrowserIdentity: 'current', selectedGoal: () => null,
     setStatus: text => { status = text; }, updateControls() { elements.sendButton.disabled = state.composerSubmissionPending; },
     persistComposerDraft: () => new Promise(resolve => { saveDone = resolve; }),
     assertLoadedBrowserFresh: () => { checks++; return new Promise(resolve => { freshDone = resolve; }); },
@@ -288,7 +288,7 @@ test('actual Send handler acknowledges synchronously, retains immutable click in
 test('reset during pending freshness prevents dispatch and releases intake controls', async () => {
   let handler, freshDone; let sends = 0;
   const state = { pendingAttachments: [] }; const elements = { chatForm: { addEventListener(_event, fn) { handler = fn; } }, promptInput: { value: 'Question' } };
-  runInNewContext(directionPolicy + '\n' + appBody('assertAttachmentTotalSize') + '\n' + source.slice(from, until + 4), { state, elements, beginComposerSend, loadedBrowserIdentity: 'current', selectedGoal: () => null, setStatus() {}, updateControls() {},
+  runInNewContext(directionPolicy + '\n' + appBody('assertAttachmentTotalSize') + '\n' + source.slice(from, until + 4), { state, elements, beginComposerSend, newRequestAfterReport:()=>false,renderMessages(){},loadedBrowserIdentity: 'current', selectedGoal: () => null, setStatus() {}, updateControls() {},
     persistComposerDraft: async () => true, assertLoadedBrowserFresh: () => new Promise(resolve => { freshDone = resolve; }),
     createChatSubmission() { sends++; }, clearChatComposerForSubmission() { sends++; }, beginOptimisticChatSubmission() { sends++; }, sendPrompt() { sends++; }
   });
