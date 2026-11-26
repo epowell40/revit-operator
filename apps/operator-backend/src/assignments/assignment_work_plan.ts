@@ -21,6 +21,7 @@ import { workPlanPendingV2, type WorkPlanDeclarationV2 } from "../domain/assignm
 import { appliedOperationHasVerifiedPostconditionV2 } from "../domain/assignment-kernel/outcome.js";
 import { verifiedSavedPartialV2 } from "../domain/assignment-kernel/verified_saved_partial.js";
 import type { AssignmentSnapshotV2 } from '../domain/assignment-kernel/snapshot.js';
+import {workReportPresentation} from './work_report_presentation.js';
 
 /** Optional optimistic concurrency fence for a host command prepared from an
  * earlier publication. No new completion semantics or evidence admission. */
@@ -153,6 +154,7 @@ export function manageAssignmentWorkPlan(input: { binding: AssignmentKernelBindi
     budget_status: assignmentWorkBudgetStatusV2(snapshot, DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, new Date().toISOString()),
     work_plan: projectWorkPlan(snapshot.work_plan, input.start, input.assumption_start, snapshot),
     review_handoff: compactWorkReviewV2(snapshot),
+    report_presentation: workReportPresentation(snapshot),
     scope_checks: projectWorkPlanScopeChecksV1(snapshot),
     interpretation_notice: "Scope descriptions and source basis are assistant interpretations. Item completion binds distinct independently verified operations; it is not independent certification of drawing coverage.",
     edit_completion_guidance: "For an edit item, cite only existing applied edit operation IDs from available_verified_operations. Their accepted native verification reads are already associated; do not include read IDs in the edit's operation_ids. Before a scoped handoff, record finished verified edit items; keep unfinished required preservation and visual checks in their dependent inspection items. Do not drop those checks or repeat edits to correct bookkeeping. Inspection items use fresh native read IDs and their own coverage rules.",

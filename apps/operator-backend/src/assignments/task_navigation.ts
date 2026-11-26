@@ -1,5 +1,5 @@
 import { getGoalStoragePath, listGoalCandidatesForSessions } from "../goals/service.js";
-import { getSessionOwner, listConversationNavigation } from "../memory/sqlite_store.js";
+import { getSessionOwner, listConversationNavigation, archivedConversationIds, setConversationsArchived, navigationConversationIds } from "../memory/sqlite_store.js";
 import { getRequestAssignmentPrincipalId, getRequestContext, isSessionIdBoundToPrincipal, requestMatchesAssignmentPrincipalId } from "../request_context.js";
 import { assignmentKernelTerminalSettlementDeferredV2 } from "./assignment_kernel_v2_terminal_barrier.js";
 import { readNavigationProjection, type NavigationProjection } from "./task_navigation_projection.js";
@@ -8,7 +8,7 @@ import { readNavigationProjectionAsync } from "./task_navigation_reader.js";
 export type TaskNavigationState = "working" | "pausing" | "paused" | "needs_input" | "needs_review" | "ready" | "complete" | "failed" | "unknown" | "loading" | "stopping_after_usage_limit" | "waiting_for_usage";
 export type TaskNavigationEntry = {
   task_id: string; session_id: string; assignment_id: string | null; title: string;
-  state: TaskNavigationState; updated_at: string; summary: string;
+  state: TaskNavigationState; updated_at: string; summary: string; archived?: boolean;
 };
 
 const rank = (state: TaskNavigationState) => ["working", "pausing", "stopping_after_usage_limit"].includes(state) ? 0
@@ -29,14 +29,15 @@ export function ownedNavigationSession(sessionId: string): boolean {
  * A cached Goal or index can discover a journal but cannot declare its status. */
 type NavigationPage = { schema: "revit-operator.task-navigation/v1"; tasks: TaskNavigationEntry[]; loading: boolean };
 type ProjectionRequest = { projection_path: string };
-function* navigationSteps(limit = 100): Generator<NavigationPage | ProjectionRequest | undefined, NavigationPage, NavigationProjection | null | undefined> {
+function* navigationSteps(limit = 100, archived = false): Generator<NavigationPage | ProjectionRequest | undefined, NavigationPage, NavigationProjection | null | undefined> {
   if (!getRequestAssignmentPrincipalId()) throw new Error("Task navigation requires an authenticated principal.");
   const allowed = new Map<string, boolean>();
   const owns = (id: string) => {
     if (!allowed.has(id)) allowed.set(id, ownedNavigationSession(id));
     return allowed.get(id)!;
   };
-  const conversations = listConversationNavigation(owns, 200);
+  const archivedIds = archivedConversationIds();
+  const conversations = listConversationNavigation(id => owns(id) && archivedIds.has(id) === archived, 200);
   const titles = new Map(conversations.map(row => [row.session_id, row.title]));
   const entries = new Map<string, TaskNavigationEntry>();
   const page = (loading: boolean): NavigationPage => {
@@ -45,7 +46,9 @@ function* navigationSteps(limit = 100): Generator<NavigationPage | ProjectionReq
       state: loading ? "loading" as const : "complete" as const, summary: loading ? "Loading saved status." : "Open the conversation."
     }))];
     return { schema: "revit-operator.task-navigation/v1", loading,
-      tasks: rows.sort((a,b) => rank(a.state) - rank(b.state) || Date.parse(b.updated_at) - Date.parse(a.updated_at))
+      tasks: rows.filter(row => (archivedIds.has(row.session_id) && !['working','pausing','stopping_after_usage_limit'].includes(row.state)) === archived)
+        .map(row=>({...row,archived}))
+        .sort((a,b) => rank(a.state) - rank(b.state) || Date.parse(b.updated_at) - Date.parse(a.updated_at))
         .slice(0, Math.max(1, Math.min(200, Math.trunc(limit) || 100))) };
   };
   yield page(true);
@@ -82,13 +85,13 @@ function* navigationSteps(limit = 100): Generator<NavigationPage | ProjectionReq
   return page(false);
 }
 
-export function listTaskNavigation(limit = 100) {
-  const steps = navigationSteps(limit); let next = steps.next();
+export function listTaskNavigation(limit = 100, archived = false) {
+  const steps = navigationSteps(limit, archived); let next = steps.next();
   while (!next.done) next = steps.next(next.value && "projection_path" in next.value ? readNavigationProjection(next.value.projection_path) : undefined);
   return next.value;
 }
-export async function listTaskNavigationAsync(limit = 100, onProgress?: (page: NavigationPage) => boolean) {
-  const steps = navigationSteps(limit); let next = steps.next();
+export async function listTaskNavigationAsync(limit = 100, onProgress?: (page: NavigationPage) => boolean, archived = false) {
+  const steps = navigationSteps(limit, archived); let next = steps.next();
   while (!next.done) {
     if (next.value && "projection_path" in next.value) {
       next = steps.next(await readNavigationProjectionAsync(next.value.projection_path));
@@ -98,4 +101,16 @@ export async function listTaskNavigationAsync(limit = 100, onProgress?: (page: N
     await new Promise<void>(resolve => setImmediate(resolve)); next = steps.next();
   }
   return next.value;
+}
+
+export function archiveTaskConversations(input: {session_id?: string; all?: boolean; archived: boolean}) {
+  if (!getRequestAssignmentPrincipalId()) throw Error('Task history requires sign-in.');
+  if (typeof input.archived !== 'boolean' || (input.all === true) === (typeof input.session_id === 'string')) throw Error('Choose one conversation or all history.');
+  const ids = input.all === true ? [...new Set([...navigationConversationIds(),
+    ...listGoalCandidatesForSessions(ownedNavigationSession).map(goal=>goal.related_session_id).filter((id):id is string=>!!id)])].filter(ownedNavigationSession)
+    : input.session_id && input.session_id.length <= 240 && ownedNavigationSession(input.session_id) ? [input.session_id] : [];
+  if (!input.all && !ids.length) throw Error('This conversation is unavailable.');
+  // Archiving only hides history. A live execution remains visible in the main list.
+  setConversationsArchived(ids, input.archived);
+  return {ok:true, archived:input.archived, count:ids.length};
 }

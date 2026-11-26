@@ -2900,3 +2900,5 @@ textarea:focus {
 .taskListTitle { font-size:13px; line-height:1.35; overflow-wrap:anywhere; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
 .taskListStatus,.taskListEmpty { font-size:11px; color:#697683; }
 .taskDrawer button:focus-visible { outline:2px solid #477aaf; outline-offset:2px; }
+
+.taskHistoryActions{display:flex;gap:8px;margin-top:10px}.taskHistoryRow{display:flex;align-items:center;gap:6px}.taskHistoryRow .taskListRow{flex:1;min-width:0}.taskArchive{font-size:12px;padding:6px;flex-shrink:0}

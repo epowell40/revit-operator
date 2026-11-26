@@ -110,3 +110,10 @@ test("reporting errors, invalid binding and unavailable status fail closed witho
   let calls=0;await assert.rejects(missingWorkReportContinuation(binding,async()=>{calls++;throw Error(message);}),new RegExp(message));assert.equal(calls,1);
  }
 });
+
+test('host-scoped report presentation appears once and cannot attach to a different review',()=>{
+ const result={ok:true,verification_policy:'advisory',completion_proposal:{review_id:'r',verified:false,user_facing_text:'Changed the property.',claimed_completed:['Changed the property.'],remaining_work:[],uncertainties:[]},report_presentation:{schema:'revit-operator.work-report-presentation/v1',review_id:'r',summary:'Changed the property. Verified in Revit.',details:'1 model change verified by current native readback.'}};
+ const render=()=>retainedWorkReportMessage({name:'report_work_for_review'},{output:JSON.stringify(result)});
+ assert.equal(render(),'Changed the property. Verified in Revit.\n\n## Details\n\n1 model change verified by current native readback.');
+ result.report_presentation.review_id='other';assert.match(render(),/not independently verified/);
+});

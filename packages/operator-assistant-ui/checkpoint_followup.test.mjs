@@ -141,3 +141,11 @@ test('time-aware backend advertises and authorizes a bounded clock window in the
  assert.deepEqual(checkpointTools.checkpointResourceRenewalContext(publication,goal).resource_renewal,
    {provider_calls:64,total_tokens:16_000_000,active_execution_ms:1_200_000});
 });
+
+test('new task navigation after a settled report preserves original effect scope and refuses unresolved execution',()=>{
+ const {publication,goal}=fixture();publication.snapshot.spec.interpreted_scope={scope:{model_effect:'read'}};
+ const before=JSON.stringify(publication);checkpointTools.assertNewTaskAfterReport(publication,goal);assert.equal(JSON.stringify(publication),before);
+ for(const change of [{quiescent:false},{unresolved_unknown_operation_ids:['write']},{in_flight_operation_ids:['write']},{in_flight_provider_call_ids:['call']},{provider_usage_hold:{hold_id:'hold'}},{execution_control:{state:'paused'}},{completion_proposal:null}]){
+  const p=structuredClone(publication);Object.assign(p.snapshot,change);assert.throws(()=>checkpointTools.assertNewTaskAfterReport(p,goal));
+ }
+});

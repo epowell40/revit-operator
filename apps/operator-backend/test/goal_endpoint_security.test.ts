@@ -752,6 +752,20 @@ test("shared-token local mode retains goal endpoint behavior without a multi-use
   assert.equal(readResponse.status, 200);
   assert.equal((await readResponse.json() as { goal: { related_session_id: string } }).goal.related_session_id, sessionId);
 
+  // Exercise the real authentication inventory, not a handler with injected context.
+  const archiveBody = JSON.stringify({session_id: sessionId, archived: true});
+  assert.equal((await fetch(`${base}/api/task-navigation/archive`, {
+    method: 'POST', headers: {'content-type':'application/json'}, body: archiveBody
+  })).status, 401);
+  const archiveResponse = await fetch(`${base}/api/task-navigation/archive`, {
+    method:'POST', headers:jsonHeaders, body:archiveBody
+  });
+  assert.equal(archiveResponse.status, 200, await archiveResponse.text());
+  const restoreResponse = await fetch(`${base}/api/task-navigation/archive`, {
+    method:'POST', headers:jsonHeaders, body:JSON.stringify({session_id:sessionId,archived:false})
+  });
+  assert.equal(restoreResponse.status, 200);
+
   const autoSessionResponse = await fetch(`${base}/session/new`, { method: "POST", headers: tokenHeaders });
   assert.equal(autoSessionResponse.status, 200);
   const autoSessionId = (await autoSessionResponse.json() as { session_id: string }).session_id;

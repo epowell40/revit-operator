@@ -3,7 +3,7 @@ import { parseTaskNavigation, renderTaskList, renderSessionStart, taskDraftKey, 
 import { createComposerDraftStore, staleComposerNotice, saveComposerRefreshTarget, readComposerRefreshTarget, clearComposerRefreshTarget } from "./composer_draft.mjs";
 import { beginComposerSend, selectChatSubmissionMode, startsFreshComputerConversation, routeSavedChatSubmission } from "./composer_intake.mjs";
 import { mayRestoreRejectedChatSubmission } from "./chat_submission_admission.mjs";
-import { checkpointDirectionContext, checkpointResumeReady, checkpointResourceRenewalContext } from "./checkpoint_followup.mjs";
+import { checkpointDirectionContext, checkpointResumeReady, checkpointResourceRenewalContext, assertNewTaskAfterReport } from "./checkpoint_followup.mjs";
 import { acceptAssignmentMutationViewV2, retainNewerAssignmentViewsV2, savedAssignmentNavigationTargetV2, readSavedAssignmentHistoryV2 } from "./assignment_mutation.mjs";
 import { createAssignmentInputControl, assignmentInputErrorText } from "./assignment_input_controls.mjs";
 import { refreshAssignmentDisplayContext } from "./assignment_display_context.mjs";
@@ -39,6 +39,7 @@ const state = {
   taskNavigation: [],
   taskNavigationBusy: false,
   taskCatalogueBusy: false,
+  taskShowArchived: false,
   taskCatalogueLoading: true,
   taskCatalogueUnavailable: false,
   taskNavigationUpdatedAt: 0,
@@ -2009,7 +2010,7 @@ function updateControls() {
     ? "Sending…"
     : backendSubmissionActive || state.streaming && state.activeRunKind === "computer"
       ? "Steer"
-      : pausedTaskAcceptsDirection() ? "Add direction" : "Send";
+      : newRequestAfterReport() ? "Start new task" : pausedTaskAcceptsDirection() ? "Add direction" : "Send";
   elements.chatForm?.setAttribute("aria-busy", state.streaming || state.composerSubmissionPending ? "true" : "false");
   elements.newSessionButton.disabled = captureActive || captureBusy;
   elements.stopButton.disabled = !state.streaming;
@@ -5464,7 +5465,17 @@ function renderSessionStartScreen() {
 function renderTaskHistory() {
   renderTaskList(document.querySelector("#taskList"), state.taskNavigation, state.sessionId,
     task => void openTaskConversation(task), { query: document.querySelector("#taskSearch")?.value,
-      loading: state.taskCatalogueLoading, unavailable: state.taskCatalogueUnavailable });
+      loading: state.taskCatalogueLoading, unavailable: state.taskCatalogueUnavailable,
+      onArchive: task => void archiveTaskHistory(task) });
+}
+
+async function archiveTaskHistory(task) {
+  try {
+    await fetchJson('/api/task-navigation/archive',{method:'POST',body:JSON.stringify(task
+      ? {session_id:task.session_id,archived:!task.archived} : {all:true,archived:true})});
+    setStatus(task?.archived ? 'Chat restored.' : 'History archived. You can restore it from Archived.');
+    await syncTaskNavigation({refreshCatalogue:true});
+  } catch(error) { setStatus(error.message || 'Could not archive history.'); }
 }
 
 function setTaskSidebarOpen(open, remember = true) {
@@ -5553,7 +5564,7 @@ async function loadTaskCatalogue() {
   state.taskCatalogueBusy = true;
   let reader;
   try {
-    const response = await fetch("/api/task-navigation?stream=1", { headers: { "X-Operator-Browser-Identity": loadedBrowserIdentity } });
+    const response = await fetch("/api/task-navigation?stream=1&archived=" + (state.taskShowArchived ? '1' : '0'), { headers: { "X-Operator-Browser-Identity": loadedBrowserIdentity } });
     if (!response.ok || !response.body) throw new Error("Task history is unavailable.");
     reader = response.body.getReader();
     const decoder = new TextDecoder(); let buffer = "", complete = false;
@@ -5762,9 +5773,33 @@ function handleChatSubmissionFailure(error, submission) {
   }
 }
 
+function newRequestAfterReport() {
+  return !state.streaming && !state.goalSelectionPinned && !state.pendingCheckpointDirection
+    && selectedGoal()?._assignmentPhase === 'awaiting_user_review';
+}
+
 elements.chatForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (state.attachmentReadsPending > 0) return;
+  if (newRequestAfterReport()) {
+    if(state.composerSubmissionPending || state.resetting || state.assignmentResumePending)return;
+    const text=elements.promptInput.value, attachments=state.pendingAttachments.map(a=>({...a})), goal=selectedGoal();
+    if(!text.trim() && !attachments.length)return;
+    state.composerSubmissionPending=true;updateControls();
+    try {
+      await assertLoadedBrowserFresh(loadedBrowserIdentity);
+      const current=await fetchJson('/api/assignments/v2/'+encodeURIComponent(goal._bindingV2.assignment_id));
+      // A polling refresh may replace the view object without changing identity.
+      // Validate the current selection's canonical binding and control version.
+      assertNewTaskAfterReport(current.assignment_kernel_v2,selectedGoal());
+      // The navigation helper retains the old task and its draft before switching.
+      state.composerSubmissionPending=false;
+      await openTaskConversation(null);
+      if(state.sessionId || state.resetting)throw Error('Could not start a new conversation. Your draft is retained.');
+      elements.promptInput.value=text;state.pendingAttachments=attachments;renderAttachStrip();
+    } catch(error) { setStatus(error.message || 'Could not start the next task.'); return; }
+    finally { state.composerSubmissionPending=false;updateControls(); }
+  }
   if (state.streaming && state.activeRunKind === "backend" || pausedTaskAcceptsDirection()) { await submitTaskDirection(); return; }
   const captured = beginComposerSend(state, elements.promptInput.value);
   if (!captured) return;
@@ -5895,6 +5930,16 @@ document.querySelector("#tasksButton").addEventListener("click", () => {
 });
 document.querySelector("#closeTasksButton").addEventListener("click", () => setTaskSidebarOpen(false));
 document.querySelector("#taskSearch").addEventListener("input", renderTaskHistory);
+document.querySelector('#taskArchiveAll').addEventListener('click',()=>void archiveTaskHistory());
+document.querySelector('#taskShowArchived').addEventListener('click',async()=>{
+  if(state.taskCatalogueBusy)return;
+  state.taskShowArchived=!state.taskShowArchived;
+  document.querySelector('#taskShowArchived').setAttribute('aria-pressed',String(state.taskShowArchived));
+  document.querySelector('#taskShowArchived').textContent=state.taskShowArchived?'Back to history':'Archived';
+  document.querySelector('#taskArchiveAll').hidden=state.taskShowArchived;
+  state.taskNavigation=[];
+  await syncTaskNavigation({refreshCatalogue:true});
+});
 document.querySelector("#taskDrawer").addEventListener("close", () => {
   document.querySelector("#tasksButton").setAttribute("aria-expanded", "false");
   document.querySelector("#tasksButton").focus();
@@ -5903,6 +5948,15 @@ document.querySelector("#taskNewChatButton").addEventListener("click", resetCurr
 document.querySelector("#taskPauseButton").addEventListener("click", () => stopComputerRun().catch(error => setStatus(error.message)));
 document.querySelector("#taskResumeButton").addEventListener("click", () => runGoalControl("resume").catch(error => setStatus(error.message)));
 const taskBudgetContinueButton=document.createElement('button');
+const taskContinueReportButton=document.createElement('button');
+taskContinueReportButton.id='taskContinueReportButton';taskContinueReportButton.hidden=true;
+taskContinueReportButton.textContent='Continue this task';
+taskContinueReportButton.title='Apply the typed direction to the existing task and its original scope. Use Start new task for a separate request.';
+document.querySelector('#taskResumeButton').after(taskContinueReportButton);
+taskContinueReportButton.addEventListener('click',()=>{
+  if(!elements.promptInput.value.trim())elements.promptInput.value='Continue the remaining work on this task using its saved answers and evidence.';
+  void submitTaskDirection();
+});
 taskBudgetContinueButton.id='taskBudgetContinueButton';taskBudgetContinueButton.hidden=true;
 taskBudgetContinueButton.textContent='Continue with +64 calls / +16M tokens';
 taskBudgetContinueButton.title='Explicitly authorize one additional bounded window on this task. Prior usage remains counted; native permissions and the drawing scope do not change.';
@@ -5922,6 +5976,8 @@ function renderCompactWork() {
   if (!elements.assignmentCompact) return;
   const storedTask = state.taskNavigation.find(task => task.session_id === state.sessionId);
   const goal = selectedGoal();
+  const continueReport=document.querySelector('#taskContinueReportButton');
+  if(continueReport){continueReport.hidden=!newRequestAfterReport();continueReport.disabled=Boolean(state.composerSubmissionPending||state.assignmentResumePending);}
   const taskState = currentTaskState(storedTask, goal, state.sessionId);
   const task = taskState ? { ...storedTask, state: taskState } : null;
   const saved = task && ["paused", "pausing", "needs_input", "needs_review", "ready", "unknown", "failed", "stopping_after_usage_limit", "waiting_for_usage"].includes(task.state);

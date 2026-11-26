@@ -27,7 +27,10 @@ test('validated task discovery accepts a review row and keeps it visible with ot
   const row={...task,state:'needs_review'};
   const tasks=parseTaskNavigation({schema:'revit-operator.task-navigation/v1',tasks:[row]});
   assert.equal(tasks[0].state,'needs_review');
-  assert.equal(groupTasks(tasks)[0].title,'Needs you');
+  assert.equal(groupTasks(tasks)[0].title,'Recent');
+  assert.equal(groupTasks([{...row,state:'needs_input'}])[0].title,'Needs you');
+  for(const state of ['failed','paused','ready','needs_review','waiting_for_usage','unknown'])
+    assert.equal(groupTasks([{...row,state}])[0].title,'Recent');
   assert.equal(groupTasks(tasks,binding.session_id)[0].title,'Current task');
   assert.throws(()=>parseTaskNavigation({schema:'revit-operator.task-navigation/v1',tasks:[{...row,state:'invented'}]}));
 });

@@ -14885,7 +14885,7 @@ app.get("/api/task-navigation", async (req, res) => {
   res.setHeader("cache-control", "no-store");
   try {
     if (req.query?.stream === "1") {
-      const upstream = await backendFetch("/api/task-navigation?limit=100&stream=1");
+      const upstream = await backendFetch("/api/task-navigation?limit=100&stream=1&archived=" + (req.query?.archived === '1' ? '1' : '0'));
       if (!upstream.ok || !upstream.body) throw Object.assign(new Error("Task history is unavailable."), { status: upstream.status });
       res.setHeader("content-type", "application/x-ndjson; charset=utf-8");
       const reader = Readable.fromWeb(upstream.body);
@@ -14894,7 +14894,7 @@ app.get("/api/task-navigation", async (req, res) => {
       reader.pipe(res);
       return;
     }
-    const payload = await readBackendJson("/api/task-navigation?limit=100");
+    const payload = await readBackendJson("/api/task-navigation?limit=100&archived=" + (req.query?.archived === '1' ? '1' : '0'));
     const tasks = parseTaskNavigation(payload).map(task => {
       const run = taskRuns.forSession(task.session_id).find(row => !row.finished_at);
       return run && !["pausing", "paused", "unknown"].includes(task.state)
@@ -14902,6 +14902,11 @@ app.get("/api/task-navigation", async (req, res) => {
     });
     res.json({ schema: payload.schema, tasks });
   } catch (error) { sendJsonError(res, error, Number(error?.status) || 502); }
+});
+
+app.post('/api/task-navigation/archive', async (req,res) => {
+  try { res.json(await readBackendJson('/api/task-navigation/archive',{method:'POST',body:JSON.stringify(req.body)})); }
+  catch(error) { sendJsonError(res,error,Number(error?.status)||502); }
 });
 
 app.get("/api/task-run", async (req, res) => {

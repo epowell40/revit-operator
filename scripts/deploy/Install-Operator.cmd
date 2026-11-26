@@ -1,4 +1,5 @@
 @echo off
+echo Starting Revit Operator installer...
 cd /d "%~dp0"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Install-Operator.ps1"
 set "OperatorInstallExit=%ERRORLEVEL%"

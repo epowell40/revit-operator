@@ -22,15 +22,23 @@ test('new workspace keeps old conversations out of the blank main area; examples
 });
 test('sidebar filters retained text, escapes titles, and preserves focused rows on unchanged polling',()=>{
  const root=dom(),tasks=[{...task('A','needs_input'),title:'<img onerror=bad()> Schedule'},task('B','complete')],opened=[];
- renderTaskList(root,tasks,'A',t=>opened.push(t),{query:'schedule'});const section=root.children[0],button=section.children[1];
+ renderTaskList(root,tasks,'A',t=>opened.push(t),{query:'schedule'});const section=root.children[0],button=section.children[1].children[0];
  assert.equal(button.children[0].textContent,tasks[0].title);assert.equal(button.children[1].textContent,'Needs your input');assert.equal(button.attributes['aria-current'],'page');
- renderTaskList(root,tasks,'A',t=>opened.push(t),{query:'schedule'});assert.equal(root.children[0].children[1],button);assert.equal(opened.length,0);
+ renderTaskList(root,tasks,'A',t=>opened.push(t),{query:'schedule'});assert.equal(root.children[0].children[1].children[0],button);assert.equal(opened.length,0);
  button.listeners.click();assert.deepEqual(opened,[tasks[0]]);
  renderTaskList(root,tasks,'A',()=>{},{query:'no match'});assert.equal(root.children[0].textContent,'No matching tasks.');
 });
 test('unavailable or loading history never presents cached status as confirmed',()=>{
  for(const options of [{loading:true},{unavailable:true}]){
   const root=dom();renderTaskList(root,[task('A','complete')],'',()=>{},options);
-  const row=root.children[1].children[1];assert.equal(row.children[1].textContent,'Status not confirmed');assert.equal(row.dataset.taskState,'unknown');
+  const row=root.children[1].children[1].children[0];assert.equal(row.children[1].textContent,'Status not confirmed');assert.equal(row.dataset.taskState,'unknown');
  }
+});
+
+test('archive and restore are explicit actions, do not open the task, and are absent while working',()=>{
+ const root=dom(),archived=[],opened=[];const rows=[task('A','needs_review'),{...task('B','failed'),archived:true},task('C','working')];
+ renderTaskList(root,rows,'',t=>opened.push(t),{onArchive:t=>archived.push(t)});
+ const controls=root.children.flatMap(section=>section.children.slice(1)).flatMap(row=>row.children.filter(c=>c.className==='taskArchive'));
+ assert.deepEqual(controls.map(c=>c.textContent),['Archive','Restore']);assert.equal(archived.length,0);controls[0].listeners.click();
+ assert.deepEqual(archived,[rows[0]]);assert.equal(opened.length,0);
 });

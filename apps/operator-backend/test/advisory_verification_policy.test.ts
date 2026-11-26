@@ -60,7 +60,7 @@ test('shared reporting continuation reaches real advisory review after ready-ite
  assert.equal(reported.outcome,'awaiting_user_review');assert.equal(f.state().completion_proposal?.verified,false);
  assert.equal(projectWorkReviewV2(f.state()).counts.reported_unverified,2);
  assert.equal(projectWorkReviewV2(f.state()).counts.checked,0);
- assert.match(ui.retainedWorkReportMessage({name:'report_work_for_review'},{output:JSON.stringify(reported)}),/not independently verified/);
+ assert.match(ui.retainedWorkReportMessage({name:'report_work_for_review'},{output:JSON.stringify(reported)}),/not independent certification of the entire task/);
 }));
 
 test('advisory owner written body reaches canonical review without strict retention or native settlement',()=>fixture(true,async f=>{
@@ -80,7 +80,7 @@ test('advisory owner written body reaches canonical review without strict retent
  assert.deepEqual(after.operations,before.operations);assert.deepEqual(after.criteria,before.criteria);
  assert.deepEqual(after.completion_proposal?.remaining_work,proposal.remaining_work);
  for(const message of [finalCodexAssignmentMessageV2(after,'All work complete.'),ui.retainedWorkReportMessage({name:'report_work_for_review'},{output:JSON.stringify(result)})]){
-   assert.ok(message.includes(written_findings));assert.match(message,/not independently verified/);assert.doesNotMatch(message,/All work complete/);
+   assert.ok(message.includes(written_findings));assert.match(message,/not independent certification of the entire task/);assert.doesNotMatch(message,/All work complete/);
  }
 }));
 
@@ -132,7 +132,7 @@ test('optional user-facing report text is delivered without certifying or droppi
  const before=f.state(),answer='Review the draft connection layout; the exterior device still needs an engineering decision.';
  const result=manageAssignmentWorkPlan({binding:f.binding,action:'propose_completion',completion_proposal:{...proposal,user_facing_text:answer}});
  assert.equal(result.outcome,'awaiting_user_review');const after=f.state();assert.equal(after.completion_proposal?.verified,false);
- const message=finalCodexAssignmentMessageV2(after,'Everything is complete.');assert(message.includes(answer));assert.match(message,/not independently verified/);assert.match(message,/Review terminal connections/);assert.doesNotMatch(message,/Everything is complete/);
+ const message=finalCodexAssignmentMessageV2(after,'Everything is complete.');assert(message.includes(answer));assert.match(message,/not independent certification of the entire task/);assert.match(message,/Review terminal connections/);assert.doesNotMatch(message,/Everything is complete/);
  assert.deepEqual(after.operations,before.operations);assert.deepEqual(after.criteria,before.criteria);
 }));
 
@@ -191,7 +191,7 @@ test('optional checklist absence cannot reject an explicitly unverified partial 
  assert.deepEqual(f.state().operations,before.operations);assert.deepEqual(f.state().criteria,before.criteria);
  assert.deepEqual(f.state().provider_calls,before.provider_calls);assert.deepEqual(f.state().work_plan,before.work_plan);
  assert.equal(f.state().advisory_followups?.filter(x=>x.state==='open').length,2);
- assert.match(ui.retainedWorkReportMessage({name:'report_work_for_review'},{output:JSON.stringify(response)}),/not independently verified/);
+ assert.match(ui.retainedWorkReportMessage({name:'report_work_for_review'},{output:JSON.stringify(response)}),/not independent certification of the entire task/);
  __testOnlyResetGoalListCache();assert.equal(f.state().outcome,'awaiting_user_review');
 }));
 
@@ -513,7 +513,7 @@ test("native program review reuse permits readback and save admission without ma
   assert.equal(after.completion_proposal?.verified, false);
   assert.deepEqual(after.operations, before.operations); assert.deepEqual(after.criteria, before.criteria);
   assert.deepEqual(after.provider_calls, before.provider_calls); assert.deepEqual(after.spec, before.spec);
-  assert.match(finalCodexAssignmentMessageV2(after, "Automatically verified."), /not independently verified/);
+  assert.match(finalCodexAssignmentMessageV2(after, "Automatically verified."), /not independent certification of the entire task/);
   assert.doesNotMatch(finalCodexAssignmentMessageV2(after, "Automatically verified."), /Automatically verified/);
   __testOnlyResetGoalListCache(); assert.deepEqual(f.state(), after);
 }));
@@ -1236,7 +1236,7 @@ test("advisory unfinished items survive authenticated HTTP update, an empty chec
     assert.equal((await checkpoint([])).status, 200);
     const handoff = finalCodexAssignmentMessageV2(f.state(), "Everything is done.");
     assert.match(handoff, /1 saved unfinished report remains/);assert.match(handoff, /Confirm the concealed outlet/);
-    assert.match(handoff, /Newly reported remaining work/);assert.doesNotMatch(handoff, /Inspect the inlet connection|Everything is done/);
+    assert.match(handoff, /Saved unfinished items/);assert.doesNotMatch(handoff, /Inspect the inlet connection|Everything is done/);
     const pending = f.state();assert.equal((await post({ action: "update_followup", followup: command })).status, 200);
     assert.deepEqual(f.state(), pending, "exact retry cannot release the next checkpoint");
     await steerAssignment(checkpointCommand(f, "continue-unfinished-two"));

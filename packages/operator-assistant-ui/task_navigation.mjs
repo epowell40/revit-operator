@@ -31,7 +31,7 @@ export function parseTaskNavigation(value) {
       || !(row.assignment_id === null || text(row.assignment_id,240)) || ids.has(row.task_id)) throw Error('Task list is unavailable');
     ids.add(row.task_id);
     return { task_id:row.task_id,session_id:row.session_id,title:row.title,state:row.state,
-      updated_at:row.updated_at,summary:row.summary,assignment_id:row.assignment_id };
+      updated_at:row.updated_at,summary:row.summary,assignment_id:row.assignment_id, archived:row.archived === true };
   });
 }
 
@@ -39,7 +39,7 @@ export function groupTasks(tasks, selectedSessionId = '') {
   const groups = [{title:'Current task',items:[]},{title:'Working',items:[]},{title:'Needs you',items:[]},{title:'Recent',items:[]}];
   for (const task of tasks) {
     const group = selectedSessionId && task.session_id === selectedSessionId ? 0
-      : ['working','pausing','stopping_after_usage_limit'].includes(task.state) ? 1 : ['paused','needs_input','needs_review','ready','unknown','failed','waiting_for_usage'].includes(task.state) ? 2 : 3;
+      : ['working','pausing','stopping_after_usage_limit'].includes(task.state) ? 1 : task.state === 'needs_input' ? 2 : 3;
     groups[group].items.push(task);
   }
   for (const group of groups) group.items.sort((a,b) => Date.parse(b.updated_at) - Date.parse(a.updated_at));
@@ -49,7 +49,7 @@ export function groupTasks(tasks, selectedSessionId = '') {
 export function taskStateLabel(state) {
   return {working:'Working',pausing:'Pausing…',paused:'Paused',needs_input:'Needs your input',needs_review:'Ready for review',ready:'Ready to continue',
     stopping_after_usage_limit:'Stopping after usage limit',waiting_for_usage:'Waiting for usage',
-    complete:'Complete',failed:'Needs attention',unknown:'Result needs checking',loading:'Loading saved status…'}[state] || 'Status unavailable';
+    complete:'Complete',failed:'Failed',unknown:'Result uncertain',loading:'Loading saved status…'}[state] || 'Status unavailable';
 }
 
 /** The opened task's validated publication is fresher than the discovery list.
@@ -113,7 +113,14 @@ export function renderTaskList(container, tasks, selectedSessionId, onOpen, opti
       const title=document.createElement('span');title.className='taskListTitle';title.textContent=task.title;title.title=task.title;
       const status=document.createElement('span');status.className='taskListStatus';status.textContent=options.loading || options.unavailable?'Status not confirmed':taskStateLabel(task.state);
       button.dataset && (button.dataset.taskState = options.loading || options.unavailable?'unknown':task.state);
-      button.append(title,status);button.addEventListener('click',()=>onOpen(task));section.append(button);
+      button.append(title,status);button.addEventListener('click',()=>onOpen(task));
+      const row=document.createElement('div');row.className='taskHistoryRow';row.append(button);
+      if (options.onArchive && !options.loading && !options.unavailable && !['working','pausing','stopping_after_usage_limit'].includes(task.state)) {
+        const archive=document.createElement('button');archive.type='button';archive.className='taskArchive';
+        archive.textContent=task.archived?'Restore':'Archive';archive.setAttribute('aria-label',`${archive.textContent} ${task.title}`);
+        archive.addEventListener('click',()=>options.onArchive(task));row.append(archive);
+      }
+      section.append(row);
     }
     container.append(section);
   }

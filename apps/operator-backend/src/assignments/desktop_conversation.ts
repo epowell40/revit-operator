@@ -12,6 +12,7 @@ import {getConversationTurn,type ConversationEntry} from '../memory/sqlite_store
 import {deriveTerminalResultV2} from './assignment_kernel_v2_terminal_result.js';
 import {modelSavedProjectCheckpointV1,savedProjectBeforeInterruptionV2,savedProjectCheckpointV2} from './saved_copy_handoff_v2.js';
 import {requestMatchesAssignmentPrincipalId} from '../request_context.js';
+import {workReportPresentation} from './work_report_presentation.js';
 
 function savedProjectMessage(assignmentId:string,saved:Pick<NonNullable<ReturnType<typeof savedProjectCheckpointV2>>,
  'file'|'observation_id'|'created_at'>,checked:boolean):ConversationEntry{
@@ -88,9 +89,6 @@ export function retainDesktopReviewConversationV1(binding:AssignmentBindingV2):v
  if(!snapshot||!desktopExecutorOwnsAssignmentV2(snapshot)
   ||!sameAssignmentBindingV2(snapshot.current_binding,binding)||!snapshot.completion_proposal)return;
  const proposal=snapshot.completion_proposal;
- const groups=[['Reported work',proposal.claimed_completed],['Remaining work',proposal.remaining_work],['Uncertainties',proposal.uncertainties]] as const;
- const lines=groups.filter(([,items])=>items.length).map(([label,items])=>{
-  const first=items[0]!;return first.length<=280?`${label}: ${first}${items.length>1?` (${items.length-1} more in Details.)`:''}`:`${label}: ${items.length} items in Details.`;
- });
- appendDisplay(binding,proposal.review_id,'assistant',['Ready for review (not independently verified).',...lines,'See task Details for the full retained report and earlier unfinished items.'].join('\n\n'));
+ const presentation=workReportPresentation(snapshot)!;
+ appendDisplay(binding,proposal.review_id,'assistant',presentation.summary+'\n\n## Details\n\n'+presentation.details);
 }

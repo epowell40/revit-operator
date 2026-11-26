@@ -2,7 +2,7 @@ import type http from "node:http";
 import {desktopNativeCatalog,executeDesktopNativeCall,desktopNativeInteractionState} from './desktop_native_tools.js';
 import { activeProviderTurnForBinding, interruptActiveProviderForBinding } from "../codex/active_turns.js";
 import { assignmentDirections, steerAssignment } from "./task_steering.js";
-import { listTaskNavigationAsync } from "./task_navigation.js";
+import { listTaskNavigationAsync, archiveTaskConversations } from "./task_navigation.js";
 import { manageAssignmentWorkPlan } from "./assignment_work_plan.js";
 import {liveDesktopCheckedCopyV1,retainDesktopReviewConversationV1} from './desktop_conversation.js';
 import { controlAssignmentExecutionV2 } from "./assignment_kernel_v2_controls.js";
@@ -98,6 +98,12 @@ export async function handleAssignmentHttpRoute(
     }catch(error){writeJson(res,409,{error:error instanceof Error?error.message:String(error)});}
     return true;
   }
+  if (req.method === 'POST' && url.pathname === '/api/task-navigation/archive') {
+    try { const body = await readJson(req, 2000) as any;
+      writeJson(res,200,archiveTaskConversations(body ?? {}));
+    } catch (error) { writeJson(res,403,{error:error instanceof Error ? error.message : String(error)}); }
+    return true;
+  }
   if (req.method === "GET" && url.pathname === "/api/task-navigation") {
     if (!getRequestAssignmentPrincipalId()) { writeJson(res, 403, { error: "Task navigation requires an authenticated principal." }); return true; }
     if (url.searchParams.get("stream") === "1") {
@@ -109,12 +115,12 @@ export async function handleAssignmentHttpRoute(
           if (Date.now() - lastSentAt < 500) return true;
           lastSentAt = Date.now();
           res.write(JSON.stringify(page) + "\n"); return true;
-        });
+        }, url.searchParams.get('archived') === '1');
         if (!res.destroyed) res.end(JSON.stringify(result) + "\n");
       } catch { if (!res.destroyed) res.end(JSON.stringify({ error: "Task history is temporarily unavailable." }) + "\n"); }
       return true;
     }
-    try { writeJson(res, 200, await listTaskNavigationAsync(Number(url.searchParams.get("limit") ?? 100))); }
+    try { writeJson(res, 200, await listTaskNavigationAsync(Number(url.searchParams.get("limit") ?? 100), undefined, url.searchParams.get('archived') === '1')); }
     catch { writeJson(res, 503, { error: "Task history is temporarily unavailable." }); }
     return true;
   }

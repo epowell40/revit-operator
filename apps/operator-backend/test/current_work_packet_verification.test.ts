@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { AssignmentSnapshotV2 } from '../src/domain/assignment-kernel/index.js';
 import { checkedEditIsCurrentV2 } from '../src/verification/current_postcondition_v2.js';
+import {workReportPresentation} from '../src/assignments/work_report_presentation.js';
 import { packetOperationVerificationV2,packetOverallTrustV2 } from '../src/work_packets/assignment_kernel_v2_verification.js';
 import {generateVerifiedWorkPacketFromKernelV2}from '../src/work_packets/assignment_kernel_v2_generator.js';
 import type {GoalRecord}from '../src/goals/service.js';
@@ -26,6 +27,21 @@ function fixture():MutableProofFixture {
 }
 const action=(s:AssignmentSnapshotV2,id='apply')=>packetOperationVerificationV2(s,s.operations[id]!);
 const packet=(s:AssignmentSnapshotV2)=>generateVerifiedWorkPacketFromKernelV2({id:s.current_binding.assignment_id,non_goals:[],updated_at:s.finished_at}as unknown as GoalRecord,s,null);
+function report(s:MutableProofFixture) {
+ s.completion_proposal={review_id:'report',verified:false,claimed_completed:['Changed the property.'],remaining_work:[],
+  uncertainties:['The project has not been saved to disk; the change is in the open model.'],
+  user_facing_text:'Changed the property and verified its value. The project has not been saved.'} as any;
+ return workReportPresentation(s)!;
+}
+test('checked simple edits have concise results and native checks in Details without contradictory headings',()=>{
+ const s=fixture(),p=report(s),before=JSON.stringify(s);
+ assert.equal(p.checked_edit_count,1);assert.equal(p.applied_edit_count,1);
+ assert.equal(p.summary,s.completion_proposal!.user_facing_text);
+ assert.match(p.details,/1 model change verified by current native readback/);
+ assert.doesNotMatch(p.summary,/not independently verified|Work reported|Full handoff|Notes:/);
+ assert.equal(s.completion_proposal!.verified,false);
+ assert.equal(JSON.stringify(s),before,'Presentation must not change task outcome or evidence.');
+});
 test('current native proof is passed in both packet rows and overall trust',()=>{
  const s=fixture();assert(checkedEditIsCurrentV2(s,'apply'));assert.equal(action(s).state,'passed');assert.equal(action(s,'read').state,'passed');
  assert.equal(packetOverallTrustV2(s),'independently_verified');
@@ -56,6 +72,8 @@ for(const[name,mutate]of Object.entries(negatives))test(`packet never preserves 
  assert.equal(packetOverallTrustV2(s),'uncertain_or_missing');
  const p=packet(s);assert.equal(p.status,'complete_with_issues');assert.match(p.status_reason,/current verification is incomplete/);
  assert(p.issues.some(i=>i.affected_attempt_ids.includes('apply')));assert.equal(s.outcome,'complete','projection cannot rewrite historical canonical outcome');
+ const presentation=report(s);assert.equal(presentation.checked_edit_count,0);
+ assert.match(presentation.summary,/still need checking|still needs reconciliation/);
 });
 test('a later read can renew the parent without renewing the superseded read row',()=>{
  const s=fixture();later(s);const read=structuredClone(s.operations.read!);read.operation_id='fresh-read';read.observation_ids=['fresh-observation'];

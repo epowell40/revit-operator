@@ -134,6 +134,7 @@ function Restore-OperatorRegistration([string]$Year, [string]$AddinPath) {
 
 function Install-OperatorPackage([string]$Root) {
   $ErrorActionPreference = 'Stop'
+  Write-Host 'Revit Operator installer started. Keep this window open.'
   if (Get-Process -Name Revit -ErrorAction SilentlyContinue) { throw 'Save work and close ALL Revit versions before installing.' }
   $rootFull = [IO.Path]::GetFullPath($Root)
   $manifestPath = Join-Path $rootFull 'manifest.json'
@@ -143,8 +144,10 @@ function Install-OperatorPackage([string]$Root) {
   if ($components.Count -ne 1 -or [string]$components[0].revitYear -notmatch '^20[0-9]{2}$') { throw 'Expected one Revit year in this full workstation package.' }
   $year = [string]$components[0].revitYear
   $addin = Join-Path $env:APPDATA "Autodesk\Revit\Addins\$year\RevitBridge.addin"
+  Write-Host "[1/5] Checking package files for Revit $year..."
   $bundle = Invoke-OperatorDeploy $exe @('validate', '--manifest', $manifestPath, '--bundle-only')
   if (!$bundle.ok) { throw 'Package validation failed. Retain the installer log.' }
+  Write-Host '[2/5] Checking the installation plan...'
   $plan = Invoke-OperatorDeploy $exe @('update', '--manifest', $manifestPath, '--dry-run')
   if (!$plan.ok) {
     $knownFailure = "Installer-owned Revit add-in manifest was modified and will not be replaced or removed: $addin"
@@ -160,10 +163,14 @@ function Install-OperatorPackage([string]$Root) {
       throw 'Installer still refuses recovery. No update started. Retain the output and backup.'
     }
   }
+  Write-Host '[3/5] Installing and activating files. This can take several minutes...'
+  Write-Host "Deployment logs: $(Join-Path $env:LOCALAPPDATA 'RevitOperator\logs\deployment')"
   $update = Invoke-OperatorDeploy $exe @('update', '--manifest', $manifestPath)
   if (!$update.ok) { throw 'Update failed. Shortcut was not refreshed. Retain the installer log.' }
+  Write-Host '[4/5] Verifying the installed release...'
   $validation = Invoke-OperatorDeploy $exe @('validate')
   if (!$validation.ok -or $validation.releaseVersion -ne $manifest.releaseVersion) { throw 'Installed validation failed or the active release differs. Retain the installer log.' }
+  Write-Host '[5/5] Refreshing the Operator Desktop shortcut...'
   $shortcut = Join-Path $rootFull 'operator-desktop-pilot\operator-desktop\scripts\install_desktop_shortcut.ps1'
   & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $shortcut -TargetMode Installed
   if ($LASTEXITCODE -ne 0) { throw 'Installation validated, but desktop shortcut creation failed.' }

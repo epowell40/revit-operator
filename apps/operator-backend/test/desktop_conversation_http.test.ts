@@ -40,7 +40,7 @@ test('actual HTTP task creation and review persist the human conversation across
  await runWithRequestContext({operator_backend_auth:createOperatorBackendAuth('shared_token','synthetic-desktop-history-token')},()=>appendMessage(session,{role:'user',text:'Internal delegated prompt, not a human request.'},requestConversationPersistenceV1(request,'Internal delegated prompt, not a human request.')));
  assert.deepEqual((await history()).map((m:any)=>m.text),[text]);
  const report=await fetch(base+'/api/assignments/v2/work-plan',{method:'POST',headers,body:JSON.stringify({...binding,action:'propose_completion',completion_proposal:{claimed_completed:['Corrected and inspected the requested schedule.'],remaining_work:[],uncertainties:['Actor report only.']}})});assert.equal(report.status,200,await report.text());
- const warm=await history();assert.equal(warm.length,2);assert.match(warm[1].text,/not independently verified/);assert.match(warm[1].text,/Corrected and inspected/);
+ const warm=await history();assert.equal(warm.length,2);assert.match(warm[1].text,/not independent certification of the entire task/);assert.match(warm[1].text,/Corrected and inspected/);
  await stop(first);await start();assert.deepEqual(await history(goal.goal.id),warm,'a review proposal is not relabeled as terminal');
  assert.deepEqual(await history('unknown-assignment'),warm);
  assert.equal((await fetch(base+'/session/history?session_id='+session+'&assignment_id=..%2Fother',{headers})).status,400);

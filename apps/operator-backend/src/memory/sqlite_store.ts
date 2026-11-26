@@ -102,6 +102,10 @@ function openDb(): SqliteDb | null {
         kind TEXT NOT NULL,
         payload_json TEXT
       );
+      CREATE TABLE IF NOT EXISTS conversation_archive (
+        session_id TEXT PRIMARY KEY,
+        archived_at TEXT NOT NULL
+      );
       CREATE INDEX IF NOT EXISTS idx_events_session_ts ON events(session_id, ts);
       CREATE TABLE IF NOT EXISTS steps (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -429,6 +433,21 @@ export type ConversationDisplay = {
 };
 
 export type ConversationEntry = ConversationDisplay & { role: "user" | "assistant"; created_at: string };
+
+/** Reversible navigation preference. Never delete history or settle a task. */
+export function archivedConversationIds(): Set<string> {
+  const d = openDb(); if (!d) throw Error('Conversation history is unavailable.');
+  return new Set((d.prepare('SELECT session_id FROM conversation_archive').all() as Array<{session_id:string}>).map(row=>row.session_id));
+}
+export function setConversationsArchived(ids: readonly string[], archived: boolean): void {
+  const d = openDb(); if (!d) throw Error('Conversation history is unavailable.');
+  const statement = d.prepare(archived ? 'INSERT OR REPLACE INTO conversation_archive(session_id,archived_at) VALUES (?,?)' : 'DELETE FROM conversation_archive WHERE session_id=?');
+  d.transaction(()=>{ for (const id of ids) archived ? statement.run(id,nowIso()) : statement.run(id); })();
+}
+export function navigationConversationIds(): string[] {
+  const d = openDb(); if (!d) throw Error('Conversation history is unavailable.');
+  return (d.prepare("SELECT DISTINCT session_id FROM events WHERE kind='chat.message' AND json_valid(payload_json) AND json_type(payload_json, '$.display.text')='text'").all() as Array<{session_id:string}>).map(row=>row.session_id);
+}
 
 /** Navigation exposes explicitly saved display text only, never raw prompts.
  * Ownership is filtered before the presentation limit, including old work. */

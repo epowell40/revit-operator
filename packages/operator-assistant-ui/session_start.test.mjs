@@ -5,7 +5,7 @@ const task=(id,state='paused',updated='2026-10-08T10:00:00Z')=>({task_id:id,sess
 test('startup separates running work, paused work and uncertain results without auto-resuming',()=>{
  const p=sessionStartPresentation([task('recent','unknown','2026-10-08T11:00:00Z'),task('paused'),task('running','working')]);
  assert.deepEqual(p.rows.map(r=>r.task.task_id),['running','recent','paused']);
- assert.equal(p.rows[0].action,'View running task');assert.equal(p.rows[1].status,'Result needs checking');assert.equal(p.rows[2].status,'Paused');
+ assert.equal(p.rows[0].action,'View running task');assert.equal(p.rows[1].status,'Result uncertain');assert.equal(p.rows[2].status,'Paused');
  assert.match(p.status,/does not resume/);assert.match(p.status,/already running can continue/);
 });
 test('loading and disconnected discovery do not claim a task is running or safely paused',()=>{

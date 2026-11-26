@@ -1,5 +1,15 @@
 const bindingKeys = ["assignment_id", "session_id", "run_id", "generation"];
 
+/** A new request gets fresh interpretation and authority through ordinary intake.
+ * This only permits navigation away; it never changes the old task's scope. */
+export function assertNewTaskAfterReport(publication, goal) {
+  const context=checkpointDirectionContext(publication,goal),s=publication.snapshot;
+  if (!context.checkpoint || context.paused || !s.quiescent || s.provider_usage_hold
+      || s.unresolved_unknown_operation_ids?.length || s.pending_input_variable_ids?.length
+      || s.in_flight_operation_ids?.length || s.in_flight_provider_call_ids?.length)
+    throw Error('The previous task is still settling. Keep this draft and refresh its status.');
+}
+
 /** Display eligibility only. A button must not promise a renewal unsupported by
  * the task's frozen policy. The authenticated endpoint still owns admission. */
 export function checkpointResourceRenewalAvailable(s, supportsProductRenewal = false) {
