@@ -1,6 +1,8 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "desktop_compaction.test.ts",
+    "desktop_durable_window.test.ts",
     "new_document_handoff.test.ts",
     "native_lifecycle_contract.test.ts",
     "registered_reference_intake.test.ts",
@@ -654,6 +656,7 @@
     "OperatorDeletedTypeContextTests"
   ],
   "failure_families": [
+    {"id":"desktop_screenshot_transport_compaction", "coverage":["backend:desktop_compaction.test.ts","backend:desktop_durable_window.test.ts"]},
     {"id":"canonical_pause_interrupts_typing_and_export_discovery", "coverage":["backend:desktop_native_tools.test.ts","javascript:app/operator-desktop/test/computer_pause_input.test.mjs","javascript:app/operator-desktop/test/computer_control_indicator.test.mjs"]},
     {"id": "desktop_only_report_without_revit_document", "coverage": ["backend:task_review_policy.test.ts", "javascript:package/operator-assistant-ui/work_report.test.mjs"]},
     {
@@ -4812,6 +4815,13 @@
       "coverage": [
         "backend:visibility_refresh_runtime.test.ts",
         "backend:visibility_refresh_plan_v2.test.ts"
+      ]
+    },
+    {
+      "id": "file_export_closeout_is_not_an_unchecked_model_edit",
+      "coverage": [
+        "backend:current_work_packet_verification.test.ts",
+        "backend:assignment_kernel_v2_progress_controller.test.ts"
       ]
     },
     {

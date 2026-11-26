@@ -1012,7 +1012,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/desktop_execution_guidance.ts",
-      "sha256": "sha256:64545c1768ab8d6a757d160cb21496baf70198bcfd32c9be391864ae3fe169eb"
+      "sha256": "sha256:ca26c4e4d7feff21c893709200419054739cc22db7b6cdae3dd7e71eaa28b09e"
     },
     {
       "path": "apps/operator-backend/src/assignments/desktop_executor_owner.ts",
@@ -1268,7 +1268,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/work_report_presentation.ts",
-      "sha256": "sha256:7f761067859d69493cdfcc2844e628463180ed160ae5d7b1d787e1c1854e9d27"
+      "sha256": "sha256:f486e8055050a71b922bc1f85c3e066a0848943dfa24e42043a6e9e7d00fc85c"
     },
     {
       "path": "apps/operator-backend/src/assignments/work_review_handoff.ts",
@@ -3061,7 +3061,7 @@
     },
     {
       "path": "apps/operator-backend/src/desktop_computer.ts",
-      "sha256": "sha256:a6e73d48a2acb195fdd30d73583ae516fcafc1fa57c6a59da32a71fe42e6b9f4"
+      "sha256": "sha256:9077d79d1b91a80270d67608b25da78742f1106b117197c97fa5b4fc9c78c22e"
     },
     {
       "path": "apps/operator-backend/src/desktop_image_delivery.ts",
@@ -3077,7 +3077,7 @@
     },
     {
       "path": "apps/operator-backend/src/desktop_response_store.ts",
-      "sha256": "sha256:dee0b0dd86ff423d62397ee8b086264c4058ce82b4a76ff31e76aa71bc7717db"
+      "sha256": "sha256:7019dfbe011d4338a896e428e606922dcca4a83e58e54b4b09f641e9a0c22f3e"
     },
     {
       "path": "apps/operator-backend/src/deterministic/aec_level_identity.ts",
@@ -5153,7 +5153,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_progress_controller.test.ts",
-      "sha256": "sha256:af216c7dec390247200a85af3e026554cada1fc44e2cda63d5808c24e8a2bdb7"
+      "sha256": "sha256:326af8b61becf8e3008290d5a50263cd7b3a9df579746d20d59700c718b23290"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_provider_failure.test.ts",
@@ -5665,7 +5665,7 @@
     },
     {
       "path": "apps/operator-backend/test/current_work_packet_verification.test.ts",
-      "sha256": "sha256:74538451a86940a719e10fc0f6ca39f90c2c6e90bf503df1ed3d99bd190ca2c2"
+      "sha256": "sha256:7e40ec7146f4bbd6a2f8cbc71ff3e9251dc0ec0c17e5cb67c22f63d4bc4f70f0"
     },
     {
       "path": "apps/operator-backend/test/deferred_proposal_admission.test.ts",
@@ -5701,7 +5701,7 @@
     },
     {
       "path": "apps/operator-backend/test/desktop_compaction.test.ts",
-      "sha256": "sha256:0e9b451f4238d578366503b5440dad820f7443b234bd7f945a728b07a5e3053a"
+      "sha256": "sha256:68753114a64aa97084b8c4fcab90123993356632fefc3cc59f7b1ae3c0524066"
     },
     {
       "path": "apps/operator-backend/test/desktop_computer_telemetry.test.ts",
@@ -5733,7 +5733,7 @@
     },
     {
       "path": "apps/operator-backend/test/desktop_durable_window.test.ts",
-      "sha256": "sha256:14202d7fc8dc606040d410a28bd10e70f26602d16e3abb55d9cd112a507b4dc9"
+      "sha256": "sha256:dc1da46c1f502dce07ae7c40ad0b218c004c1093d188b0969aada862975def03"
     },
     {
       "path": "apps/operator-backend/test/desktop_durable_window_relay.test.ts",
@@ -12829,7 +12829,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:aee66511e4eec5c9adf4074a0fd577de87366184f52cce5aa65e11b12d522b66",
+  "inputs_hash": "sha256:56a62168e74626e9d6a585079561d8f4c8fe363bd29d32eb512703c0eba79526",
   "result": {
     "passed": true,
     "checks": [

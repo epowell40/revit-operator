@@ -25,7 +25,7 @@ import type { AssignmentKernelBindingInputV2 } from "./assignments/assignment_ke
 import {assignmentKernelV2ForBinding} from './assignments/assignment_kernel_v2_factory.js';
 import {desktopAssignmentFeedbackInputV2} from './desktop_assignment_feedback.js';
 import {withSerializedProviderTurn} from './provider_turn_queue.js';
-import {prepareDesktopProviderInput,desktopModelInputPackage,desktopResponseOwnsContext} from './desktop_response_store.js';
+import {prepareDesktopProviderInput,desktopModelInputPackage,desktopResponseOwnsContext,desktopCompactionThreshold} from './desktop_response_store.js';
 import {resolveOpenAiDataPolicy} from './openai_data_policy.js';
 import {getWorkspaceRoot} from './workspace.js';
 import {desktopToolHistoryCache,boundedPromptCacheDiagnostic} from './desktop_prompt_cache.js';
@@ -282,7 +282,7 @@ export async function relayDesktopComputerResponse(rawBody: unknown,
       // work. Compacting each new image pair discards its precise pixels and
       // encourages a read/capture/compact loop. Leave room below its272k
       // long-context price boundary; this does not grant task calls or tokens.
-      context_management: [{ type: "compaction", compact_threshold: model === "gpt-6.1-terra" ? 250_000 : 100_000 }],
+      context_management: [{ type: "compaction", compact_threshold: desktopCompactionThreshold(model, contextPackage.input_utf8_bytes) }],
       include: ['reasoning.encrypted_content'],
       instructions,
       tools: body.tools,

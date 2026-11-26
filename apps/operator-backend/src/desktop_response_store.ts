@@ -236,6 +236,13 @@ function contextResponse(binding: Binding, messageId: string): any {
 }
 
 const WINDOW_BYTES = 27_000_000;
+/** Encoded screenshots can fill the transport window before their token count
+ * reaches normal compaction. Leave room for one maximum-size tool result.
+ * This requests genuine provider compaction; it does not discard evidence. */
+export function desktopCompactionThreshold(model: string, inputBytes: number): number {
+  return inputBytes >= WINDOW_BYTES - 17_000_000 ? 1_000
+    : model === 'gpt-6.1-terra' ? 250_000 : 100_000;
+}
 /** Keep the literal provider compaction item, not a textual approximation.
  * Raw earlier records remain in the response journal. */
 function compactWindow(items: any[]): any[] | null {

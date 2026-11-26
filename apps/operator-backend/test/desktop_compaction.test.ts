@@ -10,7 +10,7 @@ import {createAssignmentKernelForGoalV2} from '../src/assignments/assignment_ker
 import {getAssignmentKernelSnapshotV2} from '../src/assignments/assignment_kernel_v2_store.js';
 import {readImageInputDelivery} from '../src/desktop_image_delivery.js';
 
-test('trusted owner relay enables API compaction while retaining opaque output and exact canonical usage',async()=>{
+for (const largePixels of [false, true]) test(`trusted owner relay compacts ${largePixels ? 'transport-sized screenshots' : 'normal context'} while retaining opaque output and exact canonical usage`,async()=>{
  const prior=Object.fromEntries(['OPERATOR_WORKSPACE_ROOT','OPERATOR_OPENAI_API_KEY','OPERATOR_OPENAI_BASE_URL'].map(k=>[k,process.env[k]]));
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'desktop-compaction-'));
  const received:any[]=[];
@@ -29,11 +29,11 @@ test('trusted owner relay enables API compaction while retaining opaque output a
   __testOnlyResetGoalListCache();
   const goal=createGoal({title:'Inspect a partial',objective:'Read current partial model and report remaining work.',acceptance_criteria:['Report facts.'],status:'active',related_session_id:'compaction-session',created_by:'test-principal',work_budget:{requested_effect:'read'}});
   const binding={...createAssignmentKernelForGoalV2({goal,run_id:'compaction-run'}),kernelVersion:2 as const};
-  const pixels={type:'input_image',image_url:'data:image/png;base64,AQID'};
+ const pixels={type:'input_image',image_url:'data:image/png;base64,'+(largePixels?Buffer.alloc(7_500_000,1).toString('base64'):'AQID')};
   const result=await relayBoundDesktopComputerResponse({model:'gpt-6.1-terra',reasoning_effort:'medium',input:[{role:'user',content:[{type:'input_text',text:'Continue the same partial.'},pixels]}],message_id:'next',context_management:[{type:'compaction',compact_threshold:1}]},binding);
   assert.equal(received.length,1,'Compaction runs in the existing provider call, not an extra agent request.');
-  assert.deepEqual(received[0].context_management,[{type:'compaction',compact_threshold:250000}],
-   'Terra needs room for its actual visual working set; caller cannot lower the host threshold.');
+  assert.deepEqual(received[0].context_management,[{type:'compaction',compact_threshold:largePixels?1000:250000}],
+   'Large encoded screenshots trigger real compaction before the transport cap; caller cannot select the threshold.');
   assert.equal(received[0].model,'gpt-6.1-terra');assert.deepEqual(received[0].reasoning,{effort:'medium'});
   assert.deepEqual(result.output[0],compaction,'Opaque provider state is preserved, not reinterpreted as authority.');
   assert.equal(result.output_text,'Source remains partial.');

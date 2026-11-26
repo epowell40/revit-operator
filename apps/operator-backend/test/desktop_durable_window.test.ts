@@ -12,6 +12,14 @@ const output=[{type:'compaction',encrypted_content:'opaque-state'},{type:'reason
  {type:'function_call',call_id:'report',name:'report_work_for_review',arguments:'{}'}];
 const completed=[{type:'function_call_output',call_id:'report',output:'{"partial":true}'}];
 
+test('screenshot byte pressure compacts before the next maximum output can exhaust the durable window',()=>{
+ for(const model of ['gpt-5.6-sol','gpt-6.1-terra']){
+  assert.equal(store.desktopCompactionThreshold(model,9_999_999),model==='gpt-6.1-terra'?250_000:100_000);
+  assert.equal(store.desktopCompactionThreshold(model,10_000_000),1_000);
+  assert.equal(store.desktopCompactionThreshold(model,26_999_999),1_000);
+ }
+});
+
 test('reopening replaces the prior startup screen with the fresh screen without losing literal reference tool images',()=>isolated(async()=>{
  const screen=(bytes:string)=>({role:'user',content:[{type:'input_text',text:'The final image in this message is the current computer screen across the full virtual desktop, potentially spanning multiple monitors. Use the computer tool for desktop interaction.'},{type:'input_image',image_url:'data:image/png;base64,'+bytes}]});
  const old=screen('AQID'),fresh=screen('BAUG'),reference={type:'function_call',call_id:'reference',name:'read_reference_page',arguments:'{}'};
