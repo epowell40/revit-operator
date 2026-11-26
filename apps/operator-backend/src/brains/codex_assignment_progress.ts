@@ -26,6 +26,7 @@ import {createDesktopHelperCallLeaseV1} from './desktop_helper_budget.js';
 import { TASK_DISCRETION_GUIDANCE, taskDecisionContext } from './task_discretion_guidance.js';
 import {savedCopyHandoffV2} from '../assignments/saved_copy_handoff_v2.js';
 import {verifiedChangePresentationV2} from '../assignments/verified_change_presentation_v2.js';
+import {workReportPresentation} from '../assignments/work_report_presentation.js';
 
 function applicationGapGuidance(snapshot: AssignmentSnapshotV2, gapId: string): string {
   if (!gapId.startsWith("verification:")) return "";
@@ -172,38 +173,6 @@ export function settleCodexAssignmentProgressV2(binding: AssignmentBindingV2): A
   return advanceAssignmentKernelProgressV2({ binding }).snapshot;
 }
 
-function advisoryHandoffMessage(proposal: NonNullable<AssignmentSnapshotV2["completion_proposal"]>, unfinishedCount: number): string {
-  const groups = [
-    { label: "Work", details: "Work reported", items: proposal.claimed_completed },
-    { label: "Newly reported remaining work", details: "Newly reported remaining work", items: proposal.remaining_work },
-    { label: "Newly reported uncertainty", details: "Newly reported uncertainties", items: proposal.uncertainties }
-  ];
-  const summary = groups.filter(group => group.items.length).map(group => {
-    const shown: string[] = [];
-    let characters = 0;
-    for (const item of group.items.slice(0, 2)) {
-      // Preserve whole claims, including qualifications at the end. If an
-      // earlier item is too long, do not substitute a shorter later claim.
-      if (characters + item.length > 280) break;
-      shown.push(item); characters += item.length;
-    }
-    if (!shown.length) return `${group.label}: ${group.items.length} ${group.items.length === 1 ? "item" : "items"} in Details.`;
-    const omitted = group.items.length - shown.length;
-    return `${group.label}: ${shown.join(" ")}${omitted ? ` (${omitted} more in Details.)` : ""}`;
-  });
-  return [
-    "Ready for review (not independently verified).",
-    ...(unfinishedCount ? [unfinishedCount + " saved unfinished " + (unfinishedCount === 1 ? "report remains" : "reports remain") + ". This includes any retained earlier reports; omission from the newly reported lists does not resolve them. See the saved list in Details."] : []),
-    ...(proposal.claimed_completed.length ? [] : ["No completed work was reported."]),
-    ...(proposal.user_facing_text ? [proposal.user_facing_text] : summary),
-    "Full handoff in Details below.",
-    "## Details",
-    ...groups.map(group => `### ${group.details}\n\n${group.items.length
-      ? group.items.map(item => `- ${item.replace(/\r?\n/g, "\n  ")}`).join("\n")
-      : "No new items reported."}`)
-  ].join("\n\n");
-}
-
 function unansweredInputHandoffV2(snapshot:AssignmentSnapshotV2,questions:readonly string[]):string {
   const questionText=questions.length?[...new Set(questions)].join('\n\n'):'I need an answer before I can continue this task.';
   // The existing producers own native evidence eligibility. A question is not
@@ -232,16 +201,12 @@ export function finalCodexAssignmentMessageV2(snapshot: AssignmentSnapshotV2 | n
     if (!snapshot.quiescent || snapshot.in_flight_operation_ids.length || snapshot.in_flight_provider_call_ids.length)
       return "Work is still settling. Its progress is saved.";
     const review = renderWorkReviewHandoffV2(snapshot);
-    const handoff = advisoryHandoffMessage(snapshot.completion_proposal, projectAdvisoryFollowupsV2(snapshot).unresolved_total);
-    if (review) {
-      const details = handoff.slice(handoff.indexOf('## Details'));
-      const unresolved = projectAdvisoryFollowupsV2(snapshot).unresolved_total;
-      return ['Ready for review (not independently verified).', review.summary,
-        ...(unresolved ? [`${unresolved} saved unfinished reports remain in Details; omitting a report does not resolve it.`] : []),
-        ...(snapshot.completion_proposal.user_facing_text ? [snapshot.completion_proposal.user_facing_text] : []),
-        details, review.details, advisoryFollowupsHandoffV2(snapshot)].filter(Boolean).join('\n\n');
-    }
-    return [handoff, advisoryFollowupsHandoffV2(snapshot)].filter(Boolean).join("\n\n");
+    const presentation = workReportPresentation(snapshot)!;
+    const unresolved = projectAdvisoryFollowupsV2(snapshot).unresolved_total;
+    return [presentation.summary,
+      ...(unresolved ? [`${unresolved} saved unfinished ${unresolved === 1 ? 'report remains' : 'reports remain'} in Details.`] : []),
+      '## Details', presentation.details, review?.details, advisoryFollowupsHandoffV2(snapshot)]
+      .filter(Boolean).join('\n\n');
   }
   if (snapshot && !snapshot.terminal && snapshot.outcome === "awaiting_user_input") {
     const questions = Object.values(snapshot.clarifications)

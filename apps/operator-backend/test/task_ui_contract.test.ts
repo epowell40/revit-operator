@@ -40,14 +40,16 @@ test("task groups expose older working and paused conversations before recent re
   const tasks=Array.from({length:100},(_,i)=>({task_id:String(i),session_id:"session"+i,title:"Task "+i,state:"complete",updated_at:new Date(i*1000).toISOString(),summary:"",assignment_id:null}));
   tasks[0].state="working";tasks[1].state="paused";
   const groups=groupTasks(parseTaskNavigation({schema:"revit-operator.task-navigation/v1",tasks}));
-  assert.equal(groups[0].items[0].task_id,"0");assert.equal(groups[1].items[0].task_id,"1");assert.equal(groups[2].items[0].task_id,"99");
+  assert.deepEqual(groups.map((group:any)=>group.title),['Working','Recent']);
+  assert.equal(groups[0].items[0].task_id,"0");assert.equal(groups[1].items[0].task_id,"99");
+  assert.equal(groups[1].items.at(-1).task_id,"1");
   assert.throws(()=>parseTaskNavigation({schema:"revit-operator.task-navigation/v1",tasks:[tasks[0],tasks[0]]}),/unavailable/);
 });
 
-test("an orphaned in-flight task appears under Needs you rather than as a running worker",()=>{
+test("an orphaned in-flight task retains uncertainty without pretending to ask a question",()=>{
   const rows=parseTaskNavigation({schema:"revit-operator.task-navigation/v1",tasks:[{task_id:"session:old",session_id:"old",assignment_id:"unfinished",
     title:"Read-only custom diagnostics",state:"unknown",updated_at:"2026-09-14T17:12:15.094Z",summary:"A result needs checking before continuing."}]});
-  const groups=groupTasks(rows);assert.deepEqual(groups.map((row:any)=>row.title),["Needs you"]);assert.equal(groups[0].items[0].assignment_id,"unfinished");
+  const groups=groupTasks(rows);assert.deepEqual(groups.map((row:any)=>row.title),["Recent"]);assert.equal(groups[0].items[0].assignment_id,"unfinished");
 });
 
 test("the opened conversation appears once ahead of old attention items without changing task status",()=>{
@@ -55,11 +57,11 @@ test("the opened conversation appears once ahead of old attention items without 
     {task_id:"current",session_id:"current",state:"complete",updated_at:"2026-09-16T10:00:00Z"},
     {task_id:"working",session_id:"working",state:"working",updated_at:"2026-09-17T09:00:00Z"}];
   const before=structuredClone(tasks),groups=groupTasks(tasks,"current");
-  assert.deepEqual(groups.map((group:any)=>group.title),["Current task","Working","Needs you"]);
+  assert.deepEqual(groups.map((group:any)=>group.title),["Current task","Working","Recent"]);
   assert.equal(groups[0].items[0].state,"complete");
   assert.equal(groups.flatMap((group:any)=>group.items).filter((row:any)=>row.session_id==="current").length,1);
   assert.deepEqual(tasks,before);
-  assert.deepEqual(groupTasks(tasks,"missing").map((group:any)=>group.title),["Working","Needs you","Recent"]);
+  assert.deepEqual(groupTasks(tasks,"missing").map((group:any)=>group.title),["Working","Recent"]);
 });
 test("task drafts and redline attachments remain separate under exact tuple keys",async()=>{
   const records=new Map();const store=createComposerDraftStore({storage:{get:async(k:string)=>records.get(k),put:async(k:string,v:any)=>records.set(k,v),delete:async(k:string)=>records.delete(k)}});

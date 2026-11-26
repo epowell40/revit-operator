@@ -21,6 +21,10 @@ import { getAssignmentKernelSnapshotV2, appendCurrentAssignmentKernelEventV2 } f
 import { openAssignmentKernelOperationV2, markAssignmentKernelOperationDispatchStartedV2, settleAssignmentKernelOperationV2, failAssignmentKernelOperationV2 } from "../src/assignments/assignment_kernel_v2_execution.js";
 import { selectLocalAdvisoryPolicy,nativeScopePlanningIntentV1 } from "../src/assignments/local_advisory_policy.js";
 import { manageAssignmentWorkPlan } from "../src/assignments/assignment_work_plan.js";
+import { assertNextChatRequest } from '../src/assignments/next_chat_request.js';
+import { settleAssignmentKernelExecutionFailureV2 } from '../src/assignments/assignment_kernel_v2_execution_failure.js';
+import { createExternalAssignmentGoal, startExternalAssignmentRun } from '../src/assignments/external_assignment_start.js';
+import { startAutoGoalIfEligible } from '../src/goals/auto_goal_start.js';
 import { advanceAssignmentKernelProgressV2, DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, recordAssignmentProviderCallStateV2, recordCompletedAssignmentProviderReceiptV2, recordAssignmentProgressEpochV2 } from "../src/assignments/assignment_kernel_v2_progress.js";
 import { defaultAssignmentWorkBudgetV2 } from "../src/assignments/assignment_work_allowance_v2.js";
 import { controlAssignmentExecutionV2 } from "../src/assignments/assignment_kernel_v2_controls.js";
@@ -60,7 +64,7 @@ test('shared reporting continuation reaches real advisory review after ready-ite
  assert.equal(reported.outcome,'awaiting_user_review');assert.equal(f.state().completion_proposal?.verified,false);
  assert.equal(projectWorkReviewV2(f.state()).counts.reported_unverified,2);
  assert.equal(projectWorkReviewV2(f.state()).counts.checked,0);
- assert.match(ui.retainedWorkReportMessage({name:'report_work_for_review'},{output:JSON.stringify(reported)}),/not independently verified/);
+ assert.match(ui.retainedWorkReportMessage({name:'report_work_for_review'},{output:JSON.stringify(reported)}),/not independent certification of the entire task/);
 }));
 
 test('advisory owner written body reaches canonical review without strict retention or native settlement',()=>fixture(true,async f=>{
@@ -80,7 +84,7 @@ test('advisory owner written body reaches canonical review without strict retent
  assert.deepEqual(after.operations,before.operations);assert.deepEqual(after.criteria,before.criteria);
  assert.deepEqual(after.completion_proposal?.remaining_work,proposal.remaining_work);
  for(const message of [finalCodexAssignmentMessageV2(after,'All work complete.'),ui.retainedWorkReportMessage({name:'report_work_for_review'},{output:JSON.stringify(result)})]){
-   assert.ok(message.includes(written_findings));assert.match(message,/not independently verified/);assert.doesNotMatch(message,/All work complete/);
+   assert.ok(message.includes(written_findings));assert.match(message,/not independent certification of the entire task/);assert.doesNotMatch(message,/All work complete/);
  }
 }));
 
@@ -132,7 +136,7 @@ test('optional user-facing report text is delivered without certifying or droppi
  const before=f.state(),answer='Review the draft connection layout; the exterior device still needs an engineering decision.';
  const result=manageAssignmentWorkPlan({binding:f.binding,action:'propose_completion',completion_proposal:{...proposal,user_facing_text:answer}});
  assert.equal(result.outcome,'awaiting_user_review');const after=f.state();assert.equal(after.completion_proposal?.verified,false);
- const message=finalCodexAssignmentMessageV2(after,'Everything is complete.');assert(message.includes(answer));assert.match(message,/not independently verified/);assert.match(message,/Review terminal connections/);assert.doesNotMatch(message,/Everything is complete/);
+ const message=finalCodexAssignmentMessageV2(after,'Everything is complete.');assert(message.includes(answer));assert.match(message,/not independent certification of the entire task/);assert.match(message,/Review terminal connections/);assert.doesNotMatch(message,/Everything is complete/);
  assert.deepEqual(after.operations,before.operations);assert.deepEqual(after.criteria,before.criteria);
 }));
 
@@ -191,7 +195,7 @@ test('optional checklist absence cannot reject an explicitly unverified partial 
  assert.deepEqual(f.state().operations,before.operations);assert.deepEqual(f.state().criteria,before.criteria);
  assert.deepEqual(f.state().provider_calls,before.provider_calls);assert.deepEqual(f.state().work_plan,before.work_plan);
  assert.equal(f.state().advisory_followups?.filter(x=>x.state==='open').length,2);
- assert.match(ui.retainedWorkReportMessage({name:'report_work_for_review'},{output:JSON.stringify(response)}),/not independently verified/);
+ assert.match(ui.retainedWorkReportMessage({name:'report_work_for_review'},{output:JSON.stringify(response)}),/not independent certification of the entire task/);
  __testOnlyResetGoalListCache();assert.equal(f.state().outcome,'awaiting_user_review');
 }));
 
@@ -456,6 +460,26 @@ function setup(effect: "apply" | "preview" = "apply", sessionId = "experiment", 
   const binding = createAssignmentKernelForGoalV2({ goal, run_id: "experiment-run" });
   return { goal, binding, state: () => getAssignmentKernelSnapshotV2(goal.id)! };
 }
+
+test('document-unbound terminal task can admit a fresh model-edit request in its existing chat',()=>fixture(false,()=>{
+ const goal=createGoal({title:'Export rooms',objective:'Export rooms to Excel without changing the model.',
+  acceptance_criteria:['Deliver the workbook'],status:'active',related_session_id:'export-chat',created_by:'local-host',
+  work_budget:{requested_effect:'read'}});
+ const binding=createAssignmentKernelForGoalV2({goal,run_id:'export-run'});
+ const s=settleAssignmentKernelExecutionFailureV2({binding,failure_id:'export-runtime',error_class:'runtime',phase:'response_handoff'}).snapshot;
+ assert.equal(s.current_binding.document_fingerprint,undefined);assert.equal(s.terminal,true);
+ const next={...binding,assignment_version:s.assignment_version,review_id:null,control_command_id:s.execution_control?.command_id??null};
+ assert.equal(assertNextChatRequest(next,getGoal(goal.id),'export-chat').goal.id,goal.id);
+ for(const patch of [{document_fingerprint:'invented'},{session_id:'foreign'},{assignment_version:0},{generation:99}])
+  assert.throws(()=>assertNextChatRequest({...next,...patch},getGoal(goal.id),'export-chat'));
+ const source='Create a room schedule in the active model.';
+ const fresh=startAutoGoalIfEligible({session_id:'export-chat',message_id:'schedule-request',user_text:source,tool_result_count:0,
+  source:'chat',created_by:'local-host',request_context:{ui:{next_request_after:next},revit:{document:{projectIdentity:{fingerprint:'current-model'}}}}})!;
+ assert.notEqual(fresh.id,goal.id);assert.equal(fresh.related_session_id,'export-chat');
+ assert.equal(fresh.work_budget!.previous_assignment_id,goal.id);assert.equal(fresh.work_budget!.requested_effect,'apply');
+ assert.equal(fresh.work_budget!.document_fingerprint,'current-model');
+ assert.deepEqual(getAssignmentKernelSnapshotV2(goal.id),s);
+}));
 function open(f: ReturnType<typeof setup>, id: string, effect: "read" | "apply" = "read", element = 11) {
   return openAssignmentKernelOperationV2({ snapshot: f.state(), provider_turn_id: "turn", controller_request_id: id,
     capability_id: "revit_call_tool", classified_effect: effect, target_tokens: [`id:${element}`],
@@ -513,7 +537,7 @@ test("native program review reuse permits readback and save admission without ma
   assert.equal(after.completion_proposal?.verified, false);
   assert.deepEqual(after.operations, before.operations); assert.deepEqual(after.criteria, before.criteria);
   assert.deepEqual(after.provider_calls, before.provider_calls); assert.deepEqual(after.spec, before.spec);
-  assert.match(finalCodexAssignmentMessageV2(after, "Automatically verified."), /not independently verified/);
+  assert.match(finalCodexAssignmentMessageV2(after, "Automatically verified."), /not independent certification of the entire task/);
   assert.doesNotMatch(finalCodexAssignmentMessageV2(after, "Automatically verified."), /Automatically verified/);
   __testOnlyResetGoalListCache(); assert.deepEqual(f.state(), after);
 }));
@@ -1236,7 +1260,7 @@ test("advisory unfinished items survive authenticated HTTP update, an empty chec
     assert.equal((await checkpoint([])).status, 200);
     const handoff = finalCodexAssignmentMessageV2(f.state(), "Everything is done.");
     assert.match(handoff, /1 saved unfinished report remains/);assert.match(handoff, /Confirm the concealed outlet/);
-    assert.match(handoff, /Newly reported remaining work/);assert.doesNotMatch(handoff, /Inspect the inlet connection|Everything is done/);
+    assert.match(handoff, /Saved unfinished items/);assert.doesNotMatch(handoff, /Inspect the inlet connection|Everything is done/);
     const pending = f.state();assert.equal((await post({ action: "update_followup", followup: command })).status, 200);
     assert.deepEqual(f.state(), pending, "exact retry cannot release the next checkpoint");
     await steerAssignment(checkpointCommand(f, "continue-unfinished-two"));
@@ -1295,4 +1319,54 @@ test("rejected advisory proposals cannot partially retain unfinished state, and 
   assert.equal(strict.snapshot().advisory_followups, undefined);
   assert.throws(() => strict.append({ ...event, work_unit_ids: [] } as AssignmentEventV2), { code: "advisory_proposal_not_enabled" });
   assert.equal(strict.snapshot().advisory_followups, undefined);
+}));
+
+for (const transport of ['backend','computer']) test('same chat next request creates fresh scope through '+transport,()=>fixture(true,f=>{
+  manageAssignmentWorkPlan({binding:f.binding,action:'propose_completion',completion_proposal:{...proposal,remaining_work:[]}});
+  const before=structuredClone(f.state());
+  const next={...f.binding,assignment_version:before.assignment_version,review_id:before.completion_proposal!.review_id,
+    control_command_id:before.execution_control?.command_id??null,document_fingerprint:before.current_binding.document_fingerprint};
+  for(const change of [{session_id:'foreign'},{generation:99},{assignment_version:0},{review_id:'other'},{control_command_id:'late'},{document_fingerprint:'other'}]) {
+    assert.throws(()=>assertNextChatRequest({...next,...change},getGoal(f.goal.id),f.binding.session_id));
+    assert.deepEqual(f.state(),before);
+  }
+  const source='Rename panel MDP-1 to MDP-1-test in the open model.';
+  const current=transport==='computer'?createExternalAssignmentGoal(f.binding.session_id,{next_request_after:next,
+    title:source,objective:source,acceptance_criteria:['Verify the panel name'],work_budget:{mode:'sidecar_computer',source:'operator_desktop',
+      source_user_request:source,conversation_message_id:'next-message',requested_effect:'apply',document_fingerprint:next.document_fingerprint}})
+    :startAutoGoalIfEligible({session_id:f.binding.session_id,message_id:'next-message',user_text:source,tool_result_count:0,
+      source:'chat',created_by:'local-host',request_context:{ui:{next_request_after:next},revit:{document:{projectIdentity:{fingerprint:next.document_fingerprint}}}}})!;
+  assert.notEqual(current.id,f.goal.id);assert.equal(current.related_session_id,f.binding.session_id);
+  assert.equal(current.work_budget!.previous_assignment_id,f.goal.id);
+  const run=startExternalAssignmentRun({goal:current,sessionId:f.binding.session_id,actor:'test',requestedRunId:'next-run'});
+  const fresh=getAssignmentKernelSnapshotV2(run.assignmentId)!;
+  assert.equal(fresh.spec.source_user_request,source);assert.equal(fresh.spec.requested_effect,'apply');
+  assert.deepEqual(f.state().spec,before.spec);assert.deepEqual(f.state().operations,before.operations);
+  assert.equal(f.state().execution_control?.state,'paused');
+  assert.throws(()=>assertNextChatRequest(next,getGoal(current.id),f.binding.session_id));
+}));
+
+test('same-chat transition cannot consume an explicit Pause',()=>fixture(true,f=>{
+  manageAssignmentWorkPlan({binding:f.binding,action:'propose_completion',completion_proposal:proposal});
+  controlAssignmentExecutionV2({binding:f.binding,command_id:'human-pause',expected_command_id:null,action:'pause'});
+  const s=f.state(),next={...f.binding,assignment_version:s.assignment_version,review_id:s.completion_proposal!.review_id,
+    control_command_id:'human-pause',document_fingerprint:s.current_binding.document_fingerprint};
+  assert.throws(()=>assertNextChatRequest(next,getGoal(f.goal.id),f.binding.session_id),/paused/);
+  assert.deepEqual(f.state(),s);
+}));
+
+for(const transport of ['backend','computer']) test('a settled runtime failure keeps the next request in the same chat through '+transport,()=>fixture(true,f=>{
+  const failed=settleAssignmentKernelExecutionFailureV2({binding:f.state().current_binding,failure_id:'handoff-runtime',error_class:'runtime',phase:'response_handoff'}).snapshot;
+  assert.equal(failed.terminal,true);assert.equal(failed.outcome,'failed');
+  const before=structuredClone(f.state()),next={...f.binding,assignment_version:failed.assignment_version,review_id:null,
+    control_command_id:failed.execution_control?.command_id??null,document_fingerprint:failed.current_binding.document_fingerprint};
+  for(const patch of [{assignment_version:0},{review_id:'invented'},{session_id:'foreign'},{run_id:'foreign'}])
+    assert.throws(()=>assertNextChatRequest({...next,...patch},getGoal(f.goal.id),f.binding.session_id));
+  const source='Rename panel MDP-1 to MDP-1-test in the open model.';
+  const current=transport==='computer'?createExternalAssignmentGoal(f.binding.session_id,{next_request_after:next,title:source,objective:source,acceptance_criteria:['Verify the panel name'],
+    work_budget:{mode:'sidecar_computer',source:'operator_desktop',source_user_request:source,conversation_message_id:'after-failure',requested_effect:'apply',document_fingerprint:next.document_fingerprint}})
+    :startAutoGoalIfEligible({session_id:f.binding.session_id,message_id:'after-failure',user_text:source,tool_result_count:0,source:'chat',created_by:'local-host',
+      request_context:{ui:{next_request_after:next},revit:{document:{projectIdentity:{fingerprint:next.document_fingerprint}}}}})!;
+  assert.notEqual(current.id,f.goal.id);assert.equal(current.related_session_id,f.binding.session_id);
+  assert.equal(current.work_budget!.previous_assignment_id,f.goal.id);assert.deepEqual(f.state(),before);
 }));

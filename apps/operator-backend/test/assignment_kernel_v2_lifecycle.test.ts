@@ -295,7 +295,7 @@ test('final context written after canonical completion retires pixels and exact 
     const {settled}=settleRead(goal.id),observation_id=settled.observation!.observation_id;
     const terminal=evaluateAssignmentObservationCriteriaV2({binding,claims:[{criterion_id:settled.snapshot.spec.criteria[0]!.criterion_id,observation_ids:[observation_id]}]});assert.equal(terminal.outcome,'complete');
     retainDesktopContext(b,'late',[]);
-    const file=path.join(ensureWorkspaceLayout().runs,'desktop-responses',createHash('sha256').update(canonicalJsonV2([session_id,'owner-context'])).digest('hex')+'.json.context'),after=fs.readFileSync(file);
+    const file=path.join(ensureWorkspaceLayout().runs,'desktop-responses',createHash('sha256').update(canonicalJsonV2([session_id,'owner-context-'+createHash('sha256').update(canonicalJsonV2(b)).digest('hex')])).digest('hex')+'.json.context'),after=fs.readFileSync(file);
     assert.equal(JSON.parse(after.toString()).image_retirement?.images,1,'Late final context must not leave or restore duplicate pixels');
     retainDesktopContext(b,'late',[]);assert.deepEqual(fs.readFileSync(file),after);
     assert(fs.existsSync(path.resolve(ensureWorkspaceLayout().root,image.ref.artifact_location)));

@@ -17,6 +17,14 @@ and task admission remain authoritative. Computer interaction requires runtime
 capability, task permission and an available Windows desktop. It is not granted
 merely by opening this interface.
 
+On Windows, computer-control runs display a click-through blue desktop border
+and caption. Setup builds `indicator/OperatorControlIndicator.csproj` in Release
+configuration; developers starting the runtime directly should build that project
+first with `dotnet build indicator/OperatorControlIndicator.csproj -c Release`.
+The helper only draws the indicator. It exits when control ends, its input pipe
+closes, or its six-second heartbeat expires. An unavailable helper is reported
+in the interface; it does not authorize or prevent computer interaction.
+
 The code is covered by the repository's AGPL-3.0-or-later license. External npm
 dependencies retain their own licenses as recorded in package-lock.json. No
 private deployment scripts, account adapter, credentials or model fixtures are

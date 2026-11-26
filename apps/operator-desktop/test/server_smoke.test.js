@@ -1021,3 +1021,15 @@ test('saved desktop startup rejection returns matching unadmitted message proof 
  const response=await fetch(base+'/api/computer/run',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({prompt:'Continue saved work',message_id:'rejected-message',assignment_binding_v2:{assignment_id:'saved-task',session_id:'mock-session',run_id:'saved-run',generation:1},resume_control:{command_id:'resume',assignment_version:1}})});const result=await response.json();assert.equal(response.status,503);assert.match(result.error,/bounded handoff/);assert.equal(result.submission_admission?.session_id,'mock-session');assert.equal(result.submission_admission?.message_id,'rejected-message');assert.equal(result.submission_admission?.request_dispatched,false);assert.equal(providerCalls,0);
  const state=await(await fetch(base+'/api/computer/state')).json();assert.equal(state.running,false);assert.equal(state.progress.phase,'failed');assert.equal(state.assignmentBindingV2,null);
 });
+
+test('late interjection returns exact non-admission without queuing or restarting work',async t=>{
+ const desktop=await loadDelegatedDesktopModule('late-interjection');
+ const server=desktop.app.listen(0,'127.0.0.1');await once(server,'listening');
+ t.after(async()=>{desktop.configureOperatorDesktopTestHooks();await new Promise(resolve=>server.close(resolve));});
+ const base='http://127.0.0.1:'+server.address().port;
+ const response=await fetch(base+'/api/computer/interject',{method:'POST',headers:{'content-type':'application/json'},
+  body:JSON.stringify({session_id:'finished-chat',message_id:'followup',prompt:'Keep the answer short.'})});
+ const result=await response.json();assert.equal(response.status,409);assert.equal(result.code,'COMPUTER_RUN_FINISHED');
+ assert.equal(result.submission_admission.state,'not_admitted');assert.equal(result.submission_admission.message_id,'followup');
+ const state=await(await fetch(base+'/api/computer/state')).json();assert.equal(state.running,false);assert.equal(state.messages.length,0);
+});

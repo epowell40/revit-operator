@@ -1536,16 +1536,15 @@ test("advisory handoff shows bounded whole items while canonical Details retains
   const j = advisoryHandoffJournal(proposal), snapshot = j.snapshot();
   const before = JSON.stringify(snapshot), events = structuredClone(j.events());
   const message = finalCodexAssignmentMessageV2(snapshot, "Everything is verified.");
-  assert.match(message, /^Ready for review \(not independently verified\)\./);
-  assert.equal((message.match(/not independently verified/g) ?? []).length, 1);
+  assert.match(message, /^Prepared the comparison table/);
+  assert.match(message, /not independent certification of the entire task/);
   const summary = message.split("\n\n## Details\n\n")[0]!;
   for (const items of Object.values(proposal)) {
     assert.ok(summary.includes(items[0]!)); assert.ok(summary.includes(items[1]!));
-    assert.ok(!summary.includes(items[2]!));
+    assert.ok(summary.includes(items[2]!));
     for (const item of items) assert.ok(message.includes(`- ${item}`), "full wording is retained below Details");
   }
-  assert.match(message, /Full handoff in Details below\./);
-  assert.equal((summary.match(/1 more in Details/g) ?? []).length, 3);
+  assert.doesNotMatch(summary, /Full handoff|not independently verified/);
   assert.doesNotMatch(message, /Reported work:|Everything is verified/);
   assert.equal(JSON.stringify(snapshot), before); assert.deepEqual(j.events(), events);
   const publication = buildAssignmentKernelPublicationV2(j.snapshot());
@@ -1562,7 +1561,7 @@ test("advisory handoff does not truncate a long item before its qualification or
   const message = finalCodexAssignmentMessageV2(snapshot, "All done.");
   const summary = message.split("\n\n## Details\n\n")[0]!;
   assert.doesNotMatch(summary, /Prepared a provisional|Saved a copy|All done/);
-  assert.match(summary, /Work: 2 items in Details/); assert.match(summary, /Newly reported uncertainty: 1 item in Details/);
+  assert.match(summary, /2 items retained in Details/); assert.match(summary, /Notes: 1 item retained in Details/);
   assert.match(summary, /1 saved unfinished report remains/);
   assert.ok(message.includes(long)); assert.ok(message.includes("Saved a copy."));
   assert.ok(summary.length < 400); assert.deepEqual(snapshot.completion_proposal!.claimed_completed, proposal.claimed_completed);

@@ -279,6 +279,19 @@ test("export authority preserves a separate global ban on changing the Revit mod
     operation_role:"child",capability_id:"native:POST:/revit/delete-elements",classified_effect:"apply",method:"POST",path:"/revit/delete-elements",arguments:{elementIds:[42]}}),/user_no_model_write_limit/);
 }));
 
+test('room workbook wording passes read-model admission without granting schedule edits',()=>workspace(async()=>{
+  const source='Can you put together an Excel file with room names, areas, heights and volumes?';
+  const snapshot=await prepare(source,decision({...scope('apply',[]),model_effect:'read',protected_clauses:[]}));
+  assert.equal(snapshot.spec.interpreted_scope?.scope.model_effect,'read');
+  for(const route of ['/revit/create-schedule','/revit/set-parameter','/revit/export-pdf'])
+    assert.throws(()=>openAssignmentKernelOperationV2({snapshot,controller_request_id:route,provider_turn_id:'turn',
+      capability_id:'revit_call_tool',classified_effect:'apply',arguments:{method:'POST',path:route,body:{}}}),/user_no_model_write_limit/);
+  const exported=openAssignmentKernelOperationV2({snapshot,controller_request_id:'export',provider_turn_id:'turn',
+    capability_id:'revit_call_tool',classified_effect:'apply',arguments:{method:'POST',path:'/revit/export-elements-xlsx',
+      body:{elementIds:[42],parameterNames:['Name','Area','Unbounded Height','Volume'],fileName:'rooms.xlsx'}}});
+  assert.equal(exported.requested_effect,'apply');
+}));
+
 test("requested saved-copy checkpoint reaches parent and native child while other changes stay forbidden",async()=>{
   for(const source of [
     "Inspect the current panel ratings without changing them. Save a separate copy to C:\\fixture\\Delivery Verified.rvt. Do not overwrite the starting model or any existing result. Verify the save and exact destination through native results and fresh document readback. Do not substitute another folder. No other model edits or linked-model changes.",

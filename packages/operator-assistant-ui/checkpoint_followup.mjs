@@ -1,5 +1,24 @@
 const bindingKeys = ["assignment_id", "session_id", "run_id", "generation"];
 
+/** A new request gets fresh interpretation and authority through ordinary intake.
+ * This returns a fenced predecessor for same-chat admission, not new authority. */
+export function assertNewTaskAfterReport(publication, goal) {
+  const s=publication?.snapshot;
+  const terminal=s?.terminal===true && ['complete','complete_with_issues','verified_noop','failed','blocked'].includes(s.outcome)
+    && s.pending_review_ids?.length===0;
+  // Artifact/read tasks may finish without a pinned model. Only a fresh
+  // objective may follow that settled task; steering still requires its model.
+  assertCheckpointBinding(publication,goal,terminal);
+  const context=terminal ? {checkpoint:null,paused:s.execution_control?.state==='paused'} : checkpointDirectionContext(publication,goal);
+  if ((!terminal && !context.checkpoint) || context.paused || !s.quiescent || s.provider_usage_hold
+      || s.unresolved_unknown_operation_ids?.length || s.pending_input_variable_ids?.length
+      || s.in_flight_operation_ids?.length || s.in_flight_provider_call_ids?.length)
+    throw Error('The previous task is still settling. Keep this draft and refresh its status.');
+  return { ...goal._bindingV2, assignment_version: s.assignment_version,
+    review_id: terminal ? null : context.checkpoint.review_id, document_fingerprint: s.current_binding.document_fingerprint,
+    control_command_id: s.execution_control?.command_id ?? null };
+}
+
 /** Display eligibility only. A button must not promise a renewal unsupported by
  * the task's frozen policy. The authenticated endpoint still owns admission. */
 export function checkpointResourceRenewalAvailable(s, supportsProductRenewal = false) {
@@ -37,10 +56,13 @@ export function checkpointResourceRenewalContext(publication,goal) {
 
 /** Read fences from the authenticated canonical publication, never a display badge.
  * This is a UI consistency check; the steering endpoint owns release eligibility. */
-export function checkpointDirectionContext(publication, goal) {
+function assertCheckpointBinding(publication, goal, allowUnboundTerminal = false) {
   const snapshot = publication?.snapshot;
   const binding = goal?._bindingV2;
   const document = goal?._projection?.target?.document_fingerprint;
+  const unboundTerminal = allowUnboundTerminal && document == null
+    && snapshot?.current_binding?.document_fingerprint == null
+    && snapshot?.spec?.binding?.document_fingerprint == null;
   if (publication?.schema !== "revit-operator.assignment-kernel-publication/v2"
       || publication.assignment_id !== binding?.assignment_id
       || !Number.isSafeInteger(publication.assignment_version)
@@ -50,13 +72,18 @@ export function checkpointDirectionContext(publication, goal) {
       || !bindingKeys.every(key => binding?.[key] != null
         && snapshot?.current_binding?.[key] === binding[key]
         && snapshot?.spec?.binding?.[key] === binding[key])
-      || !document || snapshot.current_binding.document_fingerprint !== document
-      || snapshot.spec.binding.document_fingerprint !== document
+      || !unboundTerminal && (!document || snapshot.current_binding.document_fingerprint !== document
+        || snapshot.spec.binding.document_fingerprint !== document)
       || (snapshot.provider_usage_hold?.hold_id ?? null) !== (goal._providerUsageHold?.hold_id ?? null)
       || (snapshot.execution_control?.command_id ?? null) !== (goal._executionControl?.command_id ?? null)
       || (snapshot.execution_control?.state ?? "running") !== (goal._executionControl?.state ?? "running")) {
     throw new Error("The task or its controls changed. Refresh the task before sending this direction. Your draft is retained.");
   }
+}
+
+export function checkpointDirectionContext(publication, goal) {
+  assertCheckpointBinding(publication,goal);
+  const snapshot=publication.snapshot,document=goal._projection.target.document_fingerprint;
   const paused = snapshot.execution_control?.state === "paused";
   const proposal = snapshot.completion_proposal;
   if (!proposal) return { checkpoint: null, paused };

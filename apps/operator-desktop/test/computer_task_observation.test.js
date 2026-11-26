@@ -28,11 +28,12 @@ test('relay publishes only the existing V2 task identity, never executor interna
  assert.match(server,/assignmentBindingV2: binding/);
 });
 function harness(payload,change){
- const state={taskNavigationMode:true,sessionId:'session',taskNavigationAssignmentId:'task',taskNavigationEpoch:1,computerSyncRequestId:0,activeRunKind:'',pendingComputerUserMessages:[],computerMessages:[],computerEvents:[],lastScreenshotVersion:0};
+ const state={taskNavigationMode:true,sessionId:'session',taskNavigationAssignmentId:'task',taskNavigationEpoch:1,computerSyncRequestId:0,activeRunKind:'',pendingComputerUserMessages:[],computerMessages:[],computerEvents:[],lastScreenshotVersion:0,goals:[]};
  const goal={_bindingV2:binding};let reads=0,renders=0;
  const sync=runInNewContext(app.slice(start,end)+';syncComputerState',{
-  state,selectedGoal:()=>goal,computerStateMatchesTask,
-  fetchJsonWithTimeout:async route=>{assert.equal(route,'/api/computer/state?session_id=session');reads++;change?.(state,goal);return payload;},
+  state,selectedGoal:()=>goal,computerStateMatchesTask,renderComputerControl(){},
+  fetchJsonWithTimeout:async route=>{if(route.startsWith('/api/assignment-workspace/v2/document-phase?'))return change?.(state,goal,route);assert.equal(route,'/api/computer/state?session_id=session');reads++;change?.(state,goal);return payload;},
+  localStorage:{setItem(){}},
   desktopPreviewCaptureBlocked:()=>false,applyDesktopPreviewCaptureState(){},certifiedReadComputerStateFixture:()=>null,renderNextCertifiedReadUi(){},renderWorkReturnPanel(){},
   reconcileComputerMessages:messages=>({messages,pendingUserMessages:[]}),mergeActivityEvents:(_old,events)=>events,
   setSession:id=>{assert.equal(id,state.sessionId);},renderMessages(){renders++;},renderEvents(){},renderRunSummary(){},renderScreenMeta(){},setStatus(){},setStreaming:value=>state.streaming=value,
@@ -40,6 +41,16 @@ function harness(payload,change){
  });return{sync,state,counts:()=>({reads,renders})};
 }
 const payload=(running=true)=>({running,backendSessionId:'session',assignmentBindingV2:binding,messages:[{role:'assistant',text:'Current saved partial; tags still pending.'}],events:[],progress:{phase:running?'working':'awaiting_user_review'}});
+test('resumed task keeps observing its confirmed document child and rejects late navigation responses',async()=>{
+ const child={...binding,assignment_id:'child',run_id:'document:child'},next={id:'child',_sourceKind:'assignment_kernel_v2',_bindingV2:child};
+ const p={...payload(),assignmentBindingV2:child};
+ const h=harness(p,(_s,_g,route)=>route?{assignment:next}:undefined);
+ await h.sync();assert.equal(h.counts().renders,1);assert.equal(h.state.taskNavigationAssignmentId,'child');assert.equal(h.state.activeGoalId,'child');
+ for(const change of [s=>s.taskNavigationEpoch++,s=>s.sessionId='other',s=>s.activeRunKind='backend',s=>s.computerSyncRequestId++,(_s,g)=>g._bindingV2={...binding,generation:2}]){
+  const late=harness(p,(s,g,route)=>{if(route){change(s,g);return {assignment:next};}});
+  await late.sync();assert.equal(late.counts().renders,0);
+ }
+});
 test('opening a saved task observes its exact current relay and latest report without dispatching',async()=>{
  for(const running of [true,false]){const h=harness(payload(running));await h.sync();assert.equal(h.counts().renders,1);assert.equal(h.state.computerMessages[0].text,payload().messages[0].text);assert.equal(h.state.streaming,running);}
 });
@@ -65,7 +76,7 @@ test('pending message correlation cannot override an explicitly opened saved tas
  const original=app.slice(start,end);
  let renders=0;
  const sync=runInNewContext(original+';syncComputerState',{state:h.state,selectedGoal:()=>({_bindingV2:binding}),
-  fetchJsonWithTimeout:async()=>p,computerStateMatchesTask,computerStateIncludesSubmittedMessage,renderMessages(){renders++;}});
+  fetchJsonWithTimeout:async()=>p,computerStateMatchesTask,computerStateIncludesSubmittedMessage,renderComputerControl(){},renderMessages(){renders++;}});
  await sync();assert.equal(renders,0);assert.equal(h.state.sessionId,'session');
 });
 test('navigation and backend ownership prevent late relay adoption',async()=>{

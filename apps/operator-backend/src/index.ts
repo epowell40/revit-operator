@@ -191,7 +191,7 @@ import { requireProviderAssignmentBinding } from "./assignments/provider_binding
 import { bindPreparedAssignmentToRequest, prepareAssignmentTurnWithAttachments } from "./assignments/turn_preparation.js";
 import { handleChatExecutionFailureBoundaryV2 } from "./assignments/chat_execution_failure_boundary.js";
 import { recordChatExecutionFailureDiagnostic } from "./assignments/chat_execution_failure_diagnostic.js";
-import { externalAssignmentInputHandoff, prepareExternalAssignmentRequest, startExternalAssignmentRun, retainedExternalAssignmentStart } from "./assignments/external_assignment_start.js";
+import { externalAssignmentInputHandoff, prepareExternalAssignmentRequest, startExternalAssignmentRun, retainedExternalAssignmentStart, createExternalAssignmentGoal } from "./assignments/external_assignment_start.js";
 import { buildSidecarDiagnosticReport } from "./sidecar_diagnostics.js";
 import {
   applyEnvironmentPolicyToActions,
@@ -732,6 +732,7 @@ function requiresOperatorToken(pathname: string): boolean {
     pathname.startsWith("/api/assignments/") ||
     pathname === "/api/tasks" ||
     pathname === "/api/task-navigation" ||
+    pathname === "/api/task-navigation/archive" ||
     pathname.startsWith("/api/tasks/") ||
     pathname === "/api/teach/skills/register" ||
     pathname === "/api/teach/skills/usage" ||
@@ -1276,7 +1277,7 @@ const server = http.createServer(async (req, res) => {
           && current.work_budget?.source === "operator_desktop";
         if (replaceBlockedSidecar) clearAgentGoal(sessionId, "Superseded by a fresh Operator Desktop assignment.");
         const owner = sessionOwnerForPrincipal(auth.principal);
-        const goal = setAgentGoal(sessionId, {
+        const goal = createExternalAssignmentGoal(sessionId, {
           ...normalizedRequest,
           ...(owner ? { created_by: owner.owner_user_id } : {})
         });

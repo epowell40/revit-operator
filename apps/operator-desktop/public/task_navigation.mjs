@@ -31,7 +31,7 @@ export function parseTaskNavigation(value) {
       || !(row.assignment_id === null || text(row.assignment_id,240)) || ids.has(row.task_id)) throw Error('Task list is unavailable');
     ids.add(row.task_id);
     return { task_id:row.task_id,session_id:row.session_id,title:row.title,state:row.state,
-      updated_at:row.updated_at,summary:row.summary,assignment_id:row.assignment_id };
+      updated_at:row.updated_at,summary:row.summary,assignment_id:row.assignment_id, archived:row.archived === true };
   });
 }
 
@@ -39,7 +39,7 @@ export function groupTasks(tasks, selectedSessionId = '') {
   const groups = [{title:'Current task',items:[]},{title:'Working',items:[]},{title:'Needs you',items:[]},{title:'Recent',items:[]}];
   for (const task of tasks) {
     const group = selectedSessionId && task.session_id === selectedSessionId ? 0
-      : ['working','pausing','stopping_after_usage_limit'].includes(task.state) ? 1 : ['paused','needs_input','needs_review','ready','unknown','failed','waiting_for_usage'].includes(task.state) ? 2 : 3;
+      : ['working','pausing','stopping_after_usage_limit'].includes(task.state) ? 1 : task.state === 'needs_input' ? 2 : 3;
     groups[group].items.push(task);
   }
   for (const group of groups) group.items.sort((a,b) => Date.parse(b.updated_at) - Date.parse(a.updated_at));
@@ -49,7 +49,7 @@ export function groupTasks(tasks, selectedSessionId = '') {
 export function taskStateLabel(state) {
   return {working:'Working',pausing:'Pausing…',paused:'Paused',needs_input:'Needs your input',needs_review:'Ready for review',ready:'Ready to continue',
     stopping_after_usage_limit:'Stopping after usage limit',waiting_for_usage:'Waiting for usage',
-    complete:'Complete',failed:'Needs attention',unknown:'Result needs checking',loading:'Loading saved status…'}[state] || 'Status unavailable';
+    complete:'Complete',failed:'Failed',unknown:'Result uncertain',loading:'Loading saved status…'}[state] || 'Status unavailable';
 }
 
 /** The opened task's validated publication is fresher than the discovery list.
@@ -79,6 +79,32 @@ export async function readNavigationAssignment(readJson, projectPublication, ses
   if (view?._sourceKind !== 'assignment_kernel_v2' || !Number.isSafeInteger(view._assignmentVersion) || view._assignmentVersion < 1
     || view._bindingV2?.session_id !== sessionId || view._bindingV2?.assignment_id !== assignmentId
     || view.related_session_id !== sessionId) throw Error('The saved task does not match this conversation.');
+  return view;
+}
+
+/** Follow only a retained host-authored document phase. This reads both
+ * canonical publications; a changed relay or matching chat alone is insufficient.
+ * It changes navigation only, never dispatches work or grants write authority. */
+export async function readDocumentNavigation(readJson, parsePublication, projectPublication, parent, child) {
+  const matches = (a,b) => ['assignment_id','session_id','run_id','generation'].every(k=>a?.[k]===b?.[k]);
+  const valid = b => b && ['assignment_id','session_id','run_id'].every(k=>text(b[k],240))
+    && Number.isSafeInteger(b.generation) && b.generation>0;
+  if (!valid(parent)||!valid(child)||parent.session_id!==child.session_id||parent.assignment_id===child.assignment_id)
+    throw Error('Document navigation requires two exact task bindings in the same conversation.');
+  const read = async b => parsePublication((await readJson('/api/assignments/v2/'+encodeURIComponent(b.assignment_id),{method:'GET'}))?.assignment_kernel_v2);
+  const p=await read(parent),c=await read(child),s=p.snapshot,h=s.document_handoff;
+  const canonical = value => JSON.stringify(value, function(_key,item) {
+    return item && typeof item==='object' && !Array.isArray(item)
+      ? Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])) : item;
+  });
+  if (!matches(s.current_binding,parent)||!matches(c.snapshot.current_binding,child)||!h
+      ||s.execution_control?.state!=='paused'||s.execution_control.command_id!=='document:'+h.command_id
+      ||canonical(c.snapshot.spec.document_parent_binding)!==canonical(s.current_binding)
+      ||canonical(h.child_spec)!==canonical(c.snapshot.spec))
+    throw Error('This task has no confirmed handoff to that document phase.');
+  const view=projectPublication(c);
+  if (view?._sourceKind!=='assignment_kernel_v2'||!matches(view._bindingV2,child)
+      ||view.related_session_id!==parent.session_id) throw Error('The document phase display does not match its canonical binding.');
   return view;
 }
 
@@ -113,7 +139,14 @@ export function renderTaskList(container, tasks, selectedSessionId, onOpen, opti
       const title=document.createElement('span');title.className='taskListTitle';title.textContent=task.title;title.title=task.title;
       const status=document.createElement('span');status.className='taskListStatus';status.textContent=options.loading || options.unavailable?'Status not confirmed':taskStateLabel(task.state);
       button.dataset && (button.dataset.taskState = options.loading || options.unavailable?'unknown':task.state);
-      button.append(title,status);button.addEventListener('click',()=>onOpen(task));section.append(button);
+      button.append(title,status);button.addEventListener('click',()=>onOpen(task));
+      const row=document.createElement('div');row.className='taskHistoryRow';row.append(button);
+      if (options.onArchive && !options.loading && !options.unavailable && !['working','pausing','stopping_after_usage_limit'].includes(task.state)) {
+        const archive=document.createElement('button');archive.type='button';archive.className='taskArchive';
+        archive.textContent=task.archived?'Restore':'Archive';archive.setAttribute('aria-label',`${archive.textContent} ${task.title}`);
+        archive.addEventListener('click',()=>options.onArchive(task));row.append(archive);
+      }
+      section.append(row);
     }
     container.append(section);
   }

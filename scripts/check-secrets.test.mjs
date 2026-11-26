@@ -5,7 +5,18 @@ import os from 'node:os';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
+import {fileURLToPath} from 'node:url';
 import {checkTrackedSecrets,GITLEAKS_VERSION} from './check-secrets.mjs';
+
+test('CLI invoked through a directory junction runs the enforcing scanner',t=>{
+  const root=fixture(t),alias=path.join(root,'linked-scripts');
+  fs.symlinkSync(path.dirname(fileURLToPath(import.meta.url)),alias,process.platform==='win32'?'junction':'dir');
+  t.after(()=>fs.existsSync(alias)&&fs.unlinkSync(alias));
+  const result=spawnSync(process.execPath,[path.join(alias,'check-secrets.mjs'),root],{
+    encoding:'utf8',windowsHide:true,env:{...process.env,GITLEAKS_PATH:path.join(root,'missing-scanner')},timeout:30000});
+  assert.equal(result.status,2);
+  assert.match(result.stdout,/Secret scan unavailable/);
+});
 
 function fixture(t){
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-scan-test-'));
@@ -23,6 +34,21 @@ function fakeScanner(onScan,version=GITLEAKS_VERSION){
   };
 }
 function clean(args){fs.writeFileSync(args[args.indexOf('--report-path')+1],'[]');return{status:0,stdout:''};}
+
+test('checkout-root junction is scanned while tracked-file links remain rejected',t=>{
+  const root=fixture(t),holder=fs.mkdtempSync(path.join(os.tmpdir(),'operator-scan-test-'));
+  const alias=path.join(holder,'checkout');
+  fs.symlinkSync(root,alias,process.platform==='win32'?'junction':'dir');
+  assert.equal(checkTrackedSecrets(alias,{execute:fakeScanner(clean)}).code,0);
+  const outside=path.join(holder,'outside');fs.mkdirSync(outside);
+  fs.writeFileSync(path.join(outside,'source.txt'),'ordinary source\n');
+  fs.symlinkSync(outside,path.join(root,'linked'),process.platform==='win32'?'junction':'dir');
+  t.after(()=>{fs.unlinkSync(alias);fs.unlinkSync(path.join(outside,'source.txt'));fs.rmdirSync(outside);fs.rmdirSync(holder);});
+  const execute=fakeScanner(clean);
+  const withLinkedListing=(binary,args,options)=>binary==='git'&&args.includes('ls-files')
+    ?{status:0,stdout:'100644 '+'a'.repeat(40)+' 0\tlinked/source.txt\0'}:execute(binary,args,options);
+  assert.equal(checkTrackedSecrets(alias,{execute:withLinkedListing}).code,2);
+});
 
 test('missing wrong-version failing and timed-out scanners never pass or echo their output',t=>{
   const root=fixture(t),marker='synthetic-do-not-print';

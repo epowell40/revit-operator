@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import http from "node:http";
 import test from "node:test";
-import { listTaskNavigation, listTaskNavigationAsync } from "../src/assignments/task_navigation.js";
+import { listTaskNavigation, listTaskNavigationAsync, archiveTaskConversations } from "../src/assignments/task_navigation.js";
 import { readNavigationProjectionAsync } from "../src/assignments/task_navigation_reader.js";
 import { prepareAssignmentTurn } from "../src/assignments/turn_preparation.js";
 import { getAssignmentKernelSnapshotV2, appendCurrentAssignmentKernelEventV2 } from "../src/assignments/assignment_kernel_v2_store.js";
@@ -12,7 +12,7 @@ import { requestAssignmentInputV2 } from "../src/assignments/assignment_kernel_v
 import { controlAssignmentExecutionV2 } from "../src/assignments/assignment_kernel_v2_controls.js";
 import { handleAssignmentHttpRoute } from "../src/assignments/http_routes.js";
 import { __testOnlyResetGoalListCache, getGoalStoragePath } from "../src/goals/service.js";
-import { appendEvent, __closeForTests } from "../src/memory/sqlite_store.js";
+import { appendEvent, __closeForTests, archivedConversationIds } from "../src/memory/sqlite_store.js";
 import { runWithRequestContext, createPrincipalBoundSessionId, type RequestPrincipal } from "../src/request_context.js";
 import { createOperatorBackendAuth } from "../src/operator_backend_auth.js";
 import { openAssignmentKernelOperationV2, markAssignmentKernelOperationDispatchStartedV2 } from "../src/assignments/assignment_kernel_v2_execution.js";
@@ -44,6 +44,32 @@ function task(session: string) {
     requestContext: { revit: { document: { projectIdentity: { fingerprint: "test-model" } } } } })!;
   return prepared.bindingV2!;
 }
+
+test('archive all covers history beyond the page limit, survives restart and restores without changing tasks',()=>workspace(async()=>{
+ for(let i=0;i<240;i++)conversation(`test-${i}`,`Old test ${i}`);
+ const binding=task('test-0'),before=getAssignmentKernelSnapshotV2(binding.assignment_id);
+ assert.equal(archiveTaskConversations({all:true,archived:true}).count,240);
+ assert.deepEqual(listTaskNavigation().tasks,[]);
+ __closeForTests();
+ assert.equal((await listTaskNavigationAsync(200,undefined,true)).tasks.length,200);
+ archiveTaskConversations({session_id:'test-0',archived:false});
+ assert.equal(listTaskNavigation().tasks[0]!.session_id,'test-0');
+ assert.deepEqual(getAssignmentKernelSnapshotV2(binding.assignment_id),before);
+ archiveTaskConversations({all:true,archived:false});assert.equal(listTaskNavigation(200).tasks.length,200);
+}));
+test('archive cannot target a foreign principal and all applies only to owned history',()=>workspace(()=>{
+ const principal:RequestPrincipal={sub:'a',user_id:'a',tenant_id:'team',license_id:'team',roles:[],tier:null,claims:{}};
+ const other={...principal,sub:'b',user_id:'b'},own=createPrincipalBoundSessionId(principal),foreign=createPrincipalBoundSessionId(other);
+ runWithRequestContext({principal},()=>{
+  conversation(own,'Own test');conversation(foreign,'Foreign test');
+  assert.throws(()=>archiveTaskConversations({session_id:foreign,archived:true}),/unavailable/);
+  assert.equal(archiveTaskConversations({all:true,archived:true}).count,1);
+  assert.equal(listTaskNavigation(100,true).tasks[0]!.session_id,own);
+  assert.equal(archivedConversationIds().has(foreign),false);
+ });
+ runWithRequestContext({principal:other},()=>{conversation(foreign,'Foreign test');assert.equal(listTaskNavigation().tasks[0]!.session_id,foreign);});
+ assert.throws(()=>runWithRequestContext({},()=>archiveTaskConversations({all:true,archived:true})),/sign-in/);
+}));
 
 test("canonical review is distinct from a required answer in synchronous and asynchronous task discovery", () => workspace(async () => {
   conversation("review-status", "Inspect the completed schedule"); const review = task("review-status");

@@ -7,7 +7,7 @@ const binding={session_id:'session',assignment_id:'assignment',run_id:'run',gene
 const pixels=Buffer.concat([Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lS0AAAAASUVORK5CYII=','base64'),Buffer.alloc(16_384)]);
 function fixture(run:(f:any)=>void){const old=process.env.OPERATOR_WORKSPACE_ROOT,root=fs.mkdtempSync(path.join(os.tmpdir(),'context-retirement-'));process.env.OPERATOR_WORKSPACE_ROOT=root;
  try{const evidence=storeEvidence({scope:binding,source:'retirement-test',raw:pixels,media_type:'image/png',trust_level:'host_observed',verification_relevance:'supporting'}),layout=ensureWorkspaceLayout(),dir=path.join(layout.runs,'desktop-responses');fs.mkdirSync(dir,{recursive:true});
-  const file=path.join(dir,createHash('sha256').update(canonicalJsonV2([binding.session_id,'owner-context'])).digest('hex')+'.json.context');
+  const file=path.join(dir,createHash('sha256').update(canonicalJsonV2([binding.session_id,'owner-context-'+createHash('sha256').update(canonicalJsonV2(binding)).digest('hex')])).digest('hex')+'.json.context');
   const state:any={terminal:true,quiescent:true,outcome:'complete',current_binding:binding,unresolved_unknown_operation_ids:[],in_flight_operation_ids:[],in_flight_provider_call_ids:[],pending_review_ids:[],pending_input_variable_ids:[],provider_calls:{}};
   const context={binding,complete:true,message_id:'one',window:[{role:'user',content:[{type:'input_text',text:'Preserve task and all native results'}, {type:'input_image',image_url:'data:image/png;base64,'+pixels.toString('base64'),detail:'original'}]}],outputs:[]};
   const reset=()=>fs.writeFileSync(file,JSON.stringify(context));reset();run({root,file,state,context,reset,evidence,layout});

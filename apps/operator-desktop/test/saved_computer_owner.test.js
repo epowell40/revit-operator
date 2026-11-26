@@ -25,6 +25,7 @@ test('browser state shows resumed conversation without publishing host context a
  runInNewContext(routeSource,{
   app:{get(path,handler){assert.equal(path,'/api/computer/state');handler({}, {setHeader(){},json(data){state=data;}});}},
   computerState:{messages},browserComputerAssignmentBinding:()=>binding,
+  computerControlIndicator:{status:()=> 'idle'},
   modelCallReceiptsSnapshot:()=>[],providerUsageCoverageSnapshot:()=>({}),
   modelCallReceiptIntegritySnapshot:()=>({}),browserSafeCertifiedReadUi:()=>null,
   browserComputerMessages:savedConversationHelpers.browserComputerMessages,
@@ -38,8 +39,8 @@ test('initial model input retains authenticated saved source and punch list beyo
  const history={session_id:'session',messages:Array.from({length:12},(_,i)=>({role:i%2?'assistant':'user',text:'ordinary turn '+i}))};
  const messages=savedComputerConversation(goal,snapshot,history);
  messages.push({role:'user',text:'Continue the remaining work'});
- const build=runInNewContext(body(server,'buildComputerInput')+';buildComputerInput',{
-   computerState:{messages,sidecarAssignment:binding},MAX_CONVERSATION_MESSAGES:12,
+ const build=runInNewContext(body(server,'browserComputerAssignmentBinding')+'\n'+body(server,'buildComputerInput')+';buildComputerInput',{
+   computerState:{messages,sidecarAssignment:{...binding,goal_id:binding.assignment_id,kernel_version:2}},MAX_CONVERSATION_MESSAGES:12,savedComputerBinding,
    selectComputerConversationForInput:savedConversationHelpers.selectComputerConversationForInput,
    toComputerInputMessage:(message)=>message
  });

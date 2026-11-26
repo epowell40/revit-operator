@@ -252,7 +252,7 @@ test('bounded locator lanes cannot crowd fresh pixels out of a production-sized 
  assert(partial,'exercise whole annotation-row clipping');assert(retained,'exercise reference-only fallback');
 });
 
-test('single review feedback reserves finding space by sharing identical locator identity and omitting generic retrieval prose',async()=>{
+test('single review feedback shares locator identity and keeps a bounded typed retrieval instruction',async()=>{
  const f=assessmentHost();f.host.readDraftingDetail=async()=>fixture(900);
  const r=await reviewCurrentWork(assessmentRequest,f.host),before=JSON.stringify(r);
  const projection={evidence_id:'ev1_review',content_hash:'sha256:'+'c'.repeat(64),artifact_ref:'ev1_review',
@@ -260,7 +260,7 @@ test('single review feedback reserves finding space by sharing identical locator
  const source={schema:'revit-operator.model-evidence-envelope.v1',omitted:0,retrieval:'Generic selector catalogue retained in the original evidence.',evidence_projections:[projection]};
  const envelope={output:JSON.stringify(source)};
  const out=visualWorkReviewModelOutput(envelope,r,'ev1_review'),parsed=JSON.parse(out.output[0].text),v=parsed.evidence_projections[0].visual_work_review,index=v.drafting_correction_index;
- assert.equal(parsed.retrieval,undefined);assert.equal(index.state,'retained_only');
+ assert.equal(parsed.retrieval,'Use the typed review retrieval selectors for retained evidence.');assert.equal(index.state,'retained_only');
  assert.equal(index.location_path,'location');assert.equal(index.capture_path,'capture');
  for(const [k,value]of Object.entries(r.drafting_correction_index.location))assert.deepEqual(v.location[k],value);
  for(const [k,value]of Object.entries(r.drafting_correction_index.capture))assert.deepEqual(v.capture[k],value);

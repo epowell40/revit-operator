@@ -46,7 +46,7 @@ test('source checklist, stable questions and bounded summary survive restart wit
   replace(s,34,{deferrals:[{reason:'Architect coordination remains outside this assignment.',deferred_at:'2026-10-12T02:00:00Z'}]});
   const before=JSON.stringify(s), review=projectWorkReviewV2(s), handoff=finalCodexAssignmentMessageV2(s,'All complete.');
   assert.deepEqual(review.counts,{checked:0,reported_unverified:0,partial:0,deferred:2,not_completed:33,outcome_unknown:0,settling:0});
-  const summary=handoff.split('## Details')[0]!;assert(summary.length<2500);assert.match(summary,/Q3.*E101 · page 3/);assert.match(summary,/Q35.*page 35/);
+  const summary=handoff.split('## Details')[0]!;assert(summary.length<2500);assert.doesNotMatch(summary,/Q3|Q35/);assert.match(handoff,/Q3.*E101 · page 3/);assert.match(handoff,/Q35.*page 35/);
   assert.match(handoff,/Retained older unresolved report/);assert.match(handoff,/Older unresolved item; do not forget it/);
   assert.match(handoff,/R35/);assert.doesNotMatch(summary,/All complete|verified complete/);
   assert.equal(JSON.stringify(s),before);assert.equal(finalCodexAssignmentMessageV2(JSON.parse(before),'All complete.'),handoff);
@@ -92,7 +92,7 @@ test('actual shared conversation renderer keeps all checklist details closed and
   const flatten=(n:any):any[]=>[n,...(n.children??[]).flatMap(flatten)];const nodes=flatten(container);
   assert.equal(nodes.filter(n=>n.tag==='details').length,1);assert.equal(nodes.some(n=>n.tag==='img'),false);
   const details=nodes.find(n=>n.tag==='details');assert.equal(details.open,undefined);assert(flatten(details).some(n=>n.textContent?.includes('R35')));
-  const visible=container.children.filter((n:any)=>n.tag!=='details');assert(flatten({children:visible}).filter(n=>n.tag==='tr').length===7);
+  const visible=container.children.filter((n:any)=>n.tag!=='details');assert.equal(flatten({children:visible}).filter(n=>n.tag==='tr').length,0,'saved checklist stays in collapsed Details');assert.equal(flatten(details).filter(n=>n.tag==='tr').length,36,'all 35 saved items and table header remain available');
   assert.equal(renderWorkReviewHandoffV2({...s,work_plan:undefined}),null);
 });
 

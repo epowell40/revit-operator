@@ -44,10 +44,24 @@ export function runDesktopConversationReplay(input?:{source:string;helper_prompt
  assert.equal(listConversationNavigation(()=>true).find(m=>m.session_id===f.session)?.title,f.objective.replace(/\s+/g,' ').trim().slice(0,180));
  const review=await f.propose(input?.proposal);assert.equal(review.status,200);assert.equal(f.state().outcome,'awaiting_user_review');
  const canonical=structuredClone(f.state());retainDesktopReviewConversationV1(f.binding);assert.deepEqual(f.state(),canonical);
- __closeForTests();const history=getConversationHistory(f.session);assert.equal(history.length,2);assert.equal(history[0].text,f.objective);assert.match(history[1].text,/not independently verified/);assert.match(history[1].text,/Reported work/);assert(!history.some(m=>m.text===helperReport));
+ __closeForTests();const history=getConversationHistory(f.session);assert.equal(history.length,2);assert.equal(history[0].text,f.objective);assert.match(history[1].text,/not independent certification of the entire task/);assert.match(history[1].text,/Work reported/);assert(!history.some(m=>m.text===helperReport));
  assert.equal(history[1].message_id,f.state().completion_proposal.review_id);
 },true,input?.source);}
 test('desktop human source and HTTP review survive restart while helper text remains internal evidence',()=>runDesktopConversationReplay());
+
+test('generated resume direction stays in execution history without impersonating a human in chat',()=>fixture(async f=>{
+ const request={...f.request,context:{ui:{control_action:'resume'}}};
+ const text=request.user_text;
+ appendMessage(f.session,{role:'user',text},requestConversationPersistenceV1(request,text));
+ assert(getHistory(f.session).some(m=>m.role==='user'&&m.text===text));
+ assert.equal(getConversationHistory(f.session).length,0);
+ const answer='Verified the updated property.';
+ appendMessage(f.session,{role:'assistant',text:answer},requestConversationPersistenceV1(request,answer));
+ assert.equal(getConversationHistory(f.session)[0].text,answer);
+ const human={...request,message_id:'human-followup',context:{}};
+ appendMessage(f.session,{role:'user',text},requestConversationPersistenceV1(human,text));
+ assert.equal(getConversationHistory(f.session).at(-1)?.text,text);
+}));
 
 for(const kind of ['direct','foreign-marker','foreign-generation','human-wording'])test(`real user conversation is preserved for ${kind}`,()=>fixture(async f=>{
  const request=structuredClone(f.request);if(kind==='direct'||kind==='human-wording')delete request.context.desktop_helper_scope_v1;

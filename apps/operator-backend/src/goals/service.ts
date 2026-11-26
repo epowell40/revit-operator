@@ -776,7 +776,9 @@ export function mutateGoalRecord(goalId: string, mutator: (goal: GoalRecord) => 
   });
 }
 
-export function createGoal(input: GoalCreateInput): GoalRecord {
+export function createGoal(input: GoalCreateInput, internalId?: string): GoalRecord {
+  if(internalId!==undefined&&(!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-a[a-f0-9]{3}-[a-f0-9]{12}$/.test(internalId)||getGoal(internalId)))
+    throw new Error('goal_internal_identity_conflict');
   const title = clip(input.title, 180);
   const objective = objectiveText(input.objective);
   const acceptanceCriteria = asStringList(input.acceptance_criteria ?? input.acceptanceCriteria, 80, 1200);
@@ -788,7 +790,7 @@ export function createGoal(input: GoalCreateInput): GoalRecord {
   const requestedStatus = normalizeStatus(input.status);
   const status: GoalStatus = requestedStatus === "active" ? "active" : "draft";
   const goal: GoalRecord = {
-    id: randomUUID(),
+    id: internalId ?? randomUUID(),
     revision: 1,
     title,
     objective,

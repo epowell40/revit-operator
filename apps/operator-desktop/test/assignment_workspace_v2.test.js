@@ -534,7 +534,7 @@ test("display preserves blocked, partial and uncertain canonical outcomes", () =
 });
 
 async function appFunction(name, nextName, context) {
-  if (name === "syncComputerState") context.fetchJsonWithTimeout = context.fetchJson;
+  if (name === "syncComputerState") { context.fetchJsonWithTimeout = context.fetchJson; context.renderComputerControl = () => {}; }
   const source = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
   const start = source.indexOf(`async function ${name}(`);
   const end = source.indexOf(`\n${nextName}`, start);

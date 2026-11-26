@@ -1,0 +1,3 @@
+export const NEW_DOCUMENT_HANDOFF_TOOL={type:'function',name:'native__continue_in_new_revit_model',strict:false,
+  description:'After creating the new Revit project explicitly requested by the user through the Revit UI, continue the SAME chat in that newly created unsaved project. Call this alone, before any native geometry work in the new project. The host reads the active document independently, verifies native creation time and the original process, settles the old phase and transfers only remaining task resources. It grants no permission for unrelated existing models. Do not recreate an already created project if this call fails; inspect the error and preserve work.',
+  parameters:{type:'object',properties:{},additionalProperties:false}};

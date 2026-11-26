@@ -151,7 +151,17 @@ export async function retainDesktopResponse<T>(binding: Binding, messageId: unkn
 }
 
 function contextFile(binding: Binding): string {
-  return identity(binding, 'owner-context').file + '.context';
+  const key = createHash('sha256').update(canonicalJsonV2(binding)).digest('hex');
+  const scoped = identity(binding, 'owner-context-' + key).file + '.context';
+  if (fs.existsSync(scoped)) return scoped;
+  // Older releases kept one context per chat. Resume it only for its exact
+  // owner; a new task keeps the transcript but must not consume that context.
+  const legacy = identity(binding, 'owner-context').file + '.context';
+  if (fs.existsSync(legacy)) {
+    const prior = JSON.parse(fs.readFileSync(legacy, 'utf8'));
+    if (canonicalJsonV2(prior.binding) === canonicalJsonV2(binding)) return legacy;
+  }
+  return scoped;
 }
 function replaceContext(binding: Binding, value: unknown): void {
   const file = contextFile(binding), temporary = file + '.' + randomUUID() + '.tmp';

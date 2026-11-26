@@ -12,6 +12,7 @@ import {getConversationTurn,type ConversationEntry} from '../memory/sqlite_store
 import {deriveTerminalResultV2} from './assignment_kernel_v2_terminal_result.js';
 import {modelSavedProjectCheckpointV1,savedProjectBeforeInterruptionV2,savedProjectCheckpointV2} from './saved_copy_handoff_v2.js';
 import {requestMatchesAssignmentPrincipalId} from '../request_context.js';
+import {workReportPresentation} from './work_report_presentation.js';
 
 function savedProjectMessage(assignmentId:string,saved:Pick<NonNullable<ReturnType<typeof savedProjectCheckpointV2>>,
  'file'|'observation_id'|'created_at'>,checked:boolean):ConversationEntry{
@@ -58,10 +59,13 @@ export function requestConversationPersistenceV1(request:Partial<ChatRequest>,te
  if(typeof request.session_id!=='string'||!request.session_id||typeof request.message_id!=='string'||!request.message_id)
   throw Error('Conversation session and message identity are required.');
  const snapshot=request.assignment_id?getAssignmentKernelSnapshotV2(request.assignment_id):null;
+ const resumeActivity = (request.context as any)?.ui?.control_action === 'resume' && text === request.user_text
+  && snapshot?.current_binding.session_id === request.session_id
+  && snapshot.current_binding.run_id === request.assignment_run_id && snapshot.current_binding.generation === request.assignment_generation;
  const helper=snapshot&&snapshot.current_binding.session_id===request.session_id
   &&snapshot.current_binding.run_id===request.assignment_run_id&&snapshot.current_binding.generation===request.assignment_generation
   &&desktopHelperScopeForSnapshotV1(snapshot,desktopHelperScopeFromContextV1(request.context));
- return helper?{pinGoal:false}:{display:conversationDisplay(request.message_id,text,attachments)};
+ return helper || resumeActivity?{pinGoal:false}:{display:conversationDisplay(request.message_id,text,attachments)};
 }
 
 function appendDisplay(binding:AssignmentBindingV2,messageId:string,role:'user'|'assistant',text:string):void{
@@ -88,9 +92,6 @@ export function retainDesktopReviewConversationV1(binding:AssignmentBindingV2):v
  if(!snapshot||!desktopExecutorOwnsAssignmentV2(snapshot)
   ||!sameAssignmentBindingV2(snapshot.current_binding,binding)||!snapshot.completion_proposal)return;
  const proposal=snapshot.completion_proposal;
- const groups=[['Reported work',proposal.claimed_completed],['Remaining work',proposal.remaining_work],['Uncertainties',proposal.uncertainties]] as const;
- const lines=groups.filter(([,items])=>items.length).map(([label,items])=>{
-  const first=items[0]!;return first.length<=280?`${label}: ${first}${items.length>1?` (${items.length-1} more in Details.)`:''}`:`${label}: ${items.length} items in Details.`;
- });
- appendDisplay(binding,proposal.review_id,'assistant',['Ready for review (not independently verified).',...lines,'See task Details for the full retained report and earlier unfinished items.'].join('\n\n'));
+ const presentation=workReportPresentation(snapshot)!;
+ appendDisplay(binding,proposal.review_id,'assistant',presentation.summary+'\n\n## Details\n\n'+presentation.details);
 }

@@ -1,6 +1,7 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "new_document_handoff.test.ts",
     "native_lifecycle_contract.test.ts",
     "registered_reference_intake.test.ts",
     "completed_work_delivery.test.ts",
@@ -652,6 +653,13 @@
     "OperatorDeletedTypeContextTests"
   ],
   "failure_families": [
+    {
+      "id": "settled_document_unbound_export_to_edit_in_same_chat",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/checkpoint_followup.test.mjs",
+        "backend:advisory_verification_policy.test.ts"
+      ]
+    },
     {
       "id": "preflight_session_rotation_answer_delivery_20261125",
       "coverage": [
@@ -5763,6 +5771,29 @@
         "backend:whole_native_result_delivery.test.ts",
         "backend:drafting_observation_transport.test.ts"
       ]
+    },
+    {
+      "id": "raw-review-evidence-wire-budget",
+      "coverage": [
+        "backend:evidence_http_routes.test.ts",
+        "javascript:app/operator-desktop/test/evidence_store_contract.test.mjs"
+      ]
+    },
+    {
+      "id": "same-chat-next-request-owner-context",
+      "coverage": [
+        "backend:desktop_conversation.test.ts",
+        "javascript:app/operator-desktop/test/next_request_context.test.mjs",
+        "javascript:package/operator-assistant-ui/continuous_chat.test.mjs"
+      ]
+    },
+    {
+      "id": "history-archive-json-transport",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/history_archive_request.test.mjs",
+        "backend:goal_endpoint_security.test.ts",
+        "backend:task_navigation.test.ts"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
@@ -5777,6 +5808,8 @@
     "NativeCompileTransportTests"
   ],
   "javascript_tests": [
+    "package/operator-assistant-ui/document_navigation.test.mjs",
+    "app/operator-desktop/test/new_document_handoff.test.mjs",
     "package/operator-assistant-ui/target_resolution_failure.test.mjs",
     "package/operator-assistant-ui/provider_continuation.test.mjs",
     "package/operator-assistant-ui/verification_closeout_guidance.test.mjs",
@@ -5832,6 +5865,10 @@
     "package/operator-assistant-ui/review_repair_readiness.test.mjs",
     "package/operator-assistant-ui/review_repair_focus.test.mjs",
     "package/operator-assistant-ui/partial_drawing_pacing.test.mjs",
-    "package/assignment-kernel-v2-contracts/dispatch-control.test.mjs"
+    "package/assignment-kernel-v2-contracts/dispatch-control.test.mjs",
+    "app/operator-desktop/test/evidence_store_contract.test.mjs",
+    "app/operator-desktop/test/next_request_context.test.mjs",
+    "package/operator-assistant-ui/continuous_chat.test.mjs",
+    "package/operator-assistant-ui/history_archive_request.test.mjs"
   ]
 }

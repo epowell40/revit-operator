@@ -6,7 +6,7 @@ function harness(){
  const state={sessionId:'current',taskNavigationEpoch:0,taskNavigationAssignmentId:'',computerSyncRequestId:0,activeRunKind:'computer',pendingComputerUserMessages:[],computerEvents:[],lastScreenshotVersion:0};
  const waiting=[];let renders=0;const noop=()=>{};
  const sync=vm.runInNewContext(fn('syncComputerState')+';syncComputerState',{state,selectedGoal:()=>null,fetchJsonWithTimeout:(route,_options,limit)=>{assert.equal(route,state.sessionId?'/api/computer/state?session_id='+state.sessionId:'/api/computer/state');assert.equal(limit,10000);return new Promise((resolve,reject)=>waiting.push({resolve,reject}))},
-  computerStateIncludesSubmittedMessage,computerStateMatchesTask:()=>false,desktopPreviewCaptureBlocked:()=>false,applyDesktopPreviewCaptureState:noop,certifiedReadComputerStateFixture:()=>null,renderNextCertifiedReadUi:noop,renderWorkReturnPanel:noop,
+  computerStateIncludesSubmittedMessage,computerStateMatchesTask:()=>false,renderComputerControl:noop,desktopPreviewCaptureBlocked:()=>false,applyDesktopPreviewCaptureState:noop,certifiedReadComputerStateFixture:()=>null,renderNextCertifiedReadUi:noop,renderWorkReturnPanel:noop,
   reconcileComputerMessages:messages=>({messages,pendingUserMessages:[]}),mergeActivityEvents:(_old,events)=>events,setSession:id=>{state.sessionId=id},renderMessages(){renders++},renderEvents:noop,renderRunSummary:noop,renderScreenMeta:noop,refreshScreen:noop,
   setStatus:text=>{state.status=text},setStreaming:value=>{state.streaming=value}});
  return{state,sync,waiting,renders:()=>renders};

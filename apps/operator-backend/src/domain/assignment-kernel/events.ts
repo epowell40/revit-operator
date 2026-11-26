@@ -33,6 +33,7 @@ export interface AssignmentEventEnvelopeV2 {
 export type AssignmentEventV2 = AssignmentEventEnvelopeV2 & (
   | { event_type: "assignment_created"; spec: AssignmentSpecV2 }
   | { event_type: "run_started" }
+  | { event_type: "new_document_handoff"; handoff: import('./new_document_handoff.js').NewDocumentHandoffV1 }
   | { event_type: "execution_control_requested"; command_id: string; action: "pause" | "resume"; expected_command_id: string | null;
       expected_hold_id?: string | null; expected_assignment_version?: number }
   | { event_type: "provider_usage_hold_recorded"; hold: import("./provider_usage_hold.js").ProviderUsageHoldV1 }

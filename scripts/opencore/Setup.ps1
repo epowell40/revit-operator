@@ -58,7 +58,10 @@ try {
         try {
             Invoke-Checked $npm @('ci','--no-audit','--no-fund')
             if($name -ne 'operator-desktop'){Invoke-Checked $npm @('run','build')}
-            else { Invoke-Checked $node @('--check','server.js') }
+            else {
+                Invoke-Checked $node @('--check','server.js')
+                Invoke-Checked $dotnet @('build','indicator/OperatorControlIndicator.csproj','-c','Release','--nologo','--verbosity:minimal')
+            }
         } finally { Pop-Location }
     }
     # Pin the supported CLI locally; never modify the user's global Codex installation.

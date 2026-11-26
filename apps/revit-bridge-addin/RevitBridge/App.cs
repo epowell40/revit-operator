@@ -31,6 +31,7 @@ namespace RevitBridge
                 WriteStartupLog(OperatorBrowserCompatibility.DesktopExplanation);
 
             application.ControlledApplication.DocumentOpened += OnDocumentOpened;
+            application.ControlledApplication.DocumentCreated += OnDocumentCreated;
             application.ControlledApplication.DocumentClosing += OnDocumentClosing;
             application.ControlledApplication.DocumentOpening += OnDocumentOpening;
             application.ControlledApplication.DocumentClosed += OnDocumentClosed;
@@ -178,6 +179,7 @@ namespace RevitBridge
             OperatorEmbeddedPaneControl.Shutdown();
             _eventService?.StopBackgroundWake();
             application.ControlledApplication.DocumentOpened -= OnDocumentOpened;
+            application.ControlledApplication.DocumentCreated -= OnDocumentCreated;
             application.ControlledApplication.DocumentClosing -= OnDocumentClosing;
             application.ControlledApplication.DocumentOpening -= OnDocumentOpening;
             application.ControlledApplication.DocumentClosed -= OnDocumentClosed;
@@ -234,6 +236,11 @@ namespace RevitBridge
             }
             WriteStartupLog("OnShutdown complete.");
             return Result.Succeeded;
+        }
+
+        private static void OnDocumentCreated(object sender, DocumentCreatedEventArgs args)
+        {
+            OperatorNativeDocumentSessionAuthority.RegisterCreatedDocument(args.Document);
         }
 
         private static void OnDocumentOpened(object sender, DocumentOpenedEventArgs args)

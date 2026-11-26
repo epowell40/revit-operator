@@ -1,4 +1,5 @@
 import {mergeEvaluation,projectWorkUnitCriteria} from './criterion_projection.js';
+import {validateNewDocumentHandoff} from './new_document_handoff.js';
 import { isCanonicalNativeAffectedTargetSetV2 } from '@revitoperator/assignment-kernel-v2-contracts';
 import { defaultAssignmentWorkBudgetV2, allocateAuthenticatedFollowupV1 } from "./effective_work_budget.js";
 import { USER_FOLLOWUP_ALLOCATION_V1 } from './user_followup_allocation.js';
@@ -662,7 +663,14 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
     requireCurrentBinding(snapshot, event);
     snapshot = { ...snapshot, assignment_version: event.assignment_version };
     switch (event.event_type) {
+      case 'new_document_handoff':
+        validateNewDocumentHandoff(snapshot,event.handoff,event.actor,event.occurred_at);
+        snapshot={...snapshot,document_handoff:structuredClone(event.handoff),
+          execution_control:{state:'paused',command_id:'document:'+event.handoff.command_id,changed_at:event.occurred_at}};
+        break;
       case "execution_control_requested":
+        kernelAssertV2(!snapshot.document_handoff||event.action==='pause','document_phase_handed_off',
+          'This phase is retained as history. Continue its linked document phase in this chat.');
         snapshot = applyAssignmentExecutionControlV2(snapshot, event);
         break;
       case "provider_usage_hold_recorded":

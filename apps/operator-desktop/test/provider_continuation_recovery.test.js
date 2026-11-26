@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {runInNewContext} from 'node:vm';
-import {savedComputerConversation,selectComputerConversationForInput} from '../saved_computer_assignment.mjs';
+import {savedComputerBinding,savedComputerConversation,selectComputerConversationForInput} from '../saved_computer_assignment.mjs';
 import {providerContinuationInput} from '../provider_continuation.mjs';
 
 test('actual restored input builder delivers checkpoint direction alongside cached provider state',()=>{
@@ -14,11 +14,13 @@ test('actual restored input builder delivers checkpoint direction alongside cach
   {role:'user',text:goal.objective},{role:'assistant',text:'Notes created with COORDINATE WITH ARCHITECT.'},{role:'user',text:direction}
  ]});
  messages.push({role:'user',text:'Continue the existing task using its saved answers and evidence.'});
- const source=readFileSync(new URL('../server.js',import.meta.url),'utf8');
+ const source=readFileSync(new URL('../server.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
  const start=source.indexOf('function buildComputerInput('),end=source.indexOf('\nasync function retainComputerProviderContext',start);
  assert(start>=0&&end>start);
- const build=runInNewContext(source.slice(start,end)+';buildComputerInput',{
-  computerState:{messages,sidecarAssignment:binding},MAX_CONVERSATION_MESSAGES:8,selectComputerConversationForInput,
+ const bindingStart=source.indexOf('function browserComputerAssignmentBinding(');
+ const bindingFunction=source.slice(bindingStart,source.indexOf('\n}\n',bindingStart)+2);
+ const build=runInNewContext(bindingFunction+'\n'+source.slice(start,end)+';buildComputerInput',{
+  computerState:{messages,sidecarAssignment:{...binding,goal_id:binding.assignment_id,kernel_version:2}},MAX_CONVERSATION_MESSAGES:8,savedComputerBinding,selectComputerConversationForInput,
   toComputerInputMessage:(m,o)=>({role:m.role,content:[{type:'input_text',text:m.text},...(o.includeCurrentScreen?[{type:'input_image',image_url:o.currentScreenDataUrl}]:[])]})
  });
  const input=build('fresh-screen'),profile={model:'gpt-6.1-sol',reasoning_effort:'high'};

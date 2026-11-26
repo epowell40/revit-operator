@@ -3,6 +3,25 @@ import test from "node:test";
 import { checkpointDirectionContext, checkpointResumeReady } from "./checkpoint_followup.mjs";
 import * as checkpointTools from './checkpoint_followup.mjs';
 
+test('completed document-unbound export accepts only a fresh objective, never checkpoint steering',()=>{
+ const {publication,goal}=fixture(),s=publication.snapshot;
+ Object.assign(s,{terminal:true,outcome:'complete',pending_review_ids:[],completion_proposal:null});
+ delete s.current_binding.document_fingerprint; delete s.spec.binding.document_fingerprint;
+ delete goal._projection.target.document_fingerprint;
+ const before=JSON.stringify(s);
+ const next=checkpointTools.assertNewTaskAfterReport(publication,goal);
+ assert.equal(next.document_fingerprint,undefined); assert.equal(next.review_id,null);
+ assert.equal(JSON.stringify(s),before);
+ assert.throws(()=>checkpointDirectionContext(publication,goal));
+ for(const change of [p=>p.snapshot.current_binding.document_fingerprint='other',
+  p=>p.snapshot.spec.binding.document_fingerprint='other',p=>p.snapshot.terminal=false,
+  p=>p.snapshot.quiescent=false,p=>p.snapshot.execution_control={state:'paused'},
+  p=>p.snapshot.in_flight_operation_ids=['pending'],p=>p.snapshot.provider_usage_hold={hold_id:'hold'},
+  p=>p.snapshot.current_binding.generation=99]){
+   const p=structuredClone(publication);change(p);assert.throws(()=>checkpointTools.assertNewTaskAfterReport(p,goal));
+ }
+});
+
 function fixture() {
   const binding = { assignment_id: "task", session_id: "conversation", run_id: "run", generation: 1, document_fingerprint: "document" };
   const publication = { schema: "revit-operator.assignment-kernel-publication/v2", assignment_id: "task", assignment_version: 7,
@@ -140,4 +159,23 @@ test('time-aware backend advertises and authorizes a bounded clock window in the
  publication.supports_active_time_renewal_v1=true;
  assert.deepEqual(checkpointTools.checkpointResourceRenewalContext(publication,goal).resource_renewal,
    {provider_calls:64,total_tokens:16_000_000,active_execution_ms:1_200_000});
+});
+
+test('new task navigation after a settled report preserves original effect scope and refuses unresolved execution',()=>{
+ const {publication,goal}=fixture();publication.snapshot.spec.interpreted_scope={scope:{model_effect:'read'}};
+ const before=JSON.stringify(publication);checkpointTools.assertNewTaskAfterReport(publication,goal);assert.equal(JSON.stringify(publication),before);
+ for(const change of [{quiescent:false},{unresolved_unknown_operation_ids:['write']},{in_flight_operation_ids:['write']},{in_flight_provider_call_ids:['call']},{provider_usage_hold:{hold_id:'hold'}},{execution_control:{state:'paused'}},{completion_proposal:null}]){
+  const p=structuredClone(publication);Object.assign(p.snapshot,change);assert.throws(()=>checkpointTools.assertNewTaskAfterReport(p,goal));
+ }
+});
+
+for(const outcome of ['complete','failed','blocked'])test('settled '+outcome+' accepts a fenced next request without resuming old work',()=>{
+ const {publication,goal}=fixture(),s=publication.snapshot;
+ Object.assign(s,{terminal:true,outcome,pending_review_ids:[],completion_proposal:null});
+ const before=JSON.stringify(s),next=checkpointTools.assertNewTaskAfterReport(publication,goal);
+ assert.equal(next.review_id,null);assert.equal(next.session_id,'conversation');assert.equal(JSON.stringify(s),before);
+ for(const change of [{terminal:false},{quiescent:false},{in_flight_operation_ids:['write']},{unresolved_unknown_operation_ids:['unknown']},
+   {provider_usage_hold:{hold_id:'usage'}},{execution_control:{state:'paused'}},{pending_review_ids:['review']}]){
+   const p=structuredClone(publication);Object.assign(p.snapshot,change);assert.throws(()=>checkpointTools.assertNewTaskAfterReport(p,goal));
+ }
 });

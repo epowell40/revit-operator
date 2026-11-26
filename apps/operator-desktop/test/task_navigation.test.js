@@ -76,7 +76,7 @@ test('C51 sending the first message clears the original New Chat key before sess
   const clearStart=source.indexOf('function clearChatComposerForSubmission('),clearEnd=source.indexOf('\n}\n',clearStart)+2;
   const limitStart=source.indexOf('function assertAttachmentTotalSize('),limitEnd=source.indexOf('\n}\n',limitStart)+2;
   const context={state,elements,composerDraftStore:store,composerDraftKey:tab,composerDraftTimer:null,taskDraftKey,clearTimeout,
-    beginComposerSend,pausedTaskAcceptsDirection:()=>false,selectedGoal:()=>null,loadedBrowserIdentity:'current',async assertLoadedBrowserFresh(){},
+    beginComposerSend,newRequestAfterReport:()=>false,renderMessages(){},pausedTaskAcceptsDirection:()=>false,selectedGoal:()=>null,loadedBrowserIdentity:'current',async assertLoadedBrowserFresh(){},
     setStatus(){},updateControls(){},renderAttachStrip(){},updateFeedbackBarVisibility(){},scheduleComposerDraftSave(){},showComposerNotice(){},
     createChatSubmission:(text,attachments)=>({rawPrompt:text,text,attachments}),beginOptimisticChatSubmission(){},
     async sendPrompt(){sent++;state.sessionId='allocated-session';},handleChatSubmissionFailure(error){throw error;}};
@@ -160,7 +160,7 @@ test('retrying a lost steering response preserves the saved command id and origi
   const binding={assignment_id:'assignment',session_id:'session',run_id:'run',generation:1};
   const state={sessionId:'session',pendingAttachments:[]},elements={promptInput:{value:'Start with the north wing'}};
   const submit=runInNewContext(body('submitTaskDirection')+';submitTaskDirection',{state,elements,composerDraftStore:store,composerDraftKey:'steering-test-tab',taskDraftKey,crypto:webcrypto,
-    updateControls(){},async persistComposerDraft(){return true;},async assertLoadedBrowserFresh(){},loadedBrowserIdentity:'identity',async syncGoals(){},selectedGoal:()=>({_bindingV2:binding}),
+    renderMessages(){},updateControls(){},async persistComposerDraft(){return true;},async assertLoadedBrowserFresh(){},loadedBrowserIdentity:'identity',async syncGoals(){},selectedGoal:()=>({_bindingV2:binding}),
     async restoreConversationHistory(){},setStatus:text=>statuses.push(text),async showStaleComposerNotice(){},
     async fetchJson(url,options){
       if(url.endsWith('/turn-control'))return{active_turn:{turn_id:attempts ? 'newer-turn' : 'original-turn'}};

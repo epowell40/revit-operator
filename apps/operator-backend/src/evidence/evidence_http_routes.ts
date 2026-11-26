@@ -1,6 +1,6 @@
 import type http from "node:http";
 import { readJson, writeJson } from "../http.js";
-import { getEvidenceContextBudget } from "./model_context_budget.js";
+import { rawEvidenceItemBudget } from "./model_context_budget.js";
 import { readEvidenceTelemetrySummary, retrieveEvidence, storeEvidence } from "./evidence_store.js";
 import { readVisualReviewBaseline } from "./visual_review_baseline.js";
 
@@ -42,7 +42,11 @@ export async function handleEvidenceHttpRoute(
         verification_relevance: body.verification_relevance,
         relationships: body.relationships,
         raw
-      }, getEvidenceContextBudget().item_bytes);
+      // Caller-submitted evidence is consumed by released desktop clients with
+      // an 8 KiB projection limit. The larger native-read budget is not this
+      // transport contract. Keep complete raw bytes retrievable; compact only
+      // the presentation, including when a review returns unavailable.
+      }, rawEvidenceItemBudget());
       writeJson(res, 201, { ok: true, ...stored });
     } catch (error) {
       writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
