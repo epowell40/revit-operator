@@ -15042,8 +15042,9 @@ function interruptPausedComputerOwner(result, command) {
   if (!acknowledgedComputerPause(result,command,binding)) return false;
   computerState.controlFailureReason="desktop_assignment_paused";
   computerState.stopRequested=true;
-  // This interrupts the provider wait only. Native execution already admitted
-  // by the host settles normally; its effect/usage ledger is never cleared.
+  computerControlIndicator.latchStop();
+  // Stop incremental desktop input as well as the provider wait. Admitted
+  // native execution settles normally; its effect/usage ledger is not cleared.
   try { computerState.activeAbortController?.abort(); } catch {}
   updateComputerProgress({phase:"stopping",currentAction:"Pause requested; waiting for admitted work to settle."});
   addComputerEvent("Canonical Pause acknowledged. Keeping this assignment and its saved work for Resume.");

@@ -12,7 +12,7 @@ export const TASK_REVIEW_PROFILE_V1='single_actor_review_v1' as const;
  * selects orchestration only; it is not a native grant, license or write right.
  * Reopening a saved policy does not require the new-task feature flag to stay on. */
 function authenticatedReviewHost(binding:AssignmentBindingV2,env:NodeJS.ProcessEnv,context:ReturnType<typeof getRequestContext>):boolean {
- if(!binding.document_fingerprint||!binding.principal_id||!binding.session_id
+ if((binding.document_fingerprint!==undefined&&!binding.document_fingerprint.trim())||!binding.principal_id||!binding.session_id
    ||getRequestAssignmentPrincipalId(context)!==binding.principal_id
    ||!localDesktopNativeTransportAvailable(env,context))return false;
  return !context?.principal || isSessionIdBoundToPrincipal(binding.session_id,context.principal);
@@ -26,7 +26,7 @@ export function selectTaskReviewPolicy(binding:AssignmentBindingV2,requestedEffe
    ||!authenticatedReviewHost(binding,env,context))return undefined;
  const budget=DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2;
  return {mode:TASK_REVIEW_PROFILE_V1,selected_by:'trusted_runtime_host',principal_id:binding.principal_id,
-  session_id:binding.session_id,document_fingerprint:binding.document_fingerprint!,max_turns:8,
+  session_id:binding.session_id,...(binding.document_fingerprint?{document_fingerprint:binding.document_fingerprint}:{}),max_turns:8,
   max_provider_calls:budget.max_provider_calls,max_operations:budget.max_operations,
   max_total_tokens:budget.max_total_tokens,max_wall_clock_ms:budget.max_wall_clock_ms,
   ...(requestedEffect==='apply'?{ready_work_handoff:'continue_ready_work_v1' as const}:{})};

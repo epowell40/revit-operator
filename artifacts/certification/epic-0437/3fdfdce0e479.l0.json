@@ -1012,7 +1012,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/desktop_execution_guidance.ts",
-      "sha256": "sha256:3fd02cb372288ff712598b960040bc085c0ace67d05da78c094460948976c5e7"
+      "sha256": "sha256:64545c1768ab8d6a757d160cb21496baf70198bcfd32c9be391864ae3fe169eb"
     },
     {
       "path": "apps/operator-backend/src/assignments/desktop_executor_owner.ts",
@@ -1024,7 +1024,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/desktop_native_tools.ts",
-      "sha256": "sha256:3ea4561cdc0c332095c29db2551e1038fa5e585d7085e20fdd50ee7ab56cbff1"
+      "sha256": "sha256:35316f610092466ea89ae9508553705deac43926072eff0ea4910318438af51a"
     },
     {
       "path": "apps/operator-backend/src/assignments/desktop_native_transport_policy.ts",
@@ -1220,7 +1220,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/task_review_policy.ts",
-      "sha256": "sha256:25e1f2ff5b7671398459a49237b8631de1788857f8aef9299fb2f575d432d3c1"
+      "sha256": "sha256:dc2f78a9f7ceaf30ffb7d6adc1d9feeb0e8b97579fd7b493b39fa6dd393fb206"
     },
     {
       "path": "apps/operator-backend/src/assignments/task_steering.ts",
@@ -3205,7 +3205,7 @@
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/execution_policy.ts",
-      "sha256": "sha256:77a1a6a78da7cf49a43376b99ab28050e83e255e9e9dd12ef69845eb667a23a5"
+      "sha256": "sha256:11bbc7bf48564188c5aac5475348da561dd5c84af7b45c6e67fb4d10dfd67a56"
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/family_capacity_retry.ts",
@@ -5785,7 +5785,7 @@
     },
     {
       "path": "apps/operator-backend/test/desktop_native_tools.test.ts",
-      "sha256": "sha256:c38b1172c72a2d08372abfc3313ba257c00a75198d1416aada61806350655146"
+      "sha256": "sha256:e17a987c99c897479d58db9edb625cd4208127dfe55bdf6014533d8b061b22e8"
     },
     {
       "path": "apps/operator-backend/test/desktop_observation_replay.test.ts",
@@ -8261,7 +8261,7 @@
     },
     {
       "path": "apps/operator-backend/test/task_review_policy.test.ts",
-      "sha256": "sha256:e09d213555dd3a387fca60ba5a5d1e867b104c2e90f92da909efac8836023e05"
+      "sha256": "sha256:bbf9fffac9377a4b032de858c2a837c40a3b1d1c00010dd34417ad7cbdacd185"
     },
     {
       "path": "apps/operator-backend/test/task_steering.test.ts",
@@ -12829,7 +12829,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:ea55577c45bade97a421554e78c730934fff9b224523d603b16465b55613cdec",
+  "inputs_hash": "sha256:aee66511e4eec5c9adf4074a0fd577de87366184f52cce5aa65e11b12d522b66",
   "result": {
     "passed": true,
     "checks": [

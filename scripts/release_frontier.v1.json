@@ -654,6 +654,8 @@
     "OperatorDeletedTypeContextTests"
   ],
   "failure_families": [
+    {"id":"canonical_pause_interrupts_typing_and_export_discovery", "coverage":["backend:desktop_native_tools.test.ts","javascript:app/operator-desktop/test/computer_pause_input.test.mjs","javascript:app/operator-desktop/test/computer_control_indicator.test.mjs"]},
+    {"id": "desktop_only_report_without_revit_document", "coverage": ["backend:task_review_policy.test.ts", "javascript:package/operator-assistant-ui/work_report.test.mjs"]},
     {
       "id": "settled_document_unbound_export_to_edit_in_same_chat",
       "coverage": [
@@ -5830,6 +5832,7 @@
     "NativeCompileTransportTests"
   ],
   "javascript_tests": [
+    "app/operator-desktop/test/computer_pause_input.test.mjs",
     "package/operator-assistant-ui/document_navigation.test.mjs",
     "app/operator-desktop/test/new_document_handoff.test.mjs",
     "package/operator-assistant-ui/target_resolution_failure.test.mjs",
