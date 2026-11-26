@@ -25,6 +25,7 @@ test('browser state shows resumed conversation without publishing host context a
  runInNewContext(routeSource,{
   app:{get(path,handler){assert.equal(path,'/api/computer/state');handler({}, {setHeader(){},json(data){state=data;}});}},
   computerState:{messages},browserComputerAssignmentBinding:()=>binding,
+  computerControlIndicator:{status:()=> 'idle'},
   modelCallReceiptsSnapshot:()=>[],providerUsageCoverageSnapshot:()=>({}),
   modelCallReceiptIntegritySnapshot:()=>({}),browserSafeCertifiedReadUi:()=>null,
   browserComputerMessages:savedConversationHelpers.browserComputerMessages,

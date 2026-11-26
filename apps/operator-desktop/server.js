@@ -16118,7 +16118,9 @@ app.post("/api/computer/run", async (req, res) => {
       if (saved.executor !== 'computer')
         throw new Error('The selected chat changed. Reopen it before sending.');
       const history = await readBackendJson(`/session/history?session_id=${encodeURIComponent(saved.binding.session_id)}`, {method:'GET'});
-      computerState.messages = savedComputerConversation(saved.goal, saved.snapshot, history);
+      // A new objective keeps the human transcript, not the previous task's
+      // pinned execution context. Explicit Resume retains that exact context.
+      computerState.messages = browserComputerMessages(savedComputerConversation(saved.goal, saved.snapshot, history));
       computerState.backendSessionId = saved.binding.session_id;
       // The authenticated backend rechecks the report and settlement fences at
       // goal creation. Preserve transcript/session; only provider context resets.
