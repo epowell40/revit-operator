@@ -654,6 +654,13 @@
   ],
   "failure_families": [
     {
+      "id": "settled_document_unbound_export_to_edit_in_same_chat",
+      "coverage": [
+        "javascript:package/operator-assistant-ui/checkpoint_followup.test.mjs",
+        "backend:advisory_verification_policy.test.ts"
+      ]
+    },
+    {
       "id": "preflight_session_rotation_answer_delivery_20261125",
       "coverage": [
         "desktop:test/completion_polling.test.js",

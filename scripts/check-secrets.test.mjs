@@ -5,7 +5,18 @@ import os from 'node:os';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
+import {fileURLToPath} from 'node:url';
 import {checkTrackedSecrets,GITLEAKS_VERSION} from './check-secrets.mjs';
+
+test('CLI invoked through a directory junction runs the enforcing scanner',t=>{
+  const root=fixture(t),alias=path.join(root,'linked-scripts');
+  fs.symlinkSync(path.dirname(fileURLToPath(import.meta.url)),alias,process.platform==='win32'?'junction':'dir');
+  t.after(()=>fs.existsSync(alias)&&fs.unlinkSync(alias));
+  const result=spawnSync(process.execPath,[path.join(alias,'check-secrets.mjs'),root],{
+    encoding:'utf8',windowsHide:true,env:{...process.env,GITLEAKS_PATH:path.join(root,'missing-scanner')},timeout:30000});
+  assert.equal(result.status,2);
+  assert.match(result.stdout,/Secret scan unavailable/);
+});
 
 function fixture(t){
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'operator-scan-test-'));

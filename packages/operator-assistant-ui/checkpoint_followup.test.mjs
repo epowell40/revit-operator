@@ -3,6 +3,25 @@ import test from "node:test";
 import { checkpointDirectionContext, checkpointResumeReady } from "./checkpoint_followup.mjs";
 import * as checkpointTools from './checkpoint_followup.mjs';
 
+test('completed document-unbound export accepts only a fresh objective, never checkpoint steering',()=>{
+ const {publication,goal}=fixture(),s=publication.snapshot;
+ Object.assign(s,{terminal:true,outcome:'complete',pending_review_ids:[],completion_proposal:null});
+ delete s.current_binding.document_fingerprint; delete s.spec.binding.document_fingerprint;
+ delete goal._projection.target.document_fingerprint;
+ const before=JSON.stringify(s);
+ const next=checkpointTools.assertNewTaskAfterReport(publication,goal);
+ assert.equal(next.document_fingerprint,undefined); assert.equal(next.review_id,null);
+ assert.equal(JSON.stringify(s),before);
+ assert.throws(()=>checkpointDirectionContext(publication,goal));
+ for(const change of [p=>p.snapshot.current_binding.document_fingerprint='other',
+  p=>p.snapshot.spec.binding.document_fingerprint='other',p=>p.snapshot.terminal=false,
+  p=>p.snapshot.quiescent=false,p=>p.snapshot.execution_control={state:'paused'},
+  p=>p.snapshot.in_flight_operation_ids=['pending'],p=>p.snapshot.provider_usage_hold={hold_id:'hold'},
+  p=>p.snapshot.current_binding.generation=99]){
+   const p=structuredClone(publication);change(p);assert.throws(()=>checkpointTools.assertNewTaskAfterReport(p,goal));
+ }
+});
+
 function fixture() {
   const binding = { assignment_id: "task", session_id: "conversation", run_id: "run", generation: 1, document_fingerprint: "document" };
   const publication = { schema: "revit-operator.assignment-kernel-publication/v2", assignment_id: "task", assignment_version: 7,

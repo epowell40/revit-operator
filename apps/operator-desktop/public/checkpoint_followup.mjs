@@ -4,9 +4,11 @@ const bindingKeys = ["assignment_id", "session_id", "run_id", "generation"];
  * This returns a fenced predecessor for same-chat admission, not new authority. */
 export function assertNewTaskAfterReport(publication, goal) {
   const s=publication?.snapshot;
-  assertCheckpointBinding(publication,goal);
-  const terminal=s.terminal===true && ['complete','complete_with_issues','verified_noop','failed','blocked'].includes(s.outcome)
+  const terminal=s?.terminal===true && ['complete','complete_with_issues','verified_noop','failed','blocked'].includes(s.outcome)
     && s.pending_review_ids?.length===0;
+  // Artifact/read tasks may finish without a pinned model. Only a fresh
+  // objective may follow that settled task; steering still requires its model.
+  assertCheckpointBinding(publication,goal,terminal);
   const context=terminal ? {checkpoint:null,paused:s.execution_control?.state==='paused'} : checkpointDirectionContext(publication,goal);
   if ((!terminal && !context.checkpoint) || context.paused || !s.quiescent || s.provider_usage_hold
       || s.unresolved_unknown_operation_ids?.length || s.pending_input_variable_ids?.length
@@ -54,10 +56,13 @@ export function checkpointResourceRenewalContext(publication,goal) {
 
 /** Read fences from the authenticated canonical publication, never a display badge.
  * This is a UI consistency check; the steering endpoint owns release eligibility. */
-function assertCheckpointBinding(publication, goal) {
+function assertCheckpointBinding(publication, goal, allowUnboundTerminal = false) {
   const snapshot = publication?.snapshot;
   const binding = goal?._bindingV2;
   const document = goal?._projection?.target?.document_fingerprint;
+  const unboundTerminal = allowUnboundTerminal && document == null
+    && snapshot?.current_binding?.document_fingerprint == null
+    && snapshot?.spec?.binding?.document_fingerprint == null;
   if (publication?.schema !== "revit-operator.assignment-kernel-publication/v2"
       || publication.assignment_id !== binding?.assignment_id
       || !Number.isSafeInteger(publication.assignment_version)
@@ -67,8 +72,8 @@ function assertCheckpointBinding(publication, goal) {
       || !bindingKeys.every(key => binding?.[key] != null
         && snapshot?.current_binding?.[key] === binding[key]
         && snapshot?.spec?.binding?.[key] === binding[key])
-      || !document || snapshot.current_binding.document_fingerprint !== document
-      || snapshot.spec.binding.document_fingerprint !== document
+      || !unboundTerminal && (!document || snapshot.current_binding.document_fingerprint !== document
+        || snapshot.spec.binding.document_fingerprint !== document)
       || (snapshot.provider_usage_hold?.hold_id ?? null) !== (goal._providerUsageHold?.hold_id ?? null)
       || (snapshot.execution_control?.command_id ?? null) !== (goal._executionControl?.command_id ?? null)
       || (snapshot.execution_control?.state ?? "running") !== (goal._executionControl?.state ?? "running")) {

@@ -460,6 +460,26 @@ function setup(effect: "apply" | "preview" = "apply", sessionId = "experiment", 
   const binding = createAssignmentKernelForGoalV2({ goal, run_id: "experiment-run" });
   return { goal, binding, state: () => getAssignmentKernelSnapshotV2(goal.id)! };
 }
+
+test('document-unbound terminal task can admit a fresh model-edit request in its existing chat',()=>fixture(false,()=>{
+ const goal=createGoal({title:'Export rooms',objective:'Export rooms to Excel without changing the model.',
+  acceptance_criteria:['Deliver the workbook'],status:'active',related_session_id:'export-chat',created_by:'local-host',
+  work_budget:{requested_effect:'read'}});
+ const binding=createAssignmentKernelForGoalV2({goal,run_id:'export-run'});
+ const s=settleAssignmentKernelExecutionFailureV2({binding,failure_id:'export-runtime',error_class:'runtime',phase:'response_handoff'}).snapshot;
+ assert.equal(s.current_binding.document_fingerprint,undefined);assert.equal(s.terminal,true);
+ const next={...binding,assignment_version:s.assignment_version,review_id:null,control_command_id:s.execution_control?.command_id??null};
+ assert.equal(assertNextChatRequest(next,getGoal(goal.id),'export-chat').goal.id,goal.id);
+ for(const patch of [{document_fingerprint:'invented'},{session_id:'foreign'},{assignment_version:0},{generation:99}])
+  assert.throws(()=>assertNextChatRequest({...next,...patch},getGoal(goal.id),'export-chat'));
+ const source='Create a room schedule in the active model.';
+ const fresh=startAutoGoalIfEligible({session_id:'export-chat',message_id:'schedule-request',user_text:source,tool_result_count:0,
+  source:'chat',created_by:'local-host',request_context:{ui:{next_request_after:next},revit:{document:{projectIdentity:{fingerprint:'current-model'}}}}})!;
+ assert.notEqual(fresh.id,goal.id);assert.equal(fresh.related_session_id,'export-chat');
+ assert.equal(fresh.work_budget!.previous_assignment_id,goal.id);assert.equal(fresh.work_budget!.requested_effect,'apply');
+ assert.equal(fresh.work_budget!.document_fingerprint,'current-model');
+ assert.deepEqual(getAssignmentKernelSnapshotV2(goal.id),s);
+}));
 function open(f: ReturnType<typeof setup>, id: string, effect: "read" | "apply" = "read", element = 11) {
   return openAssignmentKernelOperationV2({ snapshot: f.state(), provider_turn_id: "turn", controller_request_id: id,
     capability_id: "revit_call_tool", classified_effect: effect, target_tokens: [`id:${element}`],

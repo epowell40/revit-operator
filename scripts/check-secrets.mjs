@@ -87,6 +87,6 @@ export function checkTrackedSecrets(root,{execute=run,scanner=process.env.GITLEA
     }
   }
 }
-if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
+if(process.argv[1]&&samePath(fs.realpathSync(process.argv[1]),fs.realpathSync(fileURLToPath(import.meta.url)))){
   const result=checkTrackedSecrets(process.argv[2]||'.');console.log(result.message);process.exitCode=result.code;
 }
