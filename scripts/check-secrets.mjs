@@ -17,7 +17,9 @@ export function checkTrackedSecrets(root,{execute=run,scanner=process.env.GITLEA
   reviewedMatches=JSON.parse(fs.readFileSync(new URL('./secret-scan-reviewed-matches.json',import.meta.url),'utf8')).matches}={}){
   let temp;
   try{
-    root=path.resolve(root);
+    // A checkout root may be reached through a worktree directory junction.
+    // Canonicalize that root once; tracked-file links remain forbidden below.
+    root=fs.realpathSync(path.resolve(root));
     if(!Array.isArray(reviewedMatches)||reviewedMatches.length>500||reviewedMatches.some(r=>
       typeof r.file!=='string'||path.isAbsolute(r.file)||r.file.split('/').includes('..')
       ||!/^[a-z0-9-]{1,100}$/.test(r.rule)||!/^[a-f0-9]{64}$/.test(r.span_sha256)||typeof r.reason!=='string'||!r.reason.trim()))throw Error('reviewed matches');

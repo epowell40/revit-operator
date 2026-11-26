@@ -35,6 +35,21 @@ function fakeScanner(onScan,version=GITLEAKS_VERSION){
 }
 function clean(args){fs.writeFileSync(args[args.indexOf('--report-path')+1],'[]');return{status:0,stdout:''};}
 
+test('checkout-root junction is scanned while tracked-file links remain rejected',t=>{
+  const root=fixture(t),holder=fs.mkdtempSync(path.join(os.tmpdir(),'operator-scan-test-'));
+  const alias=path.join(holder,'checkout');
+  fs.symlinkSync(root,alias,process.platform==='win32'?'junction':'dir');
+  assert.equal(checkTrackedSecrets(alias,{execute:fakeScanner(clean)}).code,0);
+  const outside=path.join(holder,'outside');fs.mkdirSync(outside);
+  fs.writeFileSync(path.join(outside,'source.txt'),'ordinary source\n');
+  fs.symlinkSync(outside,path.join(root,'linked'),process.platform==='win32'?'junction':'dir');
+  t.after(()=>{fs.unlinkSync(alias);fs.unlinkSync(path.join(outside,'source.txt'));fs.rmdirSync(outside);fs.rmdirSync(holder);});
+  const execute=fakeScanner(clean);
+  const withLinkedListing=(binary,args,options)=>binary==='git'&&args.includes('ls-files')
+    ?{status:0,stdout:'100644 '+'a'.repeat(40)+' 0\tlinked/source.txt\0'}:execute(binary,args,options);
+  assert.equal(checkTrackedSecrets(alias,{execute:withLinkedListing}).code,2);
+});
+
 test('missing wrong-version failing and timed-out scanners never pass or echo their output',t=>{
   const root=fixture(t),marker='synthetic-do-not-print';
   for(const version of ['', '0.0.1'])assert.equal(checkTrackedSecrets(root,{execute:fakeScanner(clean,version)}).code,2);
