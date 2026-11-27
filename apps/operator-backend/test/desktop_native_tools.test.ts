@@ -256,3 +256,14 @@ for(const descriptionMode of ['invoke','direct','known','missing','large','gemin
   }
  });}finally{workspaceMcpRuntimes.delete(root);__closeForTests();for(const[k,v]of Object.entries(old)){if(v===undefined)delete process.env[k];else process.env[k]=v;}__testOnlyResetGoalListCache();}
 });
+
+test('native export discovery remains visible beside the direct C# executor without inventing absent tools',()=>{
+ const schema={type:'object',properties:{query:{type:'string'}}};
+ const program={name:'operator_run_dynamic_revit_program',description:'C#',inputSchema:{type:'object'},deferLoading:true};
+ const search={name:'revit_search_tools',description:'Search the native tool catalog',inputSchema:schema,deferLoading:true};
+ const invoke={name:'revit_call_tool',description:'Invoke a discovered native contract',inputSchema:{type:'object'},deferLoading:true};
+ const projected=desktopNativeModelTools([program,search,invoke]);
+ for(const tool of [search,invoke]){const found=projected.find(t=>t.name==='native__'+tool.name);assert.equal(found?.parameters,tool.inputSchema);assert.equal(found?.description,tool.description);}
+ assert.equal(desktopNativeModelTools([program]).some(t=>t.name==='native__revit_search_tools'),false);
+ assert.equal(desktopNativeModelTools([program]).some(t=>t.name==='native__revit_call_tool'),false);
+});

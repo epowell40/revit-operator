@@ -102,7 +102,7 @@ export function desktopNativeModelTools(tools:Tool[]) {
   // alias of the owner's existing evidence reader, in every execution turn.
   // Without the direct executor preserve the existing eager interface.
   const supplemental=new Set(['operator_evaluate_assignment_criteria','operator_retrieve_evidence']);
-  const result=tools.filter(tool=>(tool.deferLoading!==true||tool.name==='operator_run_dynamic_revit_program'||directExecutor&&tool.name==='operator_manage_work_plan')
+  const result=tools.filter(tool=>(tool.deferLoading!==true||tool.name==='operator_run_dynamic_revit_program'||directExecutor&&['operator_manage_work_plan','revit_search_tools','revit_call_tool'].includes(tool.name))
     &&!(directExecutor&&supplemental.has(tool.name))).map(tool=>({type:'function',name:PREFIX+tool.name,
     description:tool.description,parameters:tool.inputSchema,strict:false}));
   result.push({type:'function',name:PREFIX+'invoke',strict:false,

@@ -43,10 +43,12 @@ export interface LocalAdvisoryExecutionPolicyV1 {
 
 /** Product selection is explicit and separately authenticated. Legacy local
  * experiment provenance must never be relabelled as authenticated product work. */
-export interface SingleActorReviewExecutionPolicyV1 extends Omit<LocalAdvisoryExecutionPolicyV1,'mode'|'selected_by'> {
+export interface SingleActorReviewExecutionPolicyV1 extends Omit<LocalAdvisoryExecutionPolicyV1,'mode'|'selected_by'|'document_fingerprint'> {
   mode: 'single_actor_review_v1';
   selected_by: 'trusted_runtime_host';
   principal_id: string;
+  /** Desktop-only work has no Revit document. Native admission remains separate. */
+  document_fingerprint?: string;
 }
 export type AssignmentExecutionPolicyV1 = LocalAdvisoryExecutionPolicyV1 | SingleActorReviewExecutionPolicyV1;
 
@@ -90,7 +92,8 @@ export function validLocalAdvisoryPolicyV1(spec: AssignmentSpecV2): boolean {
       && policy.max_wall_clock_ms <= DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2.max_wall_clock_ms
     : policy.mode === 'local_advisory_v1' && policy.selected_by === 'trusted_local_host';
   return selectionValid
-    && policy.session_id === spec.binding.session_id && Boolean(policy.document_fingerprint)
+    && policy.session_id === spec.binding.session_id
+    && (Boolean(policy.document_fingerprint) || product && policy.document_fingerprint === undefined && spec.binding.document_fingerprint === undefined)
     && policy.document_fingerprint === spec.binding.document_fingerprint
     && sourceValid && bounded(policy.max_turns, 16) && bounded(policy.max_provider_calls, callCeiling)
     && (policy.ready_work_handoff === undefined

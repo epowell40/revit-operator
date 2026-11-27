@@ -21,6 +21,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 . "$PSScriptRoot\operator_desktop_guard.ps1"
 . "$PSScriptRoot\computer_drag.ps1"
+. "$PSScriptRoot\computer_pointer.ps1"
+. "$PSScriptRoot\native_readiness_obligation.ps1"
 . "$PSScriptRoot\native_owned_window_focus.ps1"
 
 # mouse_event carries a signed wheel delta in a DWORD. Numeric conversion of
@@ -244,12 +246,15 @@ function Get-OperatorNativeWindowHitTest {
 
 function Set-OperatorNativeCursorPosition {
   param([int]$PointX,[int]$PointY)
-  return [NativeInput]::SetCursorPos($PointX,$PointY)
+  Move-OperatorCursor -PointX $PointX -PointY $PointY
+  return $true
 }
 
 function Send-OperatorNativeLeftClick {
   # Called only after the shared exact-owned HTCAPTION check. A normal click,
   # not a foreground-lock bypass or a second click in the model canvas.
+  Assert-OperatorInputRunning
+  Save-OperatorNativeReadinessObligation -Window (Get-ForegroundWindowMetadata)
   [NativeInput]::mouse_event($mouseFlags.LeftDown, 0, 0, 0, [UIntPtr]::Zero)
   try { Start-Sleep -Milliseconds 50 }
   finally { [NativeInput]::mouse_event($mouseFlags.LeftUp, 0, 0, 0, [UIntPtr]::Zero) }
@@ -257,10 +262,14 @@ function Send-OperatorNativeLeftClick {
 
 function Assert-PointInputAllowed {
   param([int]$PointX,[int]$PointY)
-  return Assert-OperatorNativePointInput -PointX $PointX -PointY $PointY
+  Assert-OperatorInputRunning
+  $metadata=Assert-OperatorNativePointInput -PointX $PointX -PointY $PointY
+  Save-OperatorNativeReadinessObligation -Window $metadata
+  return $metadata
 }
 
 function Assert-ForegroundInputAllowed {
+  Assert-OperatorInputRunning
   $metadata = Get-ForegroundWindowMetadata
   if ($metadata.isOperatorDesktopController) {
     Throw-ControllerInputBlocked -Target "foreground" -Window $metadata
@@ -268,6 +277,7 @@ function Assert-ForegroundInputAllowed {
   if ($ExpectedRevitProcessId -gt 0 -and (!$metadata.available -or $metadata.processId -ne $ExpectedRevitProcessId -or $metadata.processName -ne 'Revit')) {
     throw 'NATIVE_INTERACTIVE_REQUIRES_EXACT_REVIT_WINDOW'
   }
+  Save-OperatorNativeReadinessObligation -Window $metadata
   return $metadata
 }
 
@@ -506,20 +516,20 @@ switch ($Action) {
   }
   "move" {
     Assert-PointInputAllowed -PointX $X -PointY $Y | Out-Null
-    [NativeInput]::SetCursorPos($X, $Y) | Out-Null
+    Move-OperatorCursor -PointX $X -PointY $Y
     break
   }
   "click" {
     if (Invoke-OperatorNativeCaptionActivation -PointX $X -PointY $Y -MouseButton $Button) { break }
     Assert-PointInputAllowed -PointX $X -PointY $Y | Out-Null
-    [NativeInput]::SetCursorPos($X, $Y) | Out-Null
+    Move-OperatorCursor -PointX $X -PointY $Y
     Start-Sleep -Milliseconds 50
     Invoke-MouseClick -MouseButton $Button -PointX $X -PointY $Y
     break
   }
   "double_click" {
     Assert-PointInputAllowed -PointX $X -PointY $Y | Out-Null
-    [NativeInput]::SetCursorPos($X, $Y) | Out-Null
+    Move-OperatorCursor -PointX $X -PointY $Y
     Start-Sleep -Milliseconds 50
     Invoke-MouseClick -MouseButton $Button -PointX $X -PointY $Y
     Start-Sleep -Milliseconds 100
@@ -528,7 +538,7 @@ switch ($Action) {
   }
   "scroll" {
     Assert-PointInputAllowed -PointX $X -PointY $Y | Out-Null
-    [NativeInput]::SetCursorPos($X, $Y) | Out-Null
+    Move-OperatorCursor -PointX $X -PointY $Y
     Start-Sleep -Milliseconds 50
     Assert-PointInputAllowed -PointX $X -PointY $Y | Out-Null
     [NativeInput]::mouse_event($mouseFlags.Wheel, 0, 0, (ConvertTo-OperatorMouseWheelData -Delta $ScrollY), [UIntPtr]::Zero)
@@ -538,7 +548,11 @@ switch ($Action) {
     Assert-ForegroundInputAllowed | Out-Null
     $text = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($TextBase64))
     Assert-ForegroundInputAllowed | Out-Null
-    [System.Windows.Forms.SendKeys]::SendWait((Escape-SendKeysText -Text $text))
+    $characters=[Globalization.StringInfo]::GetTextElementEnumerator($text)
+    while($characters.MoveNext()) {
+      Assert-ForegroundInputAllowed | Out-Null
+      [System.Windows.Forms.SendKeys]::SendWait((Escape-SendKeysText -Text $characters.GetTextElement()))
+    }
     break
   }
   "keypress" {

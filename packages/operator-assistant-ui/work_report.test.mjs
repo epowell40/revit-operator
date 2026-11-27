@@ -47,7 +47,7 @@ test("long desktop reports have a concise unverified summary and lossless Detail
  const report=retainedWorkReportMessage({name:"report_work_for_review"},{output:JSON.stringify({ok:true,verification_policy:"advisory",completion_proposal:{...proposal,verified:false,review_id:"review"}})});
  assert.ok(report.includes("## Details"));
  const [summary,details]=report.split("## Details");
- assert.ok(summary.length<800);assert.match(summary,/not independently verified/);
+ assert.ok(summary.length<800);assert.match(details,/not independently verified/);
  assert.match(summary,/Work reported: 2 items in Details/);assert.ok(!summary.includes("Changed M002."));
  assert.match(summary,/Remaining work: Review the titleblock layout/);assert.match(summary,/Uncertainties: Whole-project scope was not checked/);
  for(const item of Object.values(proposal).flat())assert.ok(details.includes(item));
@@ -116,4 +116,19 @@ test('host-scoped report presentation appears once and cannot attach to a differ
  const render=()=>retainedWorkReportMessage({name:'report_work_for_review'},{output:JSON.stringify(result)});
  assert.equal(render(),'Changed the property. Verified in Revit.\n\n## Details\n\n1 model change verified by current native readback.');
  result.report_presentation.review_id='other';assert.match(render(),/not independently verified/);
+});
+
+test('desktop-only written report without a document uses one retained proposal and no strict writing callback',async()=>{
+ const calls=[];let retained=0;
+ const p={claimed_completed:['Opened Notepad and checked the requested text.'],remaining_work:[],uncertainties:[],written_findings:'Opened Notepad with the requested text; left it unsaved.'};
+ const result=await submitWorkReportForReview(binding,p,async(route,options)=>{
+  const body=JSON.parse(options.body);calls.push(body);
+  if(body.action==='status')return {ok:true,outcome:'active',verification_policy:'advisory'};
+  return {ok:true,verification_policy:'advisory',completion_proposal:{...body.completion_proposal,verified:false,review_id:'desktop-report'}};
+ },{retainWrittenFindings:()=>{retained++;throw Error('strict-only');}});
+ assert.equal(calls.length,2);assert.equal(retained,0);assert.equal(calls[1].document_fingerprint,undefined);
+ assert.equal(calls[1].completion_proposal.user_facing_text,p.written_findings);
+ const text=retainedWorkReportMessage({name:'report_work_for_review'},{output:JSON.stringify(result)});
+ assert.match(text,/Opened Notepad with the requested text; left it unsaved/);
+ assert.equal(result.completion_proposal.verified,false);
 });

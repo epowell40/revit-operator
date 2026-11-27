@@ -15,6 +15,12 @@ public static class NativeInput {
 '@
 . "$PSScriptRoot/computer_drag.ps1"
 function Start-Sleep { param([int]$Milliseconds) }
+function Move-OperatorCursor {
+ param([int]$PointX,[int]$PointY,[scriptblock]$ValidateStep,[int]$MinDuration,[int]$MaxDuration)
+ # This suite checks the retained vertices and release topology. Interpolation
+ # and cancellation between vertices have their own production-helper suite.
+ if (![NativeInput]::SetCursorPos($PointX,$PointY)) { throw 'positioning failed' }
+}
 function Get-MouseButtonFlagPair { param([string]$MouseButton) return @{Down=2;Up=4} }
 $script:blockedX = [int]::MinValue
 $script:lateBlockX = [int]::MinValue
@@ -65,7 +71,7 @@ Expect-Failure { Invoke-OperatorDrag -Points $points -Button left } 'controller 
 Check ([NativeInput]::Calls.Count -eq 0) 'Preflight guard must precede all input.'
 Reset-FakeInput; $script:lateBlockX=883
 Expect-Failure { Invoke-OperatorDrag -Points $points -Button left } 'controller blocked'
-Check (([NativeInput]::Calls -join '|') -ceq 'move:872,766|button:2|move:872,766|button:4') 'Late guard failure must restore and release exactly once.'
+Check (([NativeInput]::Calls -join '|') -ceq 'move:872,766|button:2|button:4') 'Late guard failure must release exactly once without moving after takeover.'
 Reset-FakeInput; [NativeInput]::FailX=883
 Expect-Failure { Invoke-OperatorDrag -Points $points -Button left } 'positioning failed'
 Check ([NativeInput]::Calls[-1] -eq 'button:4') 'Failed move must release the mouse.'

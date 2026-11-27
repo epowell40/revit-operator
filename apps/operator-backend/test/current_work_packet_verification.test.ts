@@ -42,6 +42,21 @@ test('checked simple edits have concise results and native checks in Details wit
  assert.equal(s.completion_proposal!.verified,false);
  assert.equal(JSON.stringify(s),before,'Presentation must not change task outcome or evidence.');
 });
+test('file-only export reports do not invent model edits or duplicate qualifications',()=>{
+ const s=fixture();s.operations.apply!.request_identity!.path='/revit/export-elements-xlsx';
+ s.operations.apply!.verification_operation_ids=[];
+ s.completion_proposal={review_id:'export',verified:false,claimed_completed:['Exported 78 room rows.'],remaining_work:[],
+  uncertainties:['Two rooms have unset Area and Volume source values.'],
+  user_facing_text:'Created the workbook with 78 room rows. Two rooms have missing measurements, flagged in the Issues sheet.'}as any;
+ const before=JSON.stringify(s),p=workReportPresentation(s)!;
+ assert.equal(p.applied_edit_count,0);assert.equal(p.checked_edit_count,0);
+ assert.doesNotMatch(p.summary,/model changes|Notes:|not independently verified/);
+ assert.match(p.summary,/1 additional note in Details/);assert.match(p.details,/unset Area and Volume/);
+ assert.equal(JSON.stringify(s),before);
+ s.unresolved_unknown_operation_ids=['apply'];assert.match(workReportPresentation(s)!.summary,/needs reconciliation/);
+ s.unresolved_unknown_operation_ids=[];s.operations.apply!.request_identity!.path='/revit/schedules';
+ assert.match(workReportPresentation(s)!.summary,/model changes still need checking/);
+});
 test('current native proof is passed in both packet rows and overall trust',()=>{
  const s=fixture();assert(checkedEditIsCurrentV2(s,'apply'));assert.equal(action(s).state,'passed');assert.equal(action(s,'read').state,'passed');
  assert.equal(packetOverallTrustV2(s),'independently_verified');

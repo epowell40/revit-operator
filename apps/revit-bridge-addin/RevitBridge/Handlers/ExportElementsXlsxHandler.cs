@@ -117,10 +117,12 @@ namespace RevitBridge.Handlers
                 new object?[] { "Supplemental tables", "Optional input transcriptions, proposed quantities and review tables are assistant-authored. Their supplied values and calculations are not native model facts or verified engineering results. Native identity columns are filled by Revit; each table includes every selected element once. This does not prove that the original task scope was fully selected." },
                 new object?[] { "Model changes", "No Revit transaction or model edit is performed." }
             };
-            var workbookSheets = new[] { new OperatorWorkbookWriter.Sheet("Elements", rows), new OperatorWorkbookWriter.Sheet("Issues", issues), new OperatorWorkbookWriter.Sheet("Readme", readme) }.Concat(supplemental).ToArray();
+            readme.Add(new object?[] { "Table", "The first sheet contains only the requested parameters, in request order, with units in headings. Blank cells refer to Issues. Mixed units use the original formatted value; Elements retains typed values, exact units and native identities. Unbounded Height is a vertical room limit, not a measured ceiling height." });
+            var table = OperatorWorkbookPresentation.Build(names, rows);
+            var workbookSheets = new[] { table, new OperatorWorkbookWriter.Sheet("Elements", rows), new OperatorWorkbookWriter.Sheet("Issues", issues), new OperatorWorkbookWriter.Sheet("Readme", readme) }.Concat(supplemental).ToArray();
             if (p.dryRun == true) return Task.FromResult<object>(new { status = "Dry Run", ok = true, dryRun = true, path = full,
                 selectedCount = ids.Count, selectedElementIds = ids, parameterNames = names, parameterCount = names.Count, issueCount = issues.Count - 1, issueCounts, columns = headers,
-                supplementalTables = supplementalSummary, preview = rows.Take(4).ToArray(), artifact_receipt = OperatorNativeArtifactReceipt.Preview(new[] { full }, 1, Route) });
+                supplementalTables = supplementalSummary, preview = rows.Take(4).ToArray(), tablePreview = table.Rows.Take(4).ToArray(), artifact_receipt = OperatorNativeArtifactReceipt.Preview(new[] { full }, 1, Route) });
             var capture = new OperatorNativeArtifactCapture(new[] { full }, 1, Route);
             OperatorWorkbookWriter.Write(full, workbookSheets);
             capture.RecordNativeExport(true);

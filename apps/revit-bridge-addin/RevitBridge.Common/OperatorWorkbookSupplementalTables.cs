@@ -35,7 +35,7 @@ namespace RevitBridge.Common
                 || selected.Select(row => row.ElementId).Distinct().Count() != selected.Count
                 || selected.Any(row => row.ElementId <= 0 || string.IsNullOrWhiteSpace(row.UniqueId)))
                 throw new ArgumentException("Provide at most four supplemental tables bound to a complete selected native population.");
-            var sheetNames = new HashSet<string>(new[] { "Elements", "Issues", "Readme" }, StringComparer.OrdinalIgnoreCase);
+            var sheetNames = new HashSet<string>(new[] { "Table", "Elements", "Issues", "Readme" }, StringComparer.OrdinalIgnoreCase);
             var native = selected.ToDictionary(row => row.ElementId);
             var output = new List<OperatorWorkbookWriter.Sheet>();
             var totalCells = 0;
@@ -46,7 +46,7 @@ namespace RevitBridge.Common
                 var name = (table.name ?? "").Trim();
                 if (name.Length < 1 || name.Length > 31 || name.IndexOfAny("[]:*?/\\".ToCharArray()) >= 0
                     || name.StartsWith("'", StringComparison.Ordinal) || name.EndsWith("'", StringComparison.Ordinal) || !sheetNames.Add(name))
-                    throw new ArgumentException("Supplemental sheet names must be unique Excel names and cannot replace Elements, Issues or Readme.");
+                    throw new ArgumentException("Supplemental sheet names must be unique Excel names and cannot replace Table, Elements, Issues or Readme.");
                 System.Xml.XmlConvert.VerifyXmlChars(name);
                 if (table.contentKind != "user_input_transcription" && table.contentKind != "assistant_proposal" && table.contentKind != "review")
                     throw new ArgumentException("contentKind must be user_input_transcription, assistant_proposal or review. None establishes native or engineering truth.");

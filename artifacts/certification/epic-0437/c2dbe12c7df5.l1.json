@@ -1012,7 +1012,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/desktop_execution_guidance.ts",
-      "sha256": "sha256:661e78e591b630b2c065551c816178039bb16ede72d9bf827f7a7cb0b2b4674a"
+      "sha256": "sha256:251434d148397fadd11b0669bc63d8906a1a1baa12417e2ec22275216def572a"
     },
     {
       "path": "apps/operator-backend/src/assignments/desktop_executor_owner.ts",
@@ -1024,7 +1024,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/desktop_native_tools.ts",
-      "sha256": "sha256:3ea4561cdc0c332095c29db2551e1038fa5e585d7085e20fdd50ee7ab56cbff1"
+      "sha256": "sha256:35316f610092466ea89ae9508553705deac43926072eff0ea4910318438af51a"
     },
     {
       "path": "apps/operator-backend/src/assignments/desktop_native_transport_policy.ts",
@@ -1167,6 +1167,10 @@
       "sha256": "sha256:095c89d4c1a240217f198d7e4e6be7197dfb7b41bb4e211c4ec5d09453bd51dc"
     },
     {
+      "path": "apps/operator-backend/src/assignments/report_verified_refinement.ts",
+      "sha256": "sha256:b080dea0e0cc89fa0b607bc44cbb64f19fe36d245a36fe125450a4d343cd570d"
+    },
+    {
       "path": "apps/operator-backend/src/assignments/saved_copy_handoff_v2.ts",
       "sha256": "sha256:59d1523a0f6099e46d575cd2324fa3c32a6fbbcde367f9a13ea92f683078871f"
     },
@@ -1220,7 +1224,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/task_review_policy.ts",
-      "sha256": "sha256:25e1f2ff5b7671398459a49237b8631de1788857f8aef9299fb2f575d432d3c1"
+      "sha256": "sha256:dc2f78a9f7ceaf30ffb7d6adc1d9feeb0e8b97579fd7b493b39fa6dd393fb206"
     },
     {
       "path": "apps/operator-backend/src/assignments/task_steering.ts",
@@ -1268,7 +1272,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/work_report_presentation.ts",
-      "sha256": "sha256:7f761067859d69493cdfcc2844e628463180ed160ae5d7b1d787e1c1854e9d27"
+      "sha256": "sha256:6b7e739a55232405aaf1472c65ef2ab229bdfa70905b92bd966e36bef68bd8fc"
     },
     {
       "path": "apps/operator-backend/src/assignments/work_review_handoff.ts",
@@ -3061,7 +3065,7 @@
     },
     {
       "path": "apps/operator-backend/src/desktop_computer.ts",
-      "sha256": "sha256:a6e73d48a2acb195fdd30d73583ae516fcafc1fa57c6a59da32a71fe42e6b9f4"
+      "sha256": "sha256:9077d79d1b91a80270d67608b25da78742f1106b117197c97fa5b4fc9c78c22e"
     },
     {
       "path": "apps/operator-backend/src/desktop_image_delivery.ts",
@@ -3077,7 +3081,7 @@
     },
     {
       "path": "apps/operator-backend/src/desktop_response_store.ts",
-      "sha256": "sha256:dee0b0dd86ff423d62397ee8b086264c4058ce82b4a76ff31e76aa71bc7717db"
+      "sha256": "sha256:7019dfbe011d4338a896e428e606922dcca4a83e58e54b4b09f641e9a0c22f3e"
     },
     {
       "path": "apps/operator-backend/src/deterministic/aec_level_identity.ts",
@@ -3205,7 +3209,7 @@
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/execution_policy.ts",
-      "sha256": "sha256:77a1a6a78da7cf49a43376b99ab28050e83e255e9e9dd12ef69845eb667a23a5"
+      "sha256": "sha256:11bbc7bf48564188c5aac5475348da561dd5c84af7b45c6e67fb4d10dfd67a56"
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/family_capacity_retry.ts",
@@ -5153,7 +5157,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_progress_controller.test.ts",
-      "sha256": "sha256:af216c7dec390247200a85af3e026554cada1fc44e2cda63d5808c24e8a2bdb7"
+      "sha256": "sha256:326af8b61becf8e3008290d5a50263cd7b3a9df579746d20d59700c718b23290"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_provider_failure.test.ts",
@@ -5665,7 +5669,7 @@
     },
     {
       "path": "apps/operator-backend/test/current_work_packet_verification.test.ts",
-      "sha256": "sha256:74538451a86940a719e10fc0f6ca39f90c2c6e90bf503df1ed3d99bd190ca2c2"
+      "sha256": "sha256:7e40ec7146f4bbd6a2f8cbc71ff3e9251dc0ec0c17e5cb67c22f63d4bc4f70f0"
     },
     {
       "path": "apps/operator-backend/test/deferred_proposal_admission.test.ts",
@@ -5701,7 +5705,7 @@
     },
     {
       "path": "apps/operator-backend/test/desktop_compaction.test.ts",
-      "sha256": "sha256:0e9b451f4238d578366503b5440dad820f7443b234bd7f945a728b07a5e3053a"
+      "sha256": "sha256:68753114a64aa97084b8c4fcab90123993356632fefc3cc59f7b1ae3c0524066"
     },
     {
       "path": "apps/operator-backend/test/desktop_computer_telemetry.test.ts",
@@ -5733,7 +5737,7 @@
     },
     {
       "path": "apps/operator-backend/test/desktop_durable_window.test.ts",
-      "sha256": "sha256:14202d7fc8dc606040d410a28bd10e70f26602d16e3abb55d9cd112a507b4dc9"
+      "sha256": "sha256:dc1da46c1f502dce07ae7c40ad0b218c004c1093d188b0969aada862975def03"
     },
     {
       "path": "apps/operator-backend/test/desktop_durable_window_relay.test.ts",
@@ -5785,7 +5789,7 @@
     },
     {
       "path": "apps/operator-backend/test/desktop_native_tools.test.ts",
-      "sha256": "sha256:c38b1172c72a2d08372abfc3313ba257c00a75198d1416aada61806350655146"
+      "sha256": "sha256:e17a987c99c897479d58db9edb625cd4208127dfe55bdf6014533d8b061b22e8"
     },
     {
       "path": "apps/operator-backend/test/desktop_observation_replay.test.ts",
@@ -7557,7 +7561,7 @@
     },
     {
       "path": "apps/operator-backend/test/native_program_effect_postcondition_v2.test.ts",
-      "sha256": "sha256:73d90ceca16ae73d9af96997728123324a5434ef28964207c1a2e09654c88187"
+      "sha256": "sha256:b58e00d25d8a2ce23c8669eeb56a50813e9b02d33301249168124e104376b680"
     },
     {
       "path": "apps/operator-backend/test/native_program_parameter_postcondition_v2.test.ts",
@@ -8261,7 +8265,7 @@
     },
     {
       "path": "apps/operator-backend/test/task_review_policy.test.ts",
-      "sha256": "sha256:e09d213555dd3a387fca60ba5a5d1e867b104c2e90f92da909efac8836023e05"
+      "sha256": "sha256:bbf9fffac9377a4b032de858c2a837c40a3b1d1c00010dd34417ad7cbdacd185"
     },
     {
       "path": "apps/operator-backend/test/task_steering.test.ts",
@@ -9516,6 +9520,10 @@
       "sha256": "sha256:2d5438f28d4af5e923ab9b11c76152d80443c46a60c9e40cf489f924ee7c6030"
     },
     {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorWorkbookPresentationTests.cs",
+      "sha256": "sha256:990c7f011ff612acc550215b4dc873e0fc3e79ed3f267996489c93fcb7010ce3"
+    },
+    {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorWorkbookSupplementalTablesTests.cs",
       "sha256": "sha256:b6b354469c529feb6187998b25250aae8ee4a75c771835a5729c47facc283c7f"
     },
@@ -10701,8 +10709,12 @@
       "sha256": "sha256:a020099a8b80530308fe34c36f290ec884b96a8854e92e8de318c74521eba55c"
     },
     {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorWorkbookPresentation.cs",
+      "sha256": "sha256:3aeaf4f98591043264e8ad9601e0548c62cf1937e3ed0c4563fed2718c4c1d9b"
+    },
+    {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorWorkbookSupplementalTables.cs",
-      "sha256": "sha256:17811b72cbeca61536624918f0a346d17547320a59b6ef5b69fc78e5135ac834"
+      "sha256": "sha256:bc60ce4cf4a6d46e65f9ddf2a69f4e72d8a62bae84d0e45e9376a4d07ab426a4"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorWorkbookWriter.cs",
@@ -12110,7 +12122,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ExportElementsXlsxHandler.cs",
-      "sha256": "sha256:314f2dd15504a87dc99ba00dda146f72962027b9c1d5878336d4afd945b90593"
+      "sha256": "sha256:f684e97c0296b83b3d6b44985e4914492288b3ec10244272d9821a2f2dc76fe2"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ExportIfcHandler.cs",
@@ -12821,7 +12833,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:de44568fb94030cbc25bef43a0a2c0593926cb98035b5f8d1e66e6b98aec7c9a",
+  "inputs_hash": "sha256:16062b4fb313547fb206be756cfa41e67b8287f9774321934c8e938d3b98a5fb",
   "result": {
     "passed": true,
     "checks": [

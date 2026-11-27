@@ -1576,6 +1576,19 @@ test("advisory handoff with no completed work does not invent success or certain
   assert.equal(snapshot.terminal, false); assert.equal(snapshot.completion_proposal!.verified, false);
 });
 
+test("file export closeout retains notes without claiming an unchecked model edit", () => {
+  const snapshot = structuredClone(advisoryHandoffJournal({claimed_completed:["Exported 78 rooms."],remaining_work:[],
+    uncertainties:["Two rooms have unset measurements."]}).snapshot());
+  (snapshot.operations as any).export = {operation_id:"export",requested_effect:"apply",persistent_effect:"applied",
+    request_identity:{method:"POST",path:"/revit/export-elements-xlsx"},verification_operation_ids:[]};
+  (snapshot.completion_proposal as any).user_facing_text = "Created the room workbook; missing values are flagged in Issues.";
+  const before=JSON.stringify(snapshot), message=finalCodexAssignmentMessageV2(snapshot,"Everything is certified.");
+  const summary=message.split("\n\n## Details\n\n")[0]!;
+  assert.match(summary,/Created the room workbook/);assert.match(summary,/1 additional note in Details/);
+  assert.doesNotMatch(summary,/model changes still need checking|Everything is certified|Notes:/);
+  assert.match(message,/Two rooms have unset measurements/);assert.equal(JSON.stringify(snapshot),before);
+});
+
 test("advisory handoff cannot hide unknown effects, Pause, failure, budget, missing input or unsettled work", () => {
   const snapshot = advisoryHandoffJournal({ claimed_completed: ["Prepared the draft."], remaining_work: [], uncertainties: [] }).snapshot();
   const cases: [string, Record<string, unknown>, RegExp][] = [

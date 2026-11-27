@@ -12,7 +12,7 @@ import { computerDragArguments, summarizeComputerDrag } from './computer_drag.mj
 import { nonAllowlistedShellCommandMessage } from './shell_command_diagnostic.mjs';
 import { WORK_REPORT_TOOL, submitWorkReportForReview, retainedWorkReportMessage, nativeStoppedWorkReportMessage, assertDesktopHandoffNativeReady, missingWorkReportContinuation, retainedRetrievalStallContinuation, retainedDraftingProgressContinuation, retainedExecutionReserveContinuation, retainOwnerWrittenFindings, ownerWrittenFindingsReceipt, ownerWrittenFindingsMessage } from "./work_report.mjs";
 import {CANONICAL_NATIVE_TASK_GUIDANCE, requireTrackedNativeTask} from './native_task_routing.mjs';
-import { createDesktopReadinessObligation } from "./desktop_readiness_obligation.mjs";
+import { createDesktopReadinessObligation, desktopReadinessFilename } from "./desktop_readiness_obligation.mjs";
 import { compareNativeChangeObservations, nativeChangeObservationCursor, sameNativeChangeCursorBinding, nativeChangeObservationFromContext, nativeChangeFeedbackModelOutput } from "./native_change_observations.mjs";
 import {buildNativeCodeReviewPacket,reviewExecutedCode,nativeCodeReviewModelOutput,canonicalNativeCodeReviewReceipts,readExecutedCode,nativeCodeSourceModelOutput,NATIVE_CODE_SOURCE_TOOL,captureNativeCodeReviewStart,bindNativeCodeReviewStart} from './native_code_review.mjs';
 import {canonicalReviewTaskContext} from './review_task_context.mjs';
@@ -54,6 +54,7 @@ import { confirmNativeViewActivation, focusNativeReviewTarget, nativeViewActivat
 import { createBrowserAssetFreshness } from "./browser_asset_freshness.js";
 import express from "express";
 import fs from "node:fs";
+import {operatorArtifactOpenPath} from './artifact_open_path.mjs';
 import path from "node:path";
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -2986,10 +2987,14 @@ async function requestComputerResponse(body, options = {}) {
 }
 
 async function runDesktopScript(args) {
+  const input = !['screenshot','review_screenshot','review_native_read_admission','guard_check','cancel_native_placement'].includes(args[args.indexOf('-Action')+1]);
+  if (input && computerState.stopRequested) throw new Error('Stopped by user.');
   const { stdout } = await execFileAsync(
     POWERSHELL_BIN,
     ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", DESKTOP_SCRIPT, ...args],
-    { maxBuffer: 1024 * 1024 * 25 }
+    { maxBuffer: 1024 * 1024 * 25, windowsHide:true,
+      env:{...process.env,OPERATOR_INPUT_STOP_EVENT:computerControlIndicator.inputStopEvent(),
+        OPERATOR_NATIVE_READINESS_FILE:input?desktopReadinessObligation().filename:''} }
   );
   return stdout.trim();
 }
@@ -4996,7 +5001,7 @@ function resetComputerProgress() {
   };
 }
 
-const computerControlIndicator = createComputerControlIndicator(() => computerState);
+const computerControlIndicator = createComputerControlIndicator(() => computerState,{onStop:()=>requestComputerStop()});
 function updateComputerProgress(patch = {}) {
   computerState.progress = {
     ...computerState.progress,
@@ -12144,6 +12149,8 @@ function documentsFolder() {
 function localPathFromOpenRequest(value) {
   const raw = `${value || ""}`.trim();
   if (!raw) return "";
+  const artifact=operatorArtifactOpenPath(raw,workspaceRoot());
+  if(artifact)return artifact;
   if (/^file:\/\//i.test(raw)) {
     return fileURLToPath(raw);
   }
@@ -13232,11 +13239,11 @@ async function executeFunctionToolCallSafely(toolCall) {
 }
 
 function desktopReadinessObligation() {
-  return createDesktopReadinessObligation(path.join(workspaceRoot(), "desktop-native-readiness-required.json"));
+  return createDesktopReadinessObligation(desktopReadinessFilename(workspaceRoot(),computerState.sidecarAssignment));
 }
 
 function desktopHandoffReadinessRequired() {
-  return computerState.desktopInputDispatched || desktopReadinessObligation().required();
+  return Boolean(computerState.nativeInteractivePlacement) || desktopReadinessObligation().required();
 }
 
 async function assertComputerActionControl(options = {}) {
@@ -13366,7 +13373,8 @@ async function executeComputerAction(action) {
 
   // Mark before dispatch: input failure does not prove no desktop effect occurred.
   if (["click", "double_click", "scroll", "type", "keypress", "drag"].includes(action.type)) {
-    desktopReadinessObligation().beforeInput();
+    // The input host persists readiness immediately before input to Revit (or
+    // an unidentified target). An Outlook-only task needs no Revit response.
     computerState.desktopInputDispatched = true;
   }
 
@@ -15034,8 +15042,9 @@ function interruptPausedComputerOwner(result, command) {
   if (!acknowledgedComputerPause(result,command,binding)) return false;
   computerState.controlFailureReason="desktop_assignment_paused";
   computerState.stopRequested=true;
-  // This interrupts the provider wait only. Native execution already admitted
-  // by the host settles normally; its effect/usage ledger is never cleared.
+  computerControlIndicator.latchStop();
+  // Stop incremental desktop input as well as the provider wait. Admitted
+  // native execution settles normally; its effect/usage ledger is not cleared.
   try { computerState.activeAbortController?.abort(); } catch {}
   updateComputerProgress({phase:"stopping",currentAction:"Pause requested; waiting for admitted work to settle."});
   addComputerEvent("Canonical Pause acknowledged. Keeping this assignment and its saved work for Resume.");
@@ -15922,6 +15931,8 @@ app.post("/api/open-path", async (req, res) => {
     if (!fs.existsSync(resolvedPath)) {
       return sendJsonError(res, "path not found.", 404);
     }
+    if(!canOpenLocalPath(await fs.promises.realpath(resolvedPath)))
+      return sendJsonError(res, 'Resolved path is outside allowed Operator output folders.', 403);
     const stat = fs.statSync(resolvedPath);
     if (!stat.isDirectory() && path.extname(resolvedPath).toLowerCase() === '.rvt') {
       const opened = await openSavedRevitModel(resolvedPath);
@@ -16186,13 +16197,8 @@ app.post("/api/computer/run", async (req, res) => {
       computerState.restoreProviderContext = false;
     } catch (error) { return sendJsonError(res, error, 409); }
   }
-  if (freshConversation && desktopHandoffReadinessRequired()) {
-    try {
-      assertDesktopHandoffNativeReady(await checkRevitBridgeHealth());
-    } catch (error) {
-      return sendJsonError(res, error, 409);
-    }
-  }
+  // Admission and the exact-owned interactive release below retain pending
+  // effects. A completed prior task's readiness marker is not a new-task gate.
   // Reset only the idle relay, never the persisted prior assignment or its effects.
   try { await releaseIdleNativeInteractiveContinuity(); }
   catch(error){return sendJsonError(res,error,409);}
@@ -16466,11 +16472,12 @@ app.post("/api/computer/run", async (req, res) => {
   });
 });
 
-app.post("/api/computer/stop", (_req, res) => {
+function requestComputerStop() {
   const backendSessionId = `${computerState.backendSessionId || ""}`.trim();
   const backendMessageId = `${computerState.backendMessageId || ""}`.trim();
   computerState.stopRequested = true;
   computerState.controlFailureReason = null;
+  computerControlIndicator.latchStop();
   try { computerState.activeAbortController?.abort(); } catch {}
   const activeComputerReadRun = activeComputerRunCertifiedRead.run;
   if (activeComputerReadRun && CERTIFIED_READ_BUSY_LIFECYCLES.has(certifiedReadUiState.lifecycle)) {
@@ -16481,7 +16488,6 @@ app.post("/api/computer/stop", (_req, res) => {
     currentAction: "Stop requested by user"
   });
   addComputerEvent("Stop requested by user.");
-  res.json({ ok: true });
   if (backendSessionId && backendMessageId) {
     const stopBackendLoop = computerRunTestHooks?.stopBackendLoop || (async () => {
       await readBackendJson("/loop/stop", {
@@ -16497,6 +16503,10 @@ app.post("/api/computer/stop", (_req, res) => {
       .then(() => addComputerEvent("Active RevitOperator backend turn cancellation acknowledged."))
       .catch((error) => addComputerEvent(`Backend turn cancellation could not be confirmed: ${trimToolText(error instanceof Error ? error.message : String(error), 240)}`));
   }
+}
+app.post("/api/computer/stop", (_req, res) => {
+  requestComputerStop();
+  res.json({ ok: true });
 });
 
 app.post("/api/computer/interject", (req, res) => {

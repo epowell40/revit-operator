@@ -43,7 +43,7 @@ function Invoke-OperatorDrag {
   $start = $Points[0]
   $mouseDown = $false
   $dragFailure = $null
-  if (-not [NativeInput]::SetCursorPos($start.x, $start.y)) { throw 'Drag cursor positioning failed.' }
+  Move-OperatorCursor -PointX $start.x -PointY $start.y
   Start-Sleep -Milliseconds 50
   Assert-PointInputAllowed -PointX $start.x -PointY $start.y | Out-Null
   try {
@@ -54,7 +54,8 @@ function Invoke-OperatorDrag {
     for ($i = 1; $i -lt $Points.Count; $i++) {
       $p = $Points[$i]
       Assert-PointInputAllowed -PointX $p.x -PointY $p.y | Out-Null
-      if (-not [NativeInput]::SetCursorPos($p.x, $p.y)) { throw 'Drag cursor positioning failed.' }
+      $maximum=650;if($Points.Count -gt 2){$maximum=60}
+      Move-OperatorCursor -PointX $p.x -PointY $p.y -MinDuration 16 -MaxDuration $maximum -ValidateStep {param($x,$y) Assert-PointInputAllowed -PointX $x -PointY $y}
       Start-Sleep -Milliseconds 20
       Assert-PointInputAllowed -PointX $p.x -PointY $p.y | Out-Null
     }
@@ -63,7 +64,7 @@ function Invoke-OperatorDrag {
     Assert-PointInputAllowed -PointX $end.x -PointY $end.y | Out-Null
   } catch {
     $dragFailure = $_
-    try { [NativeInput]::SetCursorPos($start.x, $start.y) | Out-Null } catch { }
+    # Do not move the pointer back after takeover. Release at its current point.
   } finally {
     if ($mouseDown) {
       try { [NativeInput]::mouse_event($flags.Up, 0, 0, 0, [UIntPtr]::Zero) }

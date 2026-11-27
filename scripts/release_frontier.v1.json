@@ -1,6 +1,9 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "native_program_effect_postcondition_v2.test.ts",
+    "desktop_compaction.test.ts",
+    "desktop_durable_window.test.ts",
     "new_document_handoff.test.ts",
     "native_lifecycle_contract.test.ts",
     "registered_reference_intake.test.ts",
@@ -547,6 +550,7 @@
     "OperatorActiveIdleLeaseTests",
     "OperatorProactivityLifecycleContractTests",
     "OperatorWorkbookWriterTests",
+    "OperatorWorkbookPresentationTests",
     "ExportedRasterFrameGeometryTests",
     "MepDuctProfilePolicyTests",
     "MepDuctTypeSelectionPolicyTests",
@@ -653,6 +657,10 @@
     "OperatorDeletedTypeContextTests"
   ],
   "failure_families": [
+    {"id":"verified_refinement_report_preserves_historical_proof_and_unchecked_warnings", "coverage":["backend:native_program_effect_postcondition_v2.test.ts","backend:current_work_packet_verification.test.ts"]},
+    {"id":"desktop_screenshot_transport_compaction", "coverage":["backend:desktop_compaction.test.ts","backend:desktop_durable_window.test.ts"]},
+    {"id":"canonical_pause_interrupts_typing_and_export_discovery", "coverage":["backend:desktop_native_tools.test.ts","javascript:app/operator-desktop/test/computer_pause_input.test.mjs","javascript:app/operator-desktop/test/computer_control_indicator.test.mjs"]},
+    {"id": "desktop_only_report_without_revit_document", "coverage": ["backend:task_review_policy.test.ts", "javascript:package/operator-assistant-ui/work_report.test.mjs"]},
     {
       "id": "settled_document_unbound_export_to_edit_in_same_chat",
       "coverage": [
@@ -4812,6 +4820,13 @@
       ]
     },
     {
+      "id": "file_export_closeout_is_not_an_unchecked_model_edit",
+      "coverage": [
+        "backend:current_work_packet_verification.test.ts",
+        "backend:assignment_kernel_v2_progress_controller.test.ts"
+      ]
+    },
+    {
       "id": "work_packet_pass_requires_current_exact_native_read_not_historical_or_other_read_credit",
       "coverage": [
         "backend:current_work_packet_verification.test.ts",
@@ -5794,6 +5809,27 @@
         "backend:goal_endpoint_security.test.ts",
         "backend:task_navigation.test.ts"
       ]
+    },
+    {
+      "id": "physical_double_escape_and_incremental_pointer_stop_release",
+      "coverage": [
+        "javascript:app/operator-desktop/test/computer_pointer.test.mjs",
+        "javascript:app/operator-desktop/test/computer_control_indicator.test.mjs"
+      ]
+    },
+    {
+      "id": "desktop_only_input_does_not_create_revit_readiness_obligation",
+      "coverage": [
+        "javascript:app/operator-desktop/test/native_readiness_obligation.test.mjs",
+        "javascript:package/operator-assistant-ui/desktop_readiness_obligation.test.mjs"
+      ]
+    },
+    {
+      "id": "workbook_requested_column_presentation_and_local_artifact_open",
+      "coverage": [
+        "dotnet:OperatorWorkbookPresentationTests",
+        "javascript:app/operator-desktop/test/artifact_open_path.test.mjs"
+      ]
     }
   ],
   "dynamic_runtime_test_classes": [
@@ -5808,6 +5844,7 @@
     "NativeCompileTransportTests"
   ],
   "javascript_tests": [
+    "app/operator-desktop/test/computer_pause_input.test.mjs",
     "package/operator-assistant-ui/document_navigation.test.mjs",
     "app/operator-desktop/test/new_document_handoff.test.mjs",
     "package/operator-assistant-ui/target_resolution_failure.test.mjs",
@@ -5869,6 +5906,11 @@
     "app/operator-desktop/test/evidence_store_contract.test.mjs",
     "app/operator-desktop/test/next_request_context.test.mjs",
     "package/operator-assistant-ui/continuous_chat.test.mjs",
-    "package/operator-assistant-ui/history_archive_request.test.mjs"
+    "package/operator-assistant-ui/history_archive_request.test.mjs",
+    "app/operator-desktop/test/computer_pointer.test.mjs",
+    "app/operator-desktop/test/native_readiness_obligation.test.mjs",
+    "app/operator-desktop/test/computer_control_indicator.test.mjs",
+    "app/operator-desktop/test/artifact_open_path.test.mjs",
+    "package/operator-assistant-ui/desktop_readiness_obligation.test.mjs"
   ]
 }

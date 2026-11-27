@@ -20,6 +20,8 @@ test('computer indicator follows confirmed desktop control and exposes stale sta
   for (const payload of [{running:false,desktopCaptureSuppressed:false},{running:true,desktopCaptureSuppressed:true},{}])
     assert.equal(computerControlPresentation(payload).visible,false);
   const stale=computerControlPresentation(null,true);assert.equal(stale.active,false);assert.match(stale.text,/unavailable/);
+  const stopped=computerControlPresentation({running:true,desktopCaptureSuppressed:false,stopRequested:true});
+  assert.equal(stopped.active,false);assert.match(stopped.text,/stopped/);assert.match(stopped.text,/settle/);
 });
 test('resume is an activity; identical text actually typed by a user stays a user message', () => {
   const text='Continue the existing task using its saved answers and evidence.';

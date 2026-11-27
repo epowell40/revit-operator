@@ -266,8 +266,11 @@ export function retainedWorkReportMessage(toolCall, functionOutput) {
   const sections = [["Work reported (not independently verified)", proposal.claimed_completed],
     ["Remaining work", proposal.remaining_work], ["Uncertainties", proposal.uncertainties]];
   if (!sections.every(([,items]) => Array.isArray(items) && items.every(item => typeof item === "string"))) return null;
-  const summary = sections.filter(([,items]) => items.length).map(([title,items]) => {
+  const normalize=text=>text.replace(/[*_`]/g,'').replace(/\s+/g,' ').trim().toLowerCase();
+  const summary = sections.filter(([title,items]) => items.length && !(answer && title.startsWith('Work reported'))).map(([title,items]) => {
     const label = title.replace(" (not independently verified)", "");
+    items=items.filter(item=>!answer || !normalize(answer).includes(normalize(item)));
+    if(!items.length)return '';
     const shown = []; let characters = 0;
     for (const item of items.slice(0,2)) {
       // Keep whole claims, including qualifications at their end. A long
@@ -279,12 +282,13 @@ export function retainedWorkReportMessage(toolCall, functionOutput) {
     const omitted = items.length - shown.length;
     return `${label}: ${shown.join(" ")}${omitted ? ` (${omitted} more in Details.)` : ""}`;
   });
-  return ["Work report saved for independent review (not independently verified).",
+  return [
     // This is the retained owner's answer, not a new verification claim. Keep
     // its complete qualifications and numbers visible above collapsed Details.
-    ...(answer === undefined ? [] : ["### Reported result (not independently verified)\n\n" + answer]),
+    ...(answer === undefined ? [] : [answer]),
     ...(proposal.claimed_completed.length ? [] : ["No completed work was reported."]),
-    ...summary, "Full handoff in Details below.", "## Details",
+    ...summary.filter(Boolean), "## Details",
+    "Agent report retained; not independently verified as a whole task. Specific checks and unresolved items are recorded below.",
     ...sections.filter(([,items]) => items.length).map(([title,items]) =>
       `### ${title}\n\n` + items.map(item => "- " + item.replace(/\r?\n/g,"\n  ")).join("\n"))
   ].join("\n\n");

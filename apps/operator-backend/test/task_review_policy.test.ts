@@ -23,14 +23,14 @@ import {DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2} from '../src/domain/assignment-ke
 import {buildAssignmentKernelPublicationV2} from '../src/assignments/assignment_kernel_v2_publication.js';
 
 const principal:RequestPrincipal={sub:'test-sub',user_id:'test-user',tenant_id:'test-tenant',license_id:'test-tenant',roles:['operator'],tier:null,claims:{}};
-async function fixture(enabled:boolean,fn:(value:{snapshot:NonNullable<ReturnType<typeof getAssignmentKernelSnapshotV2>>;binding:ReturnType<typeof createAssignmentKernelForGoalV2>;context:RequestContext;state:()=>NonNullable<ReturnType<typeof getAssignmentKernelSnapshotV2>>})=>unknown|Promise<unknown>,effect:'read'|'preview'|'apply'='apply'){
+async function fixture(enabled:boolean,fn:(value:{snapshot:NonNullable<ReturnType<typeof getAssignmentKernelSnapshotV2>>;binding:ReturnType<typeof createAssignmentKernelForGoalV2>;context:RequestContext;state:()=>NonNullable<ReturnType<typeof getAssignmentKernelSnapshotV2>>})=>unknown|Promise<unknown>,effect:'read'|'preview'|'apply'='apply',documentFingerprint:string|undefined='disposable-document'){
  // Leave room for tenant/user hashes and SQLite WAL suffixes on Windows.
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'otr-'));
  const env={OPERATOR_WORKSPACE_ROOT:root,REVIT_OPERATOR_MODE:'hosted',OPERATOR_HOSTED_ENABLED:'1',OPERATOR_AUTH_MODE:'principal_jwt',OPERATOR_REVIT_TRANSPORT:'courier',OPERATOR_ASSIGNMENT_KERNEL_V2:'1',OPERATOR_BRAIN:'codex',OPERATOR_TOOL_EXPOSURE_PROFILE:'general',OPERATOR_OPENAI_API_KEY:'test-provider-not-used',OPERATOR_TASK_EXECUTION_PROFILE:enabled?'single_actor_review_v1':'',OPERATOR_LOCAL_EXECUTOR_PROFILE:''};
  const old=Object.fromEntries(Object.keys(env).map(k=>[k,process.env[k]]));Object.assign(process.env,env);__testOnlyResetGoalListCache();
  const context={principal,operator_backend_auth:createOperatorBackendAuth('principal_jwt','test-credential',{OPERATOR_API_BASE_URL:'https://backend.example.invalid'})};
  try{await runWithRequestContext(context,async()=>{
-  const session=createPrincipalBoundSessionId(principal),goal=createGoal({title:'Reconstruct drawing',objective:'Reconstruct the visible lighting fixtures, controls and annotations from the supplied PDF; inspect and save the model.',acceptance_criteria:['The requested drawing is reconstructed and reviewed.'],status:'active',related_session_id:session,created_by:'test-user',work_budget:{requested_effect:effect,document_fingerprint:'disposable-document',mode:'sidecar_computer',source:'operator_desktop',execution_substrate:'operator_desktop_outer_agent'}});
+  const session=createPrincipalBoundSessionId(principal),goal=createGoal({title:'Reconstruct drawing',objective:'Reconstruct the visible lighting fixtures, controls and annotations from the supplied PDF; inspect and save the model.',acceptance_criteria:['The requested drawing is reconstructed and reviewed.'],status:'active',related_session_id:session,created_by:'test-user',work_budget:{requested_effect:effect,...(documentFingerprint?{document_fingerprint:documentFingerprint}:{}),mode:'sidecar_computer',source:'operator_desktop',execution_substrate:'operator_desktop_outer_agent'}});
   const binding=createAssignmentKernelForGoalV2({goal,run_id:'test-run'});await fn({binding,snapshot:getAssignmentKernelSnapshotV2(goal.id)!,context,state:()=>getAssignmentKernelSnapshotV2(goal.id)!});
  });}finally{__testOnlyResetGoalListCache();__closeForTests();for(const[k,v]of Object.entries(old)){if(v===undefined)delete process.env[k];else process.env[k]=v;}fs.rmSync(root,{recursive:true,force:true});}
 }
@@ -169,4 +169,29 @@ test('pending usage, terminal state and changed binding still prevent a primary 
   assert.throws(()=>startCodexProviderTurnWhenActive({binding,readSnapshot:()=>value as any},dispatch),reason);
  assert.equal(calls,0);
 }));
+
+
+test('desktop-only product report retains authenticated custody without inventing a Revit document',()=>fixture(true,({snapshot,binding,state,context})=>{
+ assert.equal(binding.document_fingerprint,undefined);
+ assert.equal(snapshot.spec.execution_policy?.mode,'single_actor_review_v1');
+ assert.equal(snapshot.spec.execution_policy?.document_fingerprint,undefined);
+ assert(validLocalAdvisoryPolicyV1(snapshot.spec));
+ assert(trustedTaskExecutionHost(snapshot.spec));
+ const before=structuredClone(state());
+ manageAssignmentWorkPlan({binding,action:'propose_completion',completion_proposal:{claimed_completed:['Opened Notepad and checked the requested text on screen.'],remaining_work:[],uncertainties:[],user_facing_text:'Opened Notepad with the requested text; left it unsaved.'}});
+ assert.equal(state().outcome,'awaiting_user_review');assert.equal(state().completion_proposal?.verified,false);
+ assert.deepEqual(state().operations,before.operations);assert.deepEqual(state().criteria,before.criteria);
+ __testOnlyResetGoalListCache();assert.equal(state().completion_proposal?.user_facing_text,'Opened Notepad with the requested text; left it unsaved.');
+ const foreign={...context,principal:{...principal,tenant_id:'foreign'}};
+ assert.equal(trustedTaskExecutionHost(snapshot.spec,process.env,foreign),false);
+ assert.equal(validLocalAdvisoryPolicyV1({...snapshot.spec,execution_policy:{...snapshot.spec.execution_policy,document_fingerprint:'invented'} as any}),false);
+ assert.equal(validLocalAdvisoryPolicyV1({...snapshot.spec,execution_policy:{...snapshot.spec.execution_policy,mode:'local_advisory_v1',selected_by:'trusted_local_host'} as any}),false);
+},'apply',''));
+
+test('desktop-only read policy keeps model writes prohibited and Pause authoritative',()=>fixture(true,({binding,state,snapshot})=>{
+ assert.equal(snapshot.spec.execution_policy?.mode,'single_actor_review_v1');
+ assert.throws(()=>openAssignmentKernelOperationV2({snapshot:state(),provider_turn_id:'turn',controller_request_id:'forbidden-edit',capability_id:'revit_call_tool',classified_effect:'apply',target_tokens:['id:11'],arguments:{method:'POST',path:'/revit/set-parameters',body:{elementIds:[11]}}}));
+ controlAssignmentExecutionV2({binding,command_id:'pause-desktop',expected_command_id:null,action:'pause'});
+ let calls=0;assert.throws(()=>startCodexProviderTurnWhenActive({binding,readSnapshot:state},async()=>{calls++;}),/user_requested_pause/);assert.equal(calls,0);
+},'read',''));
 
